@@ -1,0 +1,135 @@
+.chat-header {
+  display: flex;
+  position: sticky;
+  top: 0;
+  width: calc(100% - 1rem);
+  margin: 0 auto;
+  gap: 0.5rem;
+  justify-content: start;
+  align-items: center;
+  flex-direction: row;
+  background: var(--header-color);
+  padding: 0.75rem 1rem;
+  border-radius: 1rem;
+  backdrop-filter: blur(30px);
+  z-index: 101;
+  box-shadow: var(--shadow);
+  user-select: none;
+}
+.chat-back {
+  display: flex;
+  flex-direction: row;
+  justify-content: start;
+  align-items: center;
+  color: var(--text-secondary-color);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.chat-back svg {
+  height: 1.25rem;
+  width: 1.25rem;
+}
+.unread-message-count {
+  color: var(--text-secondary-color);
+  text-align: center;
+}
+.chat-profile {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  margin-left: 0.25rem;
+  transition: all 0.3s ease;
+  border: 2px solid var(--glass-border);
+  cursor: pointer;
+}
+.chat-profile-picture {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+.chat-name {
+  color: var(--text-secondary-color);
+  text-align: center;
+  cursor: pointer;
+}
+
+.pinned-message-container {
+  position: sticky;
+  width: calc(100% - 1rem);
+  margin: 0 auto;
+  height: 3rem;
+  background-color: var(--header-color);
+  border-radius: 0 0 1rem 1rem;
+  border-top: 1px solid var(--glass-border);
+  box-shadow: var(--light-shadow);
+  z-index: 101;
+  padding: 0.5rem 1rem;
+  display: flex;
+  flex-direction: row;
+  justify-content: start;
+  align-items: center;
+}
+.pinned-message-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  color: var(--text-secondary-color);
+  margin-left: 1rem;
+  cursor: pointer;
+}
+.pinned-message-icon svg {
+  width: 100%;
+  height: 100%;
+}
+.pinned-message {
+  color: var(--text-secondary-color);
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-left: 0.5rem;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: start;
+  gap: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pinned-label {
+  font-size: 0.7rem;
+  color: var(--text-secondary-color);
+  text-transform: uppercase;
+  letter-spacing: 0.1rem;
+}
+.pinned-message-text {
+  font-size: 0.75rem;
+  color: var(--text-secondary-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+.pinned-message-count {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-left: 0.5rem;
+}
+.pinned-message-count span {
+  border-radius: 2px;
+  width: 3px;
+  background-color: var(--text-secondary-color);
+  transition: all 0.2s ease ;
+}
+.pinned-message-count span:nth-child(1) {
+  height: 0.4rem;
+
+}
+.pinned-message-count span:nth-child(2) {
+  height: 0.4rem;
+
+}
+.pinned-message-count span:nth-child(3) {
+  height: 0.6rem;
+}

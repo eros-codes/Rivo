@@ -1,0 +1,170 @@
+@keyframes circleSlideIn {
+	from {
+		opacity: 0;
+		transform: translateX(-1.5rem);
+	}
+	to {
+		opacity: 1;
+		transform: translateX(0);
+	}
+}
+.contact-menu-btn {
+	position: absolute;
+	top: 0.6rem;
+	right: 0.6rem;
+	z-index: 10;
+	width: 1.75rem;
+	height: 1.75rem;
+	border-radius: 50%;
+	border: none;
+	background: transparent;
+	color: var(--text-main-color);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	opacity: 0;
+	transition:
+		opacity 0.2s ease,
+		background-color 0.2s ease,
+		transform 0.2s ease;
+}
+.contacts-card:hover .contact-menu-btn {
+	opacity: 0.6;
+}
+.contact-menu-btn:hover {
+	opacity: 1 !important;
+	background: var(--contact-bg-color-hover);
+}
+.contact-menu-btn--back {
+	opacity: 1 !important;
+	z-index: 310;
+	color: var(--text-secondary-color);
+}
+.contact-menu-btn--back:hover {
+	background-color: var(--glass-bg-input-color);
+}
+.contact-menu-overlay {
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	background: rgba(0, 0, 0, 0.3);
+	backdrop-filter: blur(5px);
+	-webkit-backdrop-filter: blur(5px);
+	z-index: 200;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.22s ease;
+}
+.contact-menu-overlay.active {
+	opacity: 1;
+	pointer-events: all;
+}
+.contact-menu-panel {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	z-index: 300;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	gap: 0.45rem;
+	pointer-events: none;
+}
+.contact-menu-item {
+	width: 3.5rem;
+	height: 3.5rem;
+	border-radius: 50%;
+	border: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	background: rgba(255, 255, 255, 0.12);
+	color: var(--text-secondary-color);
+	backdrop-filter: blur(4px);
+	-webkit-backdrop-filter: blur(4px);
+	transition: all 0.3s cubic-bezier(0.34, 1.3, 0.64, 1);
+
+	/* start off-screen to the left, invisible */
+	opacity: 0;
+	transform: translateX(-1.5rem);
+	position: relative;
+	box-shadow:
+		0 6px 18px rgba(0, 0, 0, 0.35),
+		inset 0 1px 0 rgba(255, 255, 255, 0.15),
+		inset 0 -1px 0 rgba(0, 0, 0, 0.25);
+}
+.contact-menu-item::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	padding: 1px;
+	background: linear-gradient(
+		145deg,
+		rgba(255, 255, 255, 0.45),
+		rgba(255, 255, 255, 0.05)
+	);
+	mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	-webkit-mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask-composite: exclude;
+	pointer-events: none;
+}
+.contact-menu-item:hover {
+	background: rgba(255, 255, 255, 0.35);
+	width: 4rem;
+	height: 4rem;
+	/* scale: 1.08; */
+}
+.contact-menu-item:active {
+	transform: scale(0.96);
+	box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+.contact-menu-item--danger {
+	color: var(--red);
+}
+.contact-menu-panel.active {
+	pointer-events: all;
+}
+.contact-menu-panel.active .contact-menu-item:nth-child(1) {
+	animation: circleSlideIn 0.28s cubic-bezier(0.34, 1.2, 0.64, 1) 0s forwards;
+}
+.contact-menu-panel.active .contact-menu-item:nth-child(2) {
+	animation: circleSlideIn 0.28s cubic-bezier(0.34, 1.2, 0.64, 1) 0.05s
+		forwards;
+}
+.contact-menu-panel.active .contact-menu-item:nth-child(3) {
+	animation: circleSlideIn 0.28s cubic-bezier(0.34, 1.2, 0.64, 1) 0.1s
+		forwards;
+}
+.contact-menu-panel:not(.active) .contact-menu-item {
+	opacity: 0;
+	transform: translateX(-1.5rem);
+	animation: none;
+}
+.contact-menu-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 1.4rem;
+	height: 1.4rem;
+	flex-shrink: 0;
+}
+.contact-menu-icon svg {
+	width: 100%;
+	height: 100%;
+}
+
+@media (hover: none) {
+	.contact-menu-btn {
+		opacity: 0.5;
+	}
+}

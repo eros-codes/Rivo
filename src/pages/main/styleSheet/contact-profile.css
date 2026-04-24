@@ -1,0 +1,181 @@
+.contact-profile-details {
+	width: 100%;
+	height: 100vh;
+	display: none;
+	flex-direction: column;
+	justify-content: start;
+	align-items: center;
+	background-color: var(--background-color);
+}
+.profile-dialog .contact-profile-details {
+	width: 100%;
+	height: auto;
+	max-height: 90vh;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+}
+.contact-detail-pic {
+	box-shadow: 0 -8px 14px rgba(0, 0, 0, 0.2) inset;
+	background: var(--orange);
+	height: 10rem;
+	width: 100%;
+	position: relative;
+}
+.detail-picture {
+	width: 12rem;
+	height: 12rem;
+	aspect-ratio: 1/1;
+	object-fit: cover;
+	border: 1rem solid var(--background-color);
+	border-radius: 50%;
+	position: absolute;
+	top: 2.5rem;
+	left: 50%;
+	transform: translate(-50%);
+}
+.detail-picture img {
+	border-radius: 50%;
+	width: 100%;
+	height: 100%;
+}
+.contact-detail-pic button {
+	position: absolute;
+	top: 1rem;
+	left: 1rem;
+	height: 1.5rem;
+	width: 1.5rem;
+	color: white;
+	background-color: transparent;
+	outline: none;
+	border: none;
+	cursor: pointer;
+}
+.contact-profile-actions {
+	padding-top: 5.5rem;
+	padding-bottom: 2rem;
+	display: flex;
+	flex-direction: column;
+	gap: 2rem;
+	align-items: center;
+	justify-content: center;
+}
+.profile-dialog .contact-profile-actions {
+	gap: 1rem;
+}
+.contact-detail-name {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	margin: 0;
+	z-index: 10;
+}
+.contact-detail-name div{
+	display: flex;
+	flex-direction: row;
+	justify-content: center;
+	align-items: center;
+}
+.contact-detail-name h3 {
+	font-size: 2rem;
+	line-height: 3.5rem;
+	overflow: hidden;
+	border-radius: 1rem;
+	padding: 0rem 0.5rem;
+}
+.contact-detail-name svg {
+	width: 2.5rem;
+	height: 2.5rem;
+	color: black;
+	display: none;
+	cursor: pointer;
+}
+.contact-detail-name h6 {
+	font-size: 1.2rem;
+	overflow: hidden;
+}
+.contact-detail-name p {
+	font-size: 1rem;
+	color: var(--chat-time);
+}
+.contact-info {
+	width: 20rem;
+	height: auto;
+	background-color: var(--header-color);
+	border-radius: 1rem;
+}
+.contact-info div {
+	padding: 0.5rem 1rem;
+	display: flex;
+	flex-direction: column;
+	justify-content: start;
+	align-items: start;
+	position: relative;
+}
+.contact-info p {
+	font-size: 0.8rem;
+	color: var(--white-fade);
+	font-weight: 200;
+}
+.contact-info h3 {
+	font-weight: 200;
+	font-size: 1.1rem;
+	color: white;
+}
+.contact-info > :first-child {
+	border-bottom: 0.2rem solid var(--background-color) ;
+}
+.contact-actions {
+	width: 20rem;
+	height: auto;
+	background-color: #252525be;
+	border-radius: 1rem;
+}
+.contact-actions div {
+	padding: 0.75rem 1rem;
+	color: white;
+	cursor: pointer;
+}
+.contact-actions > *:not(:last-child) {
+	border-bottom: 0.2rem solid var(--background-color);
+}
+.contact-actions :nth-child(3),
+.contact-actions :nth-child(4) {
+	color: var(--red);
+}
+
+.profile-dialog {
+	border: none;
+	border-radius: 1.5rem;
+	background-color: var(--background-color);
+	width: 90%;
+	max-width: 500px;
+	max-height: 90vh;
+	overflow-y: auto;
+	padding: 0;
+	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+	margin: auto;
+	position: fixed;
+	inset: 0;
+}
+
+.profile-dialog[open] {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.profile-dialog::backdrop {
+	background-color: rgba(0, 0, 0, 0.7);
+	animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}

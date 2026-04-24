@@ -1,0 +1,99 @@
+.forward-dialog {
+  border: none;
+  border-radius: 1.5rem;
+  padding: 0;
+  width: 90%;
+  max-width: 600px;
+  background: var(--background-color);
+  box-shadow: var(--shadow);
+  margin: calc(100vh / 2 - 14rem) auto;
+  user-select: none;
+}
+.forward-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+.forward-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--contact-border-color);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-main-color);
+}
+.close-forward-dialog {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-main-color);
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem 0.5rem;
+  border-radius: 50%;
+  transition: background 0.2s ease;
+}
+.forwarded-contact-dialog {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.5rem;
+  padding: 0.75rem;
+  align-items: start;
+  justify-items: stretch;
+  width: 90%;
+  max-width: 600px;
+  height: auto;
+  align-content: start;
+  padding-top: 2rem;
+  overflow: auto;
+}
+.forwarded-contact-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.3s ease-in-out;
+  gap: 0.5rem;
+  width: 100%;
+  height: auto;
+  background: var(--contact-bg-color);
+  border: 1px solid var(--contact-border-color);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: 1rem;
+  box-shadow: var(--light-shadow);
+}
+.forwarded-contact-profile {
+  width: 100%;
+  aspect-ratio: 1/1;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--contact-border-color);
+  box-shadow: var(--light-shadow);
+}
+.forwarded-contact-name {
+  max-width: 100%;
+  text-align: center;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-main-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+@media all and (max-width: 700px) {
+  .forwarded-contact-dialog {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}

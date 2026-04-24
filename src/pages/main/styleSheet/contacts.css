@@ -1,0 +1,182 @@
+/* contacs */
+.contacts-container {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	grid-auto-rows: min-content;
+	row-gap: 1.5rem;
+	column-gap: 0.75rem;
+	padding: 1rem;
+	align-items: start;
+	justify-items: stretch;
+	width: 100%;
+	height: auto;
+	align-content: start;
+	position: relative;
+	padding-top: 2rem;
+	overflow: auto;
+}
+.contacts-card {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 1.2rem 1rem;
+	border-radius: 0.5rem;
+	cursor: pointer;
+	transition: all 0.3s ease-in-out;
+	gap: 1rem;
+	width: 100%;
+	height: 100%;
+	background: var(--contact-bg-color);
+	border: 1px solid var(--contact-border-color);
+	backdrop-filter: blur(10px);
+	-webkit-backdrop-filter: blur(10px);
+	border-radius: 1rem;
+	box-shadow: 
+    0 5px 14px rgba(0, 0, 0, 0.1),
+    0 2px 6px rgba(0, 0, 0, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+	justify-self: stretch;
+	overflow: hidden;
+	position: relative;
+	user-select: none;
+}
+.contacts-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.7),
+    rgba(255, 255, 255, 0.1)
+  );
+  mask: linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+  -webkit-mask: linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+pointer-events: none;
+}
+
+.contacts-card:hover {
+	scale: 1.025;
+	background: var(--contact-bg-color-hover);
+
+}
+.contacts-card:hover .send-message {
+	scale: 1.05;
+	background: var(--header-color);
+	color: var(--text-secondary-color);
+}
+.contact-profile {
+	width: 70%;
+	aspect-ratio: 1/1;
+	border-radius: 50%;
+	object-fit: cover;
+	border: 1px solid var(--contact-border-color);
+	box-shadow: var(--light-shadow);
+}
+.online-contact {
+	border: 0.3rem solid var(--green);
+}
+.contact-name {
+	max-width: 80%;
+	text-align: center;
+	font-size: 1.25rem;
+	font-weight: 600;
+	color: var(--text-main-color);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.2rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.contact-name svg {
+	width: 1rem;
+	height: 1rem;
+	color: var(--sub-text-main-color);
+}
+.contact-message {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+.last-message {
+	color: var(--sub-text-main-color);
+	text-align: center;
+	display: inline-flex;
+	align-items: center;
+	width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.send-message {
+	color: var(--text-main-color);
+	background: var(--contact-bg-color-hover);
+	padding: 0.25rem 0.75rem;
+	border-radius: 1rem;
+	font-size: 0.875rem;
+	backdrop-filter: blur(10px);
+	-webkit-backdrop-filter: blur(10px);
+	transition: all 0.3s 0.1s ease;
+	text-align: center;
+}
+.message-status {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 1rem;
+	height: 1rem;
+	color: var(--text-main-color);
+}
+.message-status svg {
+	width: 1rem;
+	height: 1rem;
+	color: var(--text-main-color);
+}
+.blocked-badge {
+	color: var(--red);
+	padding: 0.25rem 0.5rem;
+	border-radius: 1rem;
+	font-size: 0.875rem;
+	text-align: center;
+	transition: all 0.3s 0.1s ease;
+}
+
+.close-forward-dialog:hover {
+	background: var(--contact-bg-color-hover);
+}
+
+.contacts-empty {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 3rem 1rem;
+    color: var(--chat-time);
+    grid-column: 1 / -1;
+}
+
+.contacts-empty svg {
+    width: 3rem;
+    height: 3rem;
+    opacity: 0.5;
+}
+
+.contacts-empty p {
+    font-size: 0.875rem;
+    opacity: 0.5;
+}
+
+@media all and (max-width: 700px) {
+	.contacts-container {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		padding: 2rem 0.5rem;
+	}
+}

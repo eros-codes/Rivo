@@ -1,0 +1,205 @@
+/* chat */
+.chat-section {
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+	padding: 0.2rem 0;
+	position: relative;
+	width: 100%;
+	height: 100dvh;
+	z-index: 100;
+}
+
+.chat {
+	display: flex;
+	width: 100%;
+	gap: 0.5rem;
+	overflow: hidden auto;
+	flex-direction: column;
+	align-items: flex-start;
+	padding-top: 1.5rem;
+	padding-bottom: 4rem;
+	margin-top: -1rem;
+	transition: padding 0.2s ease;
+}
+
+.chat-overlay {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	background-color: rgba(37, 37, 37, 0.5);
+	backdrop-filter: blur(2px);
+	z-index: 500;
+	display: none;
+	opacity: 0;
+	transition: opacity 0.1s ease-in;
+}
+
+.scroll-to-bottom-btn {
+	position: absolute;
+	bottom: 4.5rem;
+	right: 2.5rem;
+	background-color: rgba(38, 38, 38, 0.6);
+	backdrop-filter: blur(7px);
+	border-radius: 50%;
+	width: 2.5rem;
+	height: 2.5rem;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	cursor: pointer;
+	z-index: 200;
+	border: 1px solid var(--glass-border);
+	color: var(--text-secondary-color);
+	opacity: 0;
+	pointer-events: none;
+	transition:
+		opacity 0.3s ease,
+		pointer-events 0.3s ease;
+}
+.scroll-to-bottom-btn svg {
+	height: 65%;
+	width: 65%;
+}
+.scroll-to-bottom-btn.visible {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.chat.selection-mode {
+	padding-left: 2.5rem;
+	padding-right: 2.5rem;
+}
+.chat.selection-mode .chat-message {
+	cursor: pointer;
+}
+.chat.selection-mode .chat-message::before {
+	content: "";
+	position: absolute;
+	inset: auto;
+	top: 50%;
+	transform: translateY(-50%);
+	width: 1.2rem;
+	height: 1.2rem;
+	border-radius: 50%;
+	border: 2px solid var(--text-main-color);
+	background: transparent;
+	transition: background 0.1s ease;
+}
+.chat.selection-mode .chat-message.incoming::before {
+	left: -2rem;
+}
+.chat.selection-mode .chat-message.outgoing::before {
+	right: -2rem;
+}
+.chat.selection-mode .chat-message.selected::before {
+	background: var(--chat-time);
+}
+.date-separator {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	gap: 0.5rem;
+	padding: 0.5rem 0;
+	user-select: none;
+}
+.date-separator span {
+	font-size: 0.75rem;
+	color: var(--chat-time);
+	background: var(--glass-bg-input-color);
+	padding: 0.25rem 0.75rem;
+	border-radius: 2rem;
+	white-space: nowrap;
+}
+
+/* Empty chat state */
+.chat-empty {
+	display: none;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	gap: 0.75rem;
+	position: absolute;
+	top: 30%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	padding: 2rem;
+	border-radius: 1.5rem;
+	background:
+		linear-gradient(
+			135deg,
+			rgba(255, 255, 255, 0.08) 0%,
+			rgba(255, 255, 255, 0.04) 25%,
+			rgba(0, 0, 0, 0.1) 100%
+		),
+		var(--header-glass-bg-color);
+
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	color: var(--text-secondary-color);
+
+	backdrop-filter: blur(14px) saturate(160%);
+	-webkit-backdrop-filter: blur(14px) saturate(160%);
+
+	box-shadow:
+		0 8px 24px rgba(0, 0, 0, 0.12),
+		inset 1px 1px 0 rgba(255, 255, 255, 0.1),
+		inset -1px -1px 0 rgba(0, 0, 0, 0.16);
+}
+.chat-empty svg {
+	width: 4.5rem;
+	height: 4.5rem;
+	color: var(--text-secondary-color);
+}
+.chat-empty-text {
+	color: var(--text-secondary-color);
+	font-size: 1rem;
+	opacity: 0.85;
+	text-transform: none;
+}
+
+/* Swip reply */
+.swipe-reply-icon {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    background: var(--header-glass-bg-color);
+    border: 1px solid var(--glass-border);
+    color: var(--text-secondary-color);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    pointer-events: none;
+    top: 50%;
+    transform: translateY(-50%);
+    backdrop-filter: blur(10px);
+}
+
+.swipe-reply-icon svg {
+    width: 1rem;
+    height: 1rem;
+}
+
+.chat-message.incoming .swipe-reply-icon,
+.chat-message.outgoing .swipe-reply-icon {
+    left: -2.5rem;
+}
+
+.swipe-reply-icon.visible {
+    opacity: 1;
+}
+
+@keyframes replyBounce {
+    0%   { transform: translateY(-50%) scale(1); }
+    50%  { transform: translateY(-50%) scale(1.3); }
+    100% { transform: translateY(-50%) scale(1); }
+}
+
+.swipe-reply-icon.bounce {
+    animation: replyBounce 0.25s ease;
+}

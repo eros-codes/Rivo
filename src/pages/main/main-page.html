@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1.0, interactive-widget=resizes-visual, maximum-scale=1, user-scalable=no"
+		/>
+		<meta name="theme-color" content="#1a1a2e" />
+		<title>Rivo</title>
+		<link rel="stylesheet" href="main-content.css" />
+		<link rel="manifest" href="../../../public/manifest.webmanifest" />
+		<link
+			rel="apple-touch-icon"
+			href="../../../public/assets/icons/Icon-180.png"
+		/>
+		<link
+			rel="icon"
+			type="image/png"
+			sizes="32x32"
+			href="../../../public/assets/icons/Favicon-32.png"
+		/>
+		<link
+			rel="icon"
+			type="image/png"
+			sizes="16x16"
+			href="../../../public/assets/icons/Favicon-16.png"
+		/>
+	</head>
+	<body>
+		<main class="parts">
+			<div class="people-part" id="people-part">
+				<header class="main-header">
+					<span class="settings">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							width="24"
+							height="24"
+							viewBox="0 0 24 24"
+						>
+							<g
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+							>
+								<path
+									d="M3.082 13.945c-.529-.95-.793-1.426-.793-1.945s.264-.994.793-1.944L4.43 7.63l1.426-2.381c.559-.933.838-1.4 1.287-1.66c.45-.259.993-.267 2.08-.285L12 3.26l2.775.044c1.088.018 1.631.026 2.08.286s.73.726 1.288 1.659L19.57 7.63l1.35 2.426c.528.95.792 1.425.792 1.944s-.264.994-.793 1.944L19.57 16.37l-1.426 2.381c-.559.933-.838 1.4-1.287 1.66c-.45.259-.993.267-2.08.285L12 20.74l-2.775-.044c-1.088-.018-1.631-.026-2.08-.286s-.73-.726-1.288-1.659L4.43 16.37z"
+								/>
+								<circle cx="12" cy="12" r="3" />
+							</g>
+						</svg>
+					</span>
+					<ul class="settings-list">
+						<li class="settings-section">
+							<svg
+								class="settings-icon"
+								xmlns="http://www.w3.org/2000/svg"
+								width="24"
+								height="24"
+								viewBox="0 0 24 24"
+							>
+								<g
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+								>
+									<path
+										d="M3.082 13.945c-.529-.95-.793-1.426-.793-1.945s.264-.994.793-1.944L4.43 7.63l1.426-2.381c.559-.933.838-1.4 1.287-1.66c.45-.259.993-.267 2.08-.285L12 3.26l2.775.044c1.088.018 1.631.026 2.08.286s.73.726 1.288 1.659L19.57 7.63l1.35 2.426c.528.95.792 1.425.792 1.944s-.264.994-.793 1.944L19.57 16.37l-1.426 2.381c-.559.933-.838 1.4-1.287 1.66c-.45.259-.993.267-2.08.285L12 20.74l-2.775-.044c-1.088-.018-1.631-.026-2.08-.286s-.73-.726-1.288-1.659L4.43 16.37z"
+									/>
+									<circle cx="12" cy="12" r="3" />
+								</g>
+							</svg>
+							<span>Settings</span>
+						</li>
+						<li class="edit-section">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								width="24"
+								height="24"
+								viewBox="0 0 24 24"
+							>
+								<g class="edit-outline">
+									<g
+										fill="currentColor"
+										fill-rule="evenodd"
+										class="Vector"
+										clip-rule="evenodd"
+									>
+										<path
+											d="M2 6.857A4.857 4.857 0 0 1 6.857 2H12a1 1 0 1 1 0 2H6.857A2.857 2.857 0 0 0 4 6.857v10.286A2.857 2.857 0 0 0 6.857 20h10.286A2.857 2.857 0 0 0 20 17.143V12a1 1 0 1 1 2 0v5.143A4.857 4.857 0 0 1 17.143 22H6.857A4.857 4.857 0 0 1 2 17.143z"
+										/>
+										<path
+											d="m15.137 13.219l-2.205 1.33l-1.033-1.713l2.205-1.33l.003-.002a1.2 1.2 0 0 0 .232-.182l5.01-5.036a3 3 0 0 0 .145-.157c.331-.386.821-1.15.228-1.746c-.501-.504-1.219-.028-1.684.381a6 6 0 0 0-.36.345l-.034.034l-4.94 4.965a1.2 1.2 0 0 0-.27.41l-.824 2.073a.2.2 0 0 0 .29.245l1.032 1.713c-1.805 1.088-3.96-.74-3.18-2.698l.825-2.072a3.2 3.2 0 0 1 .71-1.081l4.939-4.966l.029-.029c.147-.15.641-.656 1.24-1.02c.327-.197.849-.458 1.494-.508c.74-.059 1.53.174 2.15.797a2.9 2.9 0 0 1 .845 1.75a3.15 3.15 0 0 1-.23 1.517c-.29.717-.774 1.244-.987 1.457l-5.01 5.036q-.28.281-.62.487m4.453-7.126s-.004.003-.013.006z"
+										/>
+									</g>
+								</g>
+							</svg>
+
+							<span>Edit Profile</span>
+						</li>
+						<li id="logout" class="logout-section">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								width="24"
+								height="24"
+								viewBox="0 0 24 24"
+							>
+								<path
+									fill="none"
+									stroke="currentColor"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="m17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h4a3 3 0 0 1 3 3v1"
+								/>
+							</svg>
+							<span>Log Out</span>
+						</li>
+					</ul>
+					<span class="search-bar">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							width="20"
+							height="20"
+							viewBox="0 0 20 20"
+						>
+							<path
+								fill="currentColor"
+								d="M12.14 4.18a5.504 5.504 0 0 1 .72 6.89c.12.1.22.21.36.31c.2.16.47.36.81.59c.34.24.56.39.66.47c.42.31.73.57.94.78c.32.32.6.65.84 1c.25.35.44.69.59 1.04c.14.35.21.68.18 1q-.03.48-.36.81c-.33.33-.49.34-.81.36c-.31.02-.65-.04-.99-.19c-.35-.14-.7-.34-1.04-.59c-.35-.24-.68-.52-1-.84c-.21-.21-.47-.52-.77-.93c-.1-.13-.25-.35-.47-.66c-.22-.32-.4-.57-.56-.78c-.16-.2-.29-.35-.44-.5a5.5 5.5 0 0 1-6.44-.98c-2.14-2.15-2.14-5.64 0-7.78a5.5 5.5 0 0 1 7.78 0m-1.41 6.36a3.513 3.513 0 0 0 0-4.95a3.495 3.495 0 0 0-4.95 0a3.495 3.495 0 0 0 0 4.95a3.495 3.495 0 0 0 4.95 0"
+							/>
+						</svg>
+						<input
+							type="text"
+							placeholder="Search..."
+							class="search-input"
+							name="search"
+							id="search"
+						/>
+					</span>
+					<span class="add-friends">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							width="24"
+							height="24"
+							viewBox="0 0 24 24"
+						>
+							<g
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+							>
+								<circle cx="12" cy="7" r="5" />
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M17 22H5.266a2 2 0 0 1-1.985-2.248l.39-3.124A3 3 0 0 1 6.649 14H7m12 0v4m-2-2h4"
+								/>
+							</g>
+						</svg>
+					</span>
+				</header>
+
+				<div class="main-content" id="main-content">
+					<section class="contacts-container">
+						<h4 class="guid">Contacts</h4>
+						<!-- Contacts will be dynamically added here -->
+						<div class="contacts-empty" id="contacts-empty">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								width="48"
+								height="48"
+								viewBox="0 0 24 24"
+							>
+								<path
+									fill="none"
+									stroke="currentColor"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="1.5"
+									d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2m8-10a4 4 0 1 0 0-8a4 4 0 0 0 0 8m13 10v-2a4 4 0 0 0-3-3.87m-4-12a4 4 0 0 1 0 7.75"
+								/>
+							</svg>
+							<p>No contacts yet</p>
+						</div>
+					</section>
+
+					<section class="active-chats-container">
+						<h4 class="guid">Active Chats</h4>
+						<!-- Active chats will be dynamically added here -->
+					</section>
+				</div>
+
+				<div class="search-results" id="search-results">
+					<section class="search-contacts-section">
+						<h4 class="guid">Contacts</h4>
+						<div class="search-contacts-list"></div>
+					</section>
+					<section class="search-messages-section">
+						<h4 class="guid">Conversations</h4>
+						<div class="search-messages-list"></div>
+					</section>
+				</div>
+			</div>
+
+			<div class="chat-part" id="chat-part">
+				<section class="chat-section">
+					<header class="chat-header">
+						<span class="chat-back" id="close-chat">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								width="24"
+								height="24"
+								viewBox="0 0 24 24"
+							>
+								<path
+									fill="currentColor"
+									d="M16.62 2.99a1.25 1.25 0 0 0-1.77 0L6.54 11.3a.996.996 0 0 0 0 1.41l8.31 8.31c.49.49 1.28.49 1.77 0s.49-1.28 0-1.77L9.38 12l7.25-7.25c.48-.48.48-1.28-.01-1.76"
+								/>
+							</svg>
+							<span class="unread-message-count">5</span>
+						</span>
+						<span class="chat-profile">
+							<img
+								class="chat-profile-picture"
+								src="./../../../public/assets/images/profile-active.jpeg"
+								alt="profile-picture"
+							/>
+						</span>
+						<span class="chat-name"> Arvin </span>
+					</header>
+
+					<div class="pinned-message-container">
+						<div class="pinned-message-count">
+							<span></span>
+							<span></span>
+							<span></span>
+						</div>
+						<div class="pinned-message">
+							<span class="pinned-label">Pinned Message</span>
+							<p class="pinned-message-text">
+								This is a pinned message. It will always stay
+								here until you unpin it.
+							</p>
+						</div>
+						<div class="pinned-message-icon">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								width="24"
+								height="24"
+								viewBox="0 0 24 24"
+							>
+								<path
+									fill="none"
+									stroke="currentColor"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4a1 1 0 0 1 1 1z"
+								/>
+							</svg>
+						</div>
+					</div>
+
+					<dialog class="forward-dialog">
+						<div class="forward-dialog-header">
+							<span>Forward to...</span>
+							<button
+								class="close-forward-dialog"
+								id="close-forward-dialog"
+							>
+								✕
+							</button>
+						</div>
+						<div class="forwarded-contact-dialog"></div>
+					</dialog>
+
+					<dialog class="pinned-view-dialog">
+						<div class="pinned-view-header">
+							<span class="pinned-view-title"
+								>Pinned Messages</span
+							>
+							<button class="pinned-view-close">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									width="24"
+									height="24"
+									viewBox="0 0 24 24"
+								>
+									<path
+										fill="currentColor"
+										d="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12z"
+									/>
+								</svg>
+							</button>
+						</div>
+						<div class="pinned-view-list"></div>
+					</dialog>
+
+					<div class="message-menu">
+						<ul>
+							<li class="reply-message">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									width="32"
+									height="32"
+									viewBox="0 0 32 32"
+								>
+									<path
+										fill="currentColor"
+										d="M28.88 30a1 1 0 0 1-.88-.5A15.19 15.19 0 0 0 15 22v6a1 1 0 0 1-.62.92a1 1 0 0 1-1.09-.21l-12-12a1 1 0 0 1 0-1.42l12-12a1 1 0 0 1 1.09-.21A1 1 0 0 1 15 4v6.11a17.19 17.19 0 0 1 15 17a16 16 0 0 1-.13 2a1 1 0 0 1-.79.86ZM14.5 20A17.62 17.62 0 0 1 28 26a15.31 15.31 0 0 0-14.09-14a1 1 0 0 1-.91-1V6.41L3.41 16L13 25.59V21a1 1 0 0 1 1-1h.54Z"
+									/>
+								</svg>
+								<p>Reply</p>
+							</li>
+							<li class="forward-message">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									width="24"
+									height="24"
+									viewBox="0 0 24 24"
+								>
+									<path
+										fill="currentColor"
+										d="M13 5.499a.996.996 0 0 0-1 1v2.559c-4.5.498-8 4.309-8 8.941v1c2.245-3.423 5.25-3.92 8-3.989v2.489a.999.999 0 0 0 1.707.707L20 11.999l-6.293-6.208A1 1 0 0 0 13 5.499"
+									/>
+								</svg>
+								<p>Forward</p>
+							</li>
+							<li class="copy-message">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									width="24"
+									height="24"
+									viewBox="0 0 24 24"
+								>
+									<g
+										fill="none"
+										stroke="currentColor"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+									>
+										<rect
+											width="14"
+											height="14"
+											x="8"
+											y="8"
+											rx="2"
+											ry="2"
+										/>
+										<path
+											d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"
+										/>
+									</g>
+								</svg>
+								<p>Copy</p>
+							</li>
+							<li class="edit-message">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									width="24"
+									height="24"
+									viewBox="0 0 24 24"
+								>
+									<g class="edit-outline">
+										<g
+											fill="currentColor"
+											fill-rule="evenodd"
+											class="Vector"
+											clip-rule="evenodd"
+										>
+											<path
+												d="M2 6.857A4.857 4.857 0 0 1 6.857 2H12a1 1 0 1 1 0 2H6.857A2.857 2.857 0 0 0 4 6.857v10.286A2.857 2.857 0 0 0 6.857 20h10.286A2.857 2.857 0 0 0 20 17.143V12a1 1 0 1 1 2 0v5.143A4.857 4.857 0 0 1 17.143 22H6.857A4.857 4.857 0 0 1 2 17.143z"
+											/>
+											<path
+												d="m15.137 13.219l-2.205 1.33l-1.033-1.713l2.205-1.33l.003-.002a1.2 1.2 0 0 0 .232-.182l5.01-5.036a3 3 0 0 0 .145-.157c.331-.386.821-1.15.228-1.746c-.501-.504-1.219-.028-1.684.381a6 6 0 0 0-.36.345l-.034.034l-4.94 4.965a1.2 1.2 0 0 0-.27.41l-.824 2.073a.2.2 0 0 0 .29.245l1.032 1.713c-1.805 1.088-3.96-.74-3.18-2.698l.825-2.072a3.2 3.2 0 0 1 .71-1.081l4.939-4.966l.029-.029c.147-.15.641-.656 1.24-1.02c.327-.197.849-.458 1.494-.508c.74-.059 1.53.174 2.15.797a2.9 2.9 0 0 1 .845 1.75a3.15 3.15 0 0 1-.23 1.517c-.29.717-.774 1.244-.987 1.457l-5.01 5.036q-.28.281-.62.487m4.453-7.126s-.004.003-.013.006z"
+											/>
+										</g>
+									</g>
+								</svg>
+								<p>Edit</p>
+							</li>
+							<li class="pin-message">
+								<span class="pin-icon">
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										width="24"
+										height="24"
+										viewBox="0 0 24 24"
+									>
+										<path
+											fill="none"
+											stroke="currentColor"
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4a1 1 0 0 1 1 1z"
+										/>
+									</svg>
+								</span>
+								<p>Pin</p>
+							</li>
+							<li class="select-message">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									width="24"
+									height="24"
+									viewBox="0 0 24 24"
+								>
+									<g
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+									>
+										<circle cx="12" cy="12" r="9" />
+										<path d="m8 12l3 3l5-6" />
+									</g>
+								</svg>
+								<p>Select Message</p>
+							</li>
+							<li class="delete-message">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									width="24"
+									height="24"
+									viewBox="0 0 24 24"
+								>
+									<path
+										fill="currentColor"
+										d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM8 9h8v10H8zm7.5-5l-1-1h-5l-1 1H5v2h14V4z"
+									/>
+								</svg>
+								<p>Delete Message</p>
+							</li>
+						</ul>
+					</div>
+
+					<button class="scroll-to-bottom-btn">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							width="24"
+							height="24"
+							viewBox="0 0 24 24"
+						>
+							<path
+								fill="none"
+								stroke="currentColor"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2.5"
+								d="m7 10l5 5m0 0l5-5"
+							/>
+						</svg>
+					</button>
+
+					<div class="chat-overlay"></div>
+
+					<div class="chat">
+						<!-- Messages will be injected here -->
+					</div>
+
+					<div class="chat-send-message">
+						<div class="message-action-preview">
+							<span class="action-preview">
+								<span class="action-name"></span>
+								<span class="action-message-preview"></span>
+							</span>
+							<button class="cancel-edit-btn">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									width="24"
+									height="24"
+									viewBox="0 0 24 24"
+								>
+									<path
+										fill="none"
+										stroke="currentColor"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="1.5"
+										d="M6.758 17.243L12.001 12m5.243-5.243L12 12m0 0L6.758 6.757M12.001 12l5.243 5.243"
+									/>
+								</svg>
+							</button>
+						</div>
+
+						<button class="emoji-btn" type="button">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								width="24"
+								height="24"
+								viewBox="0 0 24 24"
+							>
+								<path
+									fill="none"
+									stroke="currentColor"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M14.828 14.828a4 4 0 0 1-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0"
+								/>
+							</svg>
+						</button>
+						<emoji-picker
+							class="emoji-picker"
+							data-source="../../../public/assets/data.json"
+						></emoji-picker>
+
+						<textarea
+							rows="1"
+							placeholder="Message..."
+							class="message-input"
+							name="msg"
+						></textarea>
+						<button class="send-btn">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								width="24"
+								height="24"
+								viewBox="0 0 24 24"
+							>
+								<path
+									fill="currentColor"
+									fill-rule="evenodd"
+									d="M3.291 3.309a.75.75 0 0 0-.976.996l3.093 6.945H13a.75.75 0 0 1 0 1.5H5.408l-3.093 6.945a.75.75 0 0 0 .976.996l19-8a.75.75 0 0 0 0-1.382z"
+									clip-rule="evenodd"
+								/>
+							</svg>
+						</button>
+					</div>
+
+					<button class="unblock-action-btn" id="unblock-action-btn">
+						Unblock
+					</button>
+
+					<div class="selection-toolbar">
+						<p class="selection-count">0 Selected</p>
+						<div class="selection-actions">
+							<div class="selection-forward-btn">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									width="24"
+									height="24"
+									viewBox="0 0 24 24"
+								>
+									<path
+										fill="currentColor"
+										d="M13 5.499a.996.996 0 0 0-1 1v2.559c-4.5.498-8 4.309-8 8.941v1c2.245-3.423 5.25-3.92 8-3.989v2.489a.999.999 0 0 0 1.707.707L20 11.999l-6.293-6.208A1 1 0 0 0 13 5.499"
+									/>
+								</svg>
+							</div>
+							<div class="selection-delete-btn">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									width="24"
+									height="24"
+									viewBox="0 0 24 24"
+								>
+									<path
+										fill="currentColor"
+										d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM8 9h8v10H8zm7.5-5l-1-1h-5l-1 1H5v2h14V4z"
+									/>
+								</svg>
+							</div>
+							<div class="cancel-selection-btn">Cancel</div>
+						</div>
+					</div>
+				</section>
+			</div>
+
+			<div class="contact-profile-details">
+				<div class="contact-detail-pic">
+					<div class="detail-picture">
+						<img
+							src="../../../public/assets/images/profile-active.jpeg"
+							alt=""
+						/>
+					</div>
+					<button>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							width="24"
+							height="24"
+							viewBox="0 0 24 24"
+						>
+							<path
+								fill="currentColor"
+								d="M16.62 2.99a1.25 1.25 0 0 0-1.77 0L6.54 11.3a.996.996 0 0 0 0 1.41l8.31 8.31c.49.49 1.28.49 1.77 0s.49-1.28 0-1.77L9.38 12l7.25-7.25c.48-.48.48-1.28-.01-1.76"
+							/>
+						</svg>
+					</button>
+				</div>
+				<div class="contact-profile-actions">
+					<div class="contact-detail-name">
+						<div>
+							<svg
+								id="cancel-edit-name-btn"
+								xmlns="http://www.w3.org/2000/svg"
+								width="24"
+								height="24"
+								viewBox="0 0 24 24"
+							>
+								<path
+									fill="none"
+									stroke="currentColor"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="1.5"
+									d="M6.758 17.243L12.001 12m5.243-5.243L12 12m0 0L6.758 6.757M12.001 12l5.243 5.243"
+								/>
+							</svg>
+							<h3>name</h3>
+							<svg
+								id="edit-name-done-btn"
+								xmlns="http://www.w3.org/2000/svg"
+								width="24"
+								height="24"
+								viewBox="0 0 24 24"
+							>
+								<path
+									fill="currentColor"
+									d="m9.55 15.15l8.475-8.475q.3-.3.7-.3t.7.3t.3.713t-.3.712l-9.175 9.2q-.3.3-.7.3t-.7-.3L4.55 13q-.3-.3-.288-.712t.313-.713t.713-.3t.712.3z"
+								/>
+							</svg>
+						</div>
+						<h6>The user has this bio</h6>
+						<p>Last Seen this time</p>
+					</div>
+					<div class="contact-info">
+						<div id="contact-username">
+							<p>Username</p>
+							<h3>@username</h3>
+						</div>
+						<div id="contact-email">
+							<p>Email</p>
+							<h3>email@email.com</h3>
+						</div>
+					</div>
+					<div class="contact-actions">
+						<div id="edit-name-btn">Edit Name</div>
+						<div id="block-contact-btn">Block Contact</div>
+						<div id="delete-chat-btn">Delete Chat</div>
+						<div id="delete-contact-btn">Delete Contact</div>
+					</div>
+				</div>
+			</div>
+
+			<dialog class="profile-dialog">
+				<!-- If user is using desktop then contact profile details will be shown here -->
+			</dialog>
+
+			<div class="edit-profile-panel">
+				<div class="edit-profile-banner">
+					<button class="edit-profile-close" id="edit-profile-close">
+						<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+							<path fill="currentColor" d="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12z"/>
+						</svg>
+					</button>
+					<div class="edit-profile-avatar-wrapper">
+						<img class="edit-profile-avatar" src="../../../public/assets/images/profile.jpeg" alt=""/>
+						<button class="edit-profile-avatar-btn">
+							<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24">
+								<path fill="currentColor" d="M12 9a3 3 0 0 0-3 3a3 3 0 0 0 3 3a3 3 0 0 0 3-3a3 3 0 0 0-3-3m0 8a5 5 0 0 1-5-5a5 5 0 0 1 5-5a5 5 0 0 1 5 5a5 5 0 0 1-5 5m0-12.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5"/>
+							</svg>
+						</button>
+					</div>
+				</div>
+				<div class="edit-profile-body">
+					<div class="edit-profile-field">
+						<label>Name</label>
+						<input type="text" id="edit-name-input" placeholder="Your name"/>
+					</div>
+					<div class="edit-profile-field">
+						<label>Username</label>
+						<input type="text" id="edit-username-input" placeholder="@username"/>
+					</div>
+					<div class="edit-profile-field">
+						<label>Bio</label>
+						<textarea id="edit-bio-input" placeholder="Write something about yourself..." rows="3"></textarea>
+					</div>
+					<button class="edit-profile-save" id="edit-profile-save">Save Changes</button>
+				</div>
+			</div>
+
+			<dialog class="edit-profile-dialog">
+				<!-- If user is using desktop then edit profile will be shown here -->
+			</dialog>
+			
+			<div class="toaster">
+				<div class="toast">
+					<span class="toast-icon"></span>
+					<span class="toast-message">Message deleted</span>
+					<button class="undo-btn">Undo</button>
+				</div>
+			</div>
+		</main>
+
+		<script type="module" src="main-page-functions.js"></script>
+		<script type="module" src="../../../public/js/index.js"></script>
+	</body>
+</html>

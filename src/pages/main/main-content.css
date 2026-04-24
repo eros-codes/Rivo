@@ -1,0 +1,127 @@
+/* main styles */
+@import url(../../../public/css/global.css);
+@import url(styleSheet/header.css);
+@import url(styleSheet/contacts.css);
+@import url(styleSheet/contact-card-menu.css);
+@import url(styleSheet/active-chats.css);
+@import url(styleSheet/active-chats-swipe.css);
+@import url(styleSheet/chat.css);
+@import url(styleSheet/messages.css);
+@import url(styleSheet/send-message.css);
+@import url(styleSheet/toaster.css);
+@import url(styleSheet/forward-dialog.css);
+@import url(styleSheet/pinned-view.css);
+@import url(styleSheet/context-menu.css);
+@import url(styleSheet/chat-header.css);
+@import url(styleSheet/selection-tollbar.css);
+@import url(styleSheet/contact-profile.css);
+@import url(styleSheet/search-results.css);
+@import url(styleSheet/edit-profile.css);
+
+body {
+	overflow: hidden;
+	background-color: var(--background-color);
+}
+.parts {
+	display: flex;
+	width: 100%;
+	flex-direction: row;
+	overflow: auto;
+}
+.people-part {
+	width: 100%;
+	overflow: auto;
+	height: 100vh;
+	display: inline;
+}
+.chat-part {
+	overflow: hidden;
+	display: none;
+	width: 100%;
+	background-color: var(--background-color);
+}
+.main-content {
+	height: auto;
+	display: flex;
+	flex-direction: row-reverse;
+	align-items: flex-start;
+	overflow: auto;
+	justify-content: start;
+}
+.guid {
+	position: absolute;
+	color: var(--sub-text-secondary-color);
+	font-size: 0.75rem;
+	top: 0.8rem;
+	left: 1.5rem;
+	text-transform: uppercase;
+	letter-spacing: 0.1rem;
+	z-index: 101;
+	user-select: none;
+}
+
+.chat-part.slide-in {
+	animation: slideInFromRight 0.3s ease;
+}
+.chat-part.slide-out {
+	animation: slideOutToRight 0.3s ease;
+}
+.edit-profile-panel.slide-in {
+	animation: slideInFromRight 0.3s ease;
+}
+.edit-profile-panel.slide-out {
+	animation: slideOutToRight 0.3s ease;
+}
+.contact-profile-details.slide-in {
+	animation: slideInFromRight 0.3s ease;
+}
+.contact-profile-details.slide-out {
+	animation: slideOutToRight 0.3s ease;
+}
+
+@media (max-width: 700px) {
+	.contact-profile-details {
+		position: fixed;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100dvh;
+		z-index: 300;
+	}
+	.edit-profile-panel {
+		position: fixed;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100dvh;
+		z-index: 300;
+	}
+	.main-content {
+		flex-direction: column-reverse;
+	}
+	.chat-part {
+		height: 100dvh;
+		position: fixed;
+		top: 0;
+		left: 0;
+		z-index: 300;
+	}
+}
+
+
+@keyframes slideInFromRight {
+	from {
+		transform: translateX(100%);
+	}
+	to {
+		transform: translateX(0);
+	}
+}
+@keyframes slideOutToRight {
+	from {
+		transform: translateX(0);
+	}
+	to {
+		transform: translateX(100%);
+	}
+}

@@ -1,0 +1,231 @@
+.main-header {
+	display: inline-flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 1rem 2rem;
+	background: var(--header-color);
+	position: sticky;
+	border-radius: 1rem;
+	top: 0.2rem;
+	left: 0.5rem;
+	width: calc(100% - 1rem);
+	height: 4rem;
+	z-index: 200;
+	box-shadow: var(--shadow);
+	transition: all 0.3s ease;
+    user-select: none;
+}
+.main-header > span {
+	display: flex;
+	align-items: center;
+	background-color: var(--header-glass-bg-color);
+	padding: 0.5rem;
+	border-radius: 1rem;
+	backdrop-filter: blur(10px);
+	-webkit-backdrop-filter: blur(10px);
+	box-shadow: var(--light-shadow),
+	inset 0 -1px 10px rgba(255, 255, 255, 0.1),
+	inset 0 1px 10px rgba(0, 0, 0, 0.1);
+	border: 1px solid var(--glass-border);
+	position: relative;
+}
+.main-header > span > svg {
+	color: var(--text-secondary-color);
+	cursor: pointer;
+	transition: transform 0.2s ease-in-out;
+	width: 1.5rem;
+	height: 1.5rem;
+}
+.main-header > span > svg:focus {
+	transform: scale(1.1);
+}
+.search-bar {
+	display: flex;
+	align-items: center;
+	background-color: var(--glass-bg-color);
+	padding: 0.25rem 0.5rem;
+	border-radius: 1rem;
+	width: 2.61rem;
+	height: 2.61rem;
+	overflow: hidden;
+	transition: width 0.3s ease-in-out;
+}
+.search-input {
+	background: transparent;
+	border: none;
+	outline: none;
+	color: var(--text-secondary-color);
+	flex: 1;
+	flex-basis: 0;
+	min-width: 0;
+	width: 0rem;
+	opacity: 0;
+	transform: translateX(-8px);
+	transition: all 0.4s ease-in-out;
+	pointer-events: none;
+	font-size: 16px;
+}
+.search-bar:focus-within {
+	width: 15rem;
+}
+.search-bar:focus-within .search-input {
+	width: 15rem;
+	gap: 0.5rem;
+	opacity: 1;
+	transform: translateX(0);
+	pointer-events: auto;
+	margin-left: 0.5rem;
+}
+.search-bar.open {
+  width: 15rem;
+}
+.search-bar.open .search-input {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+  margin-left: 0.5rem;
+  width: 8rem;
+}
+.settings-list {
+	position: absolute;
+	left: 2rem;
+	background-color: var(--header-glass-bg-color);
+	border-radius: 1rem;
+	box-shadow: var(--light-shadow);
+	backdrop-filter: blur(10px);
+	-webkit-backdrop-filter: blur(10px);
+	border: 1px solid var(--glass-border);
+	width: 2.61rem;
+	height: 2.61rem;
+	flex-direction: column;
+	z-index: 1001;
+	list-style: none;
+	max-height: 10rem;
+	transition: all 0.3s ease-in-out;
+	overflow: hidden;
+	white-space: nowrap;
+	z-index: 300;
+	box-shadow: var(--light-shadow),
+	inset 0 -1px 10px rgba(255, 255, 255, 0.1),
+	inset 0 1px 10px rgba(0, 0, 0, 0.1);
+}
+.settings-list svg {
+	width: 1.5rem;
+	height: 1.5rem;
+	margin-right: 1rem;
+	color: var(--text-secondary-color);
+}
+.settings-list li {
+	align-items: center;
+	padding: 0.5rem;
+	border-radius: 0.5rem;
+	cursor: pointer;
+	transition: all 0.1s ease-in-out;
+	color: var(--text-secondary-color);
+	line-height: 1;
+}
+.settings-list li span {
+	position: relative;
+	top: -0.34rem;
+	left: -0.6rem;
+}
+.settings-list li:focus-within {
+	background-color: var(--glass-bg-input-color);
+}
+.settings {
+	visibility: hidden;
+	opacity: 0;
+}
+.settings-section span {
+	transition: all 0.3s ease-in-out;
+	opacity: 0;
+	visibility: hidden;
+}
+.settings-list:focus-within {
+	width: 12rem;
+	height: 8rem;
+	transform: translateY(2.8rem);
+	z-index: 3000;
+}
+.settings-list:focus-within .settings-section span {
+	opacity: 1;
+	visibility: visible;
+}
+.settings-list:focus-within .edit-section {
+	opacity: 1;
+	visibility: visible;
+}
+.settings-list:focus-within .logout-section {
+	opacity: 1;
+	visibility: visible;
+}
+.edit-section {
+	transition: all 0.3s ease-in-out;
+	opacity: 0;
+	visibility: hidden;
+	color: var(--text-main-color);
+}
+.logout-section {
+	transition: all 0.3s ease-in-out;
+	opacity: 0;
+	visibility: hidden;
+	color: var(--text-main-color);
+}
+.settings-list.open{
+  width: 12rem;
+  height: 8rem;
+  transform: translateY(2.8rem);
+  z-index: 300;
+}
+.settings-list.open .settings-section span,
+.settings-list.open .edit-section,
+.settings-list.open .logout-section {
+  opacity: 1;
+  visibility: visible;
+}
+
+@media all and (min-width: 700px) {
+	.main-header {
+		left: 1rem;
+		width: calc(100% - 2rem);
+	}
+	.main-header:hover {
+		scale: 1.01;
+	}
+	.main-header > span > svg:hover {
+		transform: scale(1.1);
+	}
+	.search-bar:hover {
+		width: 15rem;
+	}
+	.search-bar:hover .search-input {
+		width: 15rem;
+		gap: 0.5rem;
+		width: 8rem;
+		opacity: 1;
+		transform: translateX(0);
+		pointer-events: auto;
+		margin-left: 0.5rem;
+	}
+	.settings-list li:hover {
+		background-color: var(--glass-bg-input-color);
+	}
+	.settings-list:hover {
+		width: 12rem;
+		height: 8rem;
+		transform: translateY(2.8rem);
+		z-index: 3000;
+	}
+	.settings-list:hover .settings-section span {
+		opacity: 1;
+		visibility: visible;
+	}
+	.settings-list:hover .edit-section {
+		opacity: 1;
+		visibility: visible;
+	}
+	.settings-list:hover .logout-section {
+		opacity: 1;
+		visibility: visible;
+	}
+}

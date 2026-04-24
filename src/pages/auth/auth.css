@@ -1,0 +1,226 @@
+@import url(../../../public/css/global.css);
+.login-body {
+    background : var(--background-color);
+    display : flex;
+    align-items : center;
+    justify-content : center;
+    min-height: 100vh;
+    overflow: hidden;
+}
+.container{
+    display : flex;
+    align-items : center;
+    justify-content : center;
+    position: relative;
+    padding: 6rem;
+}
+.circle-top, .circle-bottom {
+    border-radius : 50%;
+    box-shadow : 0 4px 15px rgba(0, 0, 0, 0.3);
+    position: absolute;
+    height: 12rem;
+    width: 12rem;
+    will-change: transform;    
+}
+.circle-top {
+    background : var(--top-orange-circle);
+    top : -0.5rem;
+    left : 0.5rem;
+    animation: orbitCW 6s linear infinite;
+}
+.circle-bottom {
+    background : var(--bottom-orange-circle);
+    bottom : 0rem;
+    right : 3.5rem; 
+    animation: orbitCCW 7.5s linear infinite;
+}
+.form {
+    padding : 3rem 2rem;
+    border : 1px solid var(--glass-border);
+    border-radius : 8px;
+    background : var(--glass-bg-color);
+    backdrop-filter : blur(7px);
+    -webkit-backdrop-filter : blur(7px);
+    box-shadow : var(--shadow);
+    width : 25rem;
+    height : auto;
+    flex-direction : column;
+    gap : 0.5rem;
+    color : var(--text-main-color);
+    justify-content : center;
+    z-index : 1;
+}
+.form-title{
+    text-align: center;
+    line-height: 100%;
+    margin: 2rem auto 1rem;
+    font-size: 2rem;
+}
+.form-label{
+    font-size: 1rem;
+    vertical-align: middle;
+}
+.form-input {
+    padding: 0.5rem;
+    margin-bottom: 1rem;
+    background-color: var(--glass-bg-input-color);
+    border-radius: 0.2rem;
+    width: 100%;
+    height: 2.5rem;
+    outline: none;
+    border: 1px solid transparent;
+    color: var(--text-main-color);
+    transition: all 0.3s ease;
+    font-size: 16px;
+    font-weight: 360;
+}
+.half-width {
+    width: 48%;
+}
+.form-input:hover , .form-input:focus {
+    box-shadow: var(--light-shadow);
+    border: 1px solid var(--glass-input-border-color);
+}
+.form-input:focus::placeholder{
+    color: transparent;
+}
+.form-input::placeholder { 
+    color: var(--sub-text-main-color);
+}
+.form-submit {
+    padding: 0.5rem;
+    margin-top: 1rem;
+    background-color: var(--header-color);
+    border-radius: 0.2rem;
+    box-shadow: none;
+    width: 100%;
+    height: 3rem;
+    font-size: 1.125rem;
+    outline: none;
+    border: none;
+    color: var(--text-secondary-color);
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+.form-submit:hover {
+    background-color: var(--text-main-color);
+}
+.signup > span {
+    display: flex;
+    gap: 0.75rem;
+}
+.half-width {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+.half-width .form-input {
+    width: 100%;
+    margin: 0.25rem 0 1rem;
+}
+.checkbox {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 1rem;
+    height: 1rem;
+    border-radius: 50%;
+    border: 2px solid var(--text-main-color);
+    background: transparent;
+    display: inline-block;
+    vertical-align: middle;
+    position: relative;
+    cursor: pointer;
+    transition: all 0.1s ease;
+    margin-right: 0rem;
+}
+.checkbox::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%,-50%) scale(0);
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--text-main-color);
+    transition: transform 0.12s ease;
+    pointer-events: none;
+}
+.checkbox:checked::after {
+    transform: translate(-50%,-50%) scale(1);
+}
+.checkbox:checked {
+    background: transparent;
+    border-color: var(--text-main-color);
+}
+.forgotpass {
+    float: right;
+    font-size: 0.875rem;
+    color: var(--sub-text-secondary-color);
+    text-decoration: none;
+    margin-left: 1rem;
+}
+.forgotpass:hover {
+    text-decoration: underline;
+}
+.signuplink, .loginlink {
+    display: block;
+    text-align: center;
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--sub-text-secondary-color);
+    text-decoration: none;
+}
+.signuplink:hover, .loginlink:hover {
+    text-decoration: underline;
+}
+.go-back {
+    display: inline-block;
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--sub-text-secondary-color);
+    text-decoration: none;
+    position: absolute;
+    top: 1rem;
+    left: 2rem;
+}
+.go-back:hover {
+    text-decoration: underline;
+}
+.form-subtitle {
+    text-align: center;
+    font-size: 1rem;
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+    color: (--sub-text-main-color);
+}
+.code-digit {
+    width: 3rem;
+    height: 3.5rem;
+    font-size: 1.5rem;
+    text-align: center;
+}
+
+.timer {
+    border: none;
+    outline: none;
+    background-color: transparent;
+    display: block;
+    text-align: center;
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    text-decoration: none;
+    cursor: pointer;
+    color: var(--text-main-color);
+}
+.disabled {
+    color: var(--chat-time);
+    cursor: default;
+}
+
+.login {
+    display : flex;
+}
+.signup, .verify, .password, .forget-password {
+    display : none;
+}

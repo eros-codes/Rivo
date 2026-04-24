@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1a1a2e">
+    <title>Rivo</title>
+    <link rel="stylesheet" href="auth.css" />
+    <link rel="manifest" href="../../../public/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="../../../public/assets/icons/Icon-180.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="../../../public/assets/icons/Favicon-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="../../../public/assets/icons/Favicon-16.png">
+  </head>
+  <body class="login-body">
+    <div class="container">
+      <div class="circle-top"></div>
+
+      <form action="get" class="form login">
+        <h1 class="form-title">Welcome</h1>
+        <label for="username" class="form-label">Email</label>
+        <input
+          type="text"
+          id="login-username"
+          name="login-username"
+          required
+          class="form-input"
+          minlength="6"
+          placeholder="Email or Username"
+        />
+        <label for="password" class="form-label">Password</label>
+        <input
+          type="password"
+          id="login-password"
+          name="login-password"
+          required
+          minlength="8"
+          class="form-input"
+          placeholder="Password"
+        />
+        <span>
+          <input
+            type="checkbox"
+            id="remember"
+            name="remember"
+            class="checkbox"
+          />
+          <label for="remember" class="form-label">Remember Me</label>
+          <a href="#" class="forgotpass" id="forgot-password-btn">Forgot Password?</a>
+        </span>
+        <input type="submit" value="Log In" class="form-submit" id="login-btn"/>
+        <a href="#" class="signuplink" id="show-signup"
+          >Don't have an account? Sign up</a
+        >
+      </form>
+
+      <form action="post" class="form signup">
+        <h1 class="form-title">Sign Up</h1>
+        <label for="last-name" class="form-label">Name</label>
+        <input
+          type="text"
+          id="name"
+          name="last-name"
+          required
+          class="form-input"
+          placeholder="Your name"
+        />
+        <label for="email" class="form-label">Email</label>
+        <input
+          type="email"
+          id="email"
+          name="email"
+          required
+          class="form-input"
+          placeholder="you@example.com"
+        />
+        <label for="username" class="form-label">Username</label>
+        <input
+          type="text"
+          id="username"
+          name="username"
+          required
+          class="form-input"
+          placeholder="your_username"
+          minlength="6"
+        />
+        <input type="submit" value="Submit" class="form-submit" id="signup-btn" />
+        <a href="#" class="loginlink" id="show-login">Already have an account? Log in</a>
+      </form>
+
+      <form action="post" class="form verify">
+        <h1 class="form-title">Verify it's you</h1>
+        <p class="form-subtitle">
+          Please enter the code sent to your email address.
+        </p>
+        <div class="code-inputs" style="display: flex; gap: 8px">
+          <input
+            inputmode="numeric"
+            pattern="\d"
+            maxlength="1"
+            class="form-input code-digit"
+            aria-label="code digit 1"
+          />
+          <input
+            inputmode="numeric"
+            pattern="\d"
+            maxlength="1"
+            class="form-input code-digit"
+            aria-label="code digit 2"
+          />
+          <input
+            inputmode="numeric"
+            pattern="\d"
+            maxlength="1"
+            class="form-input code-digit"
+            aria-label="code digit 3"
+          />
+          <input
+            inputmode="numeric"
+            pattern="\d"
+            maxlength="1"
+            class="form-input code-digit"
+            aria-label="code digit 4"
+          />
+          <input
+            inputmode="numeric"
+            pattern="\d"
+            maxlength="1"
+            class="form-input code-digit"
+            aria-label="code digit 5"
+          />
+          <input
+            inputmode="numeric"
+            pattern="\d"
+            maxlength="1"
+            class="form-input code-digit"
+            aria-label="code digit 6"
+          />
+        </div>
+        <input type="hidden" name="code" id="code-hidden" value="" maxlength="6"/>
+        <input type="submit" value="Verify" class="form-submit" />
+        <button class="timer" id="code-resend-timer">1:00</button>
+        <a href="#" class="go-back" id="back-to-signup">Back</a>
+      </form>
+
+      <form action="post" class="form password">
+        <h1 class="form-title">Set Your Password</h1>
+        <label for="password" class="form-label">Password</label>
+        <input
+          type="password"
+          id="password"
+          name="password"
+          class="form-input"
+          placeholder="8 or more characters"
+          minlength="8"
+          required
+        />
+        <label for="confirm-password" class="form-label"
+          >Confirm Password</label
+        >
+        <input
+          type="password"
+          id="confirm-password"
+          name="confirm-password"
+          class="form-input"
+          placeholder="Re-enter your password"
+          minlength="8"
+          required
+        />
+        <input type="submit" value="Submit" class="form-submit" />
+        <a href="#" class="go-back" id="back-to-login">Back</a>
+      </form>
+
+      <form action="post" class="form forget-password">
+        <h1 class="form-title">We Got You</h1>
+        <p class="form-subtitle">
+          Please enter your username or email address to reset your password.
+        </p>
+        <input
+          type="text"
+          name="comfirm"
+          id="comfirm"
+          class="form-input"
+          placeholder="Email or Username"
+          required
+          minlength="6"
+        />
+        <input type="submit" value="Reset" class="form-submit" />
+        <a href="#" class="go-back" id="back-to-login2">Back</a>
+      </form>
+
+      <div class="circle-bottom"></div>
+    </div>
+    <script src="auth-functions.js"></script>
+  </body>
+</html>

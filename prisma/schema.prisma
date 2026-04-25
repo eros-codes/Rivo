@@ -33,7 +33,7 @@ model Contact {
   contactId      Int
   nickname       String?
   isPinned       Boolean      @default(false)
-  pinOrder       Int          @default(false)
+  pinOrder       Int?
   isMuted        Boolean      @default(false)
   isBlocked      Boolean      @default(false)
   isInChat       Boolean      @default(false)

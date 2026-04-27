@@ -1,7 +1,7 @@
 // ─── Auth header helper ───────────────────────────────────────────────────────
 const authHeader = () => ({
 	"Content-Type": "application/json",
-	Authorization: `Bearer ${sessionStorage.getItem("token")}`,
+	Authorization: `Bearer ${localStorage.getItem("token")}`,
 });
 
 // ─── Contacts ─────────────────────────────────────────────────────────────────
@@ -78,7 +78,9 @@ export async function logout() {
 		method: "POST",
 		headers: authHeader(),
 	});
-	sessionStorage.clear();
+	// remove only auth data so site-wide preferences (theme, rememberedUser) persist
+	localStorage.removeItem("token");
+	localStorage.removeItem("user");
 }
 
 // ─── Users ────────────────────────────────────────────────────────────────────
@@ -114,7 +116,7 @@ export async function uploadAvatar(formData) {
 	return await fetch("/api/users/me/avatar", {
 		method: "POST",
 		headers: {
-			Authorization: `Bearer ${sessionStorage.getItem("token")}`,
+			Authorization: `Bearer ${localStorage.getItem("token")}`,
 		},
 		body: formData,
 	}).then((r) => r.json());

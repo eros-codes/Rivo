@@ -50,7 +50,9 @@ export function initSettings(dom, currentUser) {
 			try {
 				const res = await deleteAccount(password);
 				if (res && res.success) {
-					sessionStorage.clear();
+					// remove only auth data, keep preferences like theme
+					localStorage.removeItem("token");
+					localStorage.removeItem("user");
 					window.location.href = "../auth/auth.html";
 				} else {
 					showToast(res?.error || "Failed to delete account");
@@ -124,9 +126,9 @@ export function initSettings(dom, currentUser) {
 					} else {
 						if (_currentUser) _currentUser[p.field] = val;
 						const stored = JSON.parse(
-							sessionStorage.getItem("user") || "{}",
+							localStorage.getItem("user") || "{}",
 						);
-						sessionStorage.setItem(
+						localStorage.setItem(
 							"user",
 							JSON.stringify({ ...stored, ...(res || {}) }),
 						);
@@ -169,8 +171,8 @@ export function initSettings(dom, currentUser) {
 }
 
 export function openSettings(user) {
-    _currentUser = user || _currentUser;
-    if (!_currentUser) _currentUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+	_currentUser = user || _currentUser;
+	if (!_currentUser) _currentUser = JSON.parse(localStorage.getItem('user') || '{}');
 
     // populate privacy values
     try {

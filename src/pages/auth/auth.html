@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#1a1a2e">
     <title>Rivo</title>
+    <link rel="stylesheet" href="../../../public/css/global.css" />
     <link rel="stylesheet" href="auth.css" />
     <link rel="manifest" href="../../../public/manifest.webmanifest">
     <link rel="apple-touch-icon" href="../../../public/assets/icons/Icon-180.png">
@@ -28,15 +29,21 @@
           placeholder="Email or Username"
         />
         <label for="password" class="form-label">Password</label>
-        <input
-          type="password"
-          id="login-password"
-          name="login-password"
-          required
-          minlength="8"
-          class="form-input"
-          placeholder="Password"
-        />
+        <div class="password-wrapper">
+          <input
+            type="password"
+            id="login-password"
+            name="login-password"
+            required
+            minlength="8"
+            class="form-input password-input"
+            placeholder="Password"
+          />
+          <button type="button" class="password-toggle" aria-label="Show password">
+            <svg class="eye-closed" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-5.05 0-9.27-3.11-11-7a10.97 10.97 0 0 1 4-5.2"></path><path d="M1 1l22 22"></path></svg>
+            <svg class="eye-open" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          </button>
+        </div>
         <span>
           <input
             type="checkbox"
@@ -145,27 +152,39 @@
       <form action="post" class="form password">
         <h1 class="form-title">Set Your Password</h1>
         <label for="password" class="form-label">Password</label>
-        <input
-          type="password"
-          id="password"
-          name="password"
-          class="form-input"
-          placeholder="8 or more characters"
-          minlength="8"
-          required
-        />
+        <div class="password-wrapper">
+          <input
+            type="password"
+            id="password"
+            name="password"
+            class="form-input password-input"
+            placeholder="8 or more characters"
+            minlength="8"
+            required
+          />
+          <button type="button" class="password-toggle" aria-label="Show password">
+            <svg class="eye-closed" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-5.05 0-9.27-3.11-11-7a10.97 10.97 0 0 1 4-5.2"></path><path d="M1 1l22 22"></path></svg>
+            <svg class="eye-open" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          </button>
+        </div>
         <label for="confirm-password" class="form-label"
           >Confirm Password</label
         >
-        <input
-          type="password"
-          id="confirm-password"
-          name="confirm-password"
-          class="form-input"
-          placeholder="Re-enter your password"
-          minlength="8"
-          required
-        />
+        <div class="password-wrapper">
+          <input
+            type="password"
+            id="confirm-password"
+            name="confirm-password"
+            class="form-input password-input"
+            placeholder="Re-enter your password"
+            minlength="8"
+            required
+          />
+          <button type="button" class="password-toggle" aria-label="Show password">
+            <svg class="eye-closed" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-5.05 0-9.27-3.11-11-7a10.97 10.97 0 0 1 4-5.2"></path><path d="M1 1l22 22"></path></svg>
+            <svg class="eye-open" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          </button>
+        </div>
         <input type="submit" value="Submit" class="form-submit" />
         <a href="#" class="go-back" id="back-to-login">Back</a>
       </form>
@@ -190,6 +209,6 @@
 
       <div class="circle-bottom"></div>
     </div>
-    <script src="auth-functions.js"></script>
+    <script type="module" src="auth-functions.js"></script>
   </body>
 </html>

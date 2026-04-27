@@ -1,3 +1,17 @@
+import { showForm, showError, clearError } from "./js/auth-ui.js";
+import { isValidEmail, isValidUsername } from "./js/auth-validate.js";
+import {
+	getSentCode,
+	sendCode,
+	startResendTimer,
+	clearResendTimer,
+	clearCodeInputs,
+} from "./js/auth-timer.js";
+import { loginUser, registerUser } from "./js/auth-api.js";
+
+const theme = localStorage.getItem("rivo-theme") || "light";
+if (theme === "dark") document.body.classList.add("dark-mode");
+
 document.addEventListener("DOMContentLoaded", function () {
 	// ─── DOM references ───────────────────────────────────────────────────────
 	const loginForm = document.querySelector(".form.login");
@@ -28,82 +42,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
 	const allForms = document.querySelectorAll(".form");
 
-	let sentCode = null;
 	let forgotPass = false;
-	let resendTimerInterval = null;
-
-	// ─── Helpers ──────────────────────────────────────────────────────────────
-	function showForm(targetForm) {
-		allForms.forEach((f) => (f.style.display = "none"));
-		if (targetForm) targetForm.style.display = "flex";
-	}
-
-	function showError(input, message) {
-		clearError(input);
-		input.style.borderColor = "#e05c5c";
-		const err = document.createElement("span");
-		err.className = "input-error";
-		err.textContent = message;
-		err.style.cssText =
-			"color:#e05c5c;font-size:0.75rem;margin-top:-0.5rem;display:block;";
-		input.insertAdjacentElement("afterend", err);
-	}
-
-	function clearError(input) {
-		input.style.borderColor = "";
-		const next = input.nextElementSibling;
-		if (next && next.classList.contains("input-error")) next.remove();
-	}
-
-	function isValidEmail(email) {
-		return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-	}
-
-	function isValidUsername(username) {
-		return /^[a-zA-Z0-9_]{3,20}$/.test(username);
-	}
-
-	function sendCode() {
-		sentCode = Math.floor(Math.random() * 900000 + 100000);
-		// وقتی بکند داشتی اینجا ایمیل میفرستی
-		// فعلاً برای تست توی alert نشون میده
-		alert(`Your verification code is: ${sentCode}`);
-	}
-
-	function startResendTimer() {
-		if (resendTimerInterval) clearInterval(resendTimerInterval);
-		let sec = 60;
-		codeResendTimer.classList.add("disabled");
-		codeResendTimer.style.pointerEvents = "none";
-		codeResendTimer.style.opacity = "0.5";
-
-		resendTimerInterval = setInterval(function () {
-			if (sec === 0) {
-				clearInterval(resendTimerInterval);
-				resendTimerInterval = null;
-				codeResendTimer.classList.remove("disabled");
-				codeResendTimer.style.pointerEvents = "";
-				codeResendTimer.style.opacity = "";
-				codeResendTimer.textContent = "Resend";
-				return;
-			}
-			if (sec === 60) {
-				codeResendTimer.textContent = "1:00";
-			} else if (sec > 9) {
-				codeResendTimer.textContent = `0:${sec}`;
-			} else {
-				codeResendTimer.textContent = `0:0${sec}`;
-			}
-			sec--;
-		}, 1000);
-	}
-
-	function clearCodeInputs() {
-		if (!verifyForm) return;
-		verifyForm
-			.querySelectorAll(".code-digit")
-			.forEach((d) => (d.value = ""));
-	}
 
 	// ─── Auto-fill remembered user ────────────────────────────────────────────
 	const remembered = localStorage.getItem("rememberedUser");
@@ -111,6 +50,26 @@ document.addEventListener("DOMContentLoaded", function () {
 		loginUsername.value = remembered;
 		if (rememberUser) rememberUser.checked = true;
 	}
+
+	// ─── Password toggle (show/hide) ─────────────────────────────────────────
+	// Attach a single handler to every toggle button on the page
+	document.querySelectorAll('.password-toggle').forEach((btn) => {
+		const wrapper = btn.closest('.password-wrapper');
+		if (!wrapper) return;
+		const input = wrapper.querySelector('.password-input') || wrapper.querySelector('input[type="password"], input[type="text"]');
+		if (!input) return;
+		btn.addEventListener('click', () => {
+			const isHidden = input.type === 'password';
+			input.type = isHidden ? 'text' : 'password';
+			const eyeOpen = btn.querySelector('.eye-open');
+			const eyeClosed = btn.querySelector('.eye-closed');
+			if (eyeOpen && eyeClosed) {
+				eyeOpen.style.display = isHidden ? '' : 'none';
+				eyeClosed.style.display = isHidden ? 'none' : '';
+			}
+			btn.setAttribute('aria-label', isHidden ? 'Hide password' : 'Show password');
+		});
+	});
 
 	// ─── Login form ───────────────────────────────────────────────────────────
 	if (loginForm) {
@@ -150,18 +109,12 @@ document.addEventListener("DOMContentLoaded", function () {
 			}
 
 			try {
-				const res = await fetch("/api/auth/login", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
-						identifier: loginUsername.value.trim(),
-						password: loginPassword.value,
-					}),
-				});
+				const { ok, data } = await loginUser(
+					loginUsername.value.trim(),
+					loginPassword.value,
+				);
 
-				const data = await res.json();
-
-				if (!res.ok) {
+				if (!ok) {
 					showError(
 						loginUsername,
 						data.error || "Invalid credentials",
@@ -169,8 +122,8 @@ document.addEventListener("DOMContentLoaded", function () {
 					return;
 				}
 
-				sessionStorage.setItem("token", data.token);
-				sessionStorage.setItem("user", JSON.stringify(data.user));
+				localStorage.setItem("token", data.token);
+				localStorage.setItem("user", JSON.stringify(data.user));
 				window.location.href = "../main/main-page.html";
 			} catch {
 				showError(loginUsername, "Connection error");
@@ -179,13 +132,13 @@ document.addEventListener("DOMContentLoaded", function () {
 
 		if (forgetPasswordBtn) {
 			forgetPasswordBtn.addEventListener("click", () => {
-				showForm(forgotForm);
+				showForm(allForms, forgotForm);
 			});
 		}
 
 		if (showSignUp) {
 			showSignUp.addEventListener("click", () => {
-				showForm(signupForm);
+				showForm(allForms, signupForm);
 			});
 		}
 	}
@@ -226,17 +179,17 @@ document.addEventListener("DOMContentLoaded", function () {
 			if (!valid) return;
 
 			forgotPass = false;
-			clearCodeInputs();
+			clearCodeInputs(verifyForm);
 			sendCode();
-			startResendTimer();
-			showForm(verifyForm);
+			startResendTimer(codeResendTimer);
+			showForm(allForms, verifyForm);
 			const firstDigit = verifyForm.querySelector(".code-digit");
 			if (firstDigit) firstDigit.focus();
 		});
 
 		if (showLogIn) {
 			showLogIn.addEventListener("click", () => {
-				showForm(loginForm);
+				showForm(allForms, loginForm);
 			});
 		}
 	}
@@ -299,13 +252,13 @@ document.addEventListener("DOMContentLoaded", function () {
 
 			if (codeHidden) codeHidden.value = code;
 
-			if (String(sentCode) === code) {
-				clearCodeInputs();
-				showForm(passwordForm);
+			if (String(getSentCode()) === code) {
+				clearCodeInputs(verifyForm);
+				showForm(allForms, passwordForm);
 				if (passwordInput) passwordInput.focus();
 			} else {
 				alert("The code entered does not match. Please try again.");
-				clearCodeInputs();
+				clearCodeInputs(verifyForm);
 				codeDigits[0].focus();
 			}
 		});
@@ -313,19 +266,18 @@ document.addEventListener("DOMContentLoaded", function () {
 		if (codeResendTimer) {
 			codeResendTimer.addEventListener("click", () => {
 				if (codeResendTimer.classList.contains("disabled")) return;
-				clearCodeInputs();
+				clearCodeInputs(verifyForm);
 				sendCode();
-				startResendTimer();
+				startResendTimer(codeResendTimer);
 			});
 		}
 
 		if (backToSignUp) {
 			backToSignUp.addEventListener("click", () => {
-				if (resendTimerInterval) {
-					clearInterval(resendTimerInterval);
-					resendTimerInterval = null;
-				}
-				forgotPass ? showForm(forgotForm) : showForm(signupForm);
+				clearResendTimer();
+				forgotPass
+					? showForm(allForms, forgotForm)
+					: showForm(allForms, signupForm);
 			});
 		}
 	}
@@ -356,25 +308,18 @@ document.addEventListener("DOMContentLoaded", function () {
 			if (!valid) return;
 
 			if (forgotPass) {
-				// reset password flow
-				showForm(loginForm);
+				showForm(allForms, loginForm);
 				alert("Password reset successfully. Please log in.");
 			} else {
 				try {
-					const res = await fetch("/api/auth/register", {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({
-							name: signupName.value.trim(),
-							email: signupEmail.value.trim(),
-							username: signupUsername.value.trim(),
-							password: passwordInput.value,
-						}),
-					});
+					const { ok, data } = await registerUser(
+						signupName.value.trim(),
+						signupEmail.value.trim(),
+						signupUsername.value.trim(),
+						passwordInput.value,
+					);
 
-					const data = await res.json();
-
-					if (!res.ok) {
+					if (!ok) {
 						showError(
 							passwordInput,
 							data.error || "Registration failed",
@@ -382,7 +327,7 @@ document.addEventListener("DOMContentLoaded", function () {
 						return;
 					}
 
-					showForm(loginForm);
+					showForm(allForms, loginForm);
 					alert("Account created! Please log in.");
 				} catch {
 					showError(passwordInput, "Connection error");
@@ -392,7 +337,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
 		if (backToLogin) {
 			backToLogin.addEventListener("click", () => {
-				showForm(loginForm);
+				showForm(allForms, loginForm);
 			});
 		}
 	}
@@ -415,17 +360,17 @@ document.addEventListener("DOMContentLoaded", function () {
 			clearError(forgotInput);
 
 			forgotPass = true;
-			clearCodeInputs();
+			clearCodeInputs(verifyForm);
 			sendCode();
-			startResendTimer();
-			showForm(verifyForm);
+			startResendTimer(codeResendTimer);
+			showForm(allForms, verifyForm);
 			const firstDigit = verifyForm?.querySelector(".code-digit");
 			if (firstDigit) firstDigit.focus();
 		});
 
 		if (backToLogin2) {
 			backToLogin2.addEventListener("click", () => {
-				showForm(loginForm);
+				showForm(allForms, loginForm);
 			});
 		}
 	}

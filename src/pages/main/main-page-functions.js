@@ -73,13 +73,13 @@ import { initAddContact, openAddContact } from "./js/add-contact.js";
 import { initSocket, emitTypingStart, emitTypingStop } from "./js/socket.js";
 
 document.addEventListener("DOMContentLoaded", async function () {
-	const token = sessionStorage.getItem("token");
+	const token = localStorage.getItem("token");
 	if (!token) {
 		window.location.href = "../auth/auth.html";
 		return;
 	}
 
-	const currentUser = JSON.parse(sessionStorage.getItem("user") || "{}");
+	const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
 	// ─── DOM references ───────────────────────────────────────────────────────
 	const logoutBtn = document.getElementById("logout");
 	const chatPart = document.getElementById("chat-part");
@@ -1445,8 +1445,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 	// ─── Global click ─────────────────────────────────────────────────────────
 	document.addEventListener("click", (e) => {
-			if (settingsList && (!settingsList.contains(e.target) && (!settingsBtn || !settingsBtn.contains(e.target)))) {
-				settingsList.classList.remove("open");
+		if (settingsList && (!settingsList.contains(e.target) && (!settingsBtn || !settingsBtn.contains(e.target)))) {
+			settingsList.classList.remove("open");
 			}
 		if (!searchbar.contains(e.target)) {
 			searchbar.classList.remove("open");

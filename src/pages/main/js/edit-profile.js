@@ -70,9 +70,9 @@ export function initEditProfile(dom) {
 					_dom.editProfileAvatar.src = res.url + "?t=" + Date.now();
 					if (_currentUser) _currentUser.profilePics = [res.url];
 					const stored = JSON.parse(
-						sessionStorage.getItem("user") || "{}",
+						localStorage.getItem("user") || "{}",
 					);
-					sessionStorage.setItem(
+					localStorage.setItem(
 						"user",
 						JSON.stringify({ ...stored, profilePics: [res.url] }),
 					);
@@ -93,8 +93,8 @@ export function initEditProfile(dom) {
 		await deleteAvatar();
 		_dom.editProfileAvatar.src = "";
 		if (_currentUser) _currentUser.profilePics = [];
-		const stored = JSON.parse(sessionStorage.getItem("user") || "{}");
-		sessionStorage.setItem(
+		const stored = JSON.parse(localStorage.getItem("user") || "{}");
+		localStorage.setItem(
 			"user",
 			JSON.stringify({ ...stored, profilePics: [] }),
 		);
@@ -167,8 +167,8 @@ async function _handleSave() {
 		}
 
 		// session رو هم آپدیت کن
-		const stored = JSON.parse(sessionStorage.getItem("user") || "{}");
-		sessionStorage.setItem(
+		const stored = JSON.parse(localStorage.getItem("user") || "{}");
+		localStorage.setItem(
 			"user",
 			JSON.stringify({ ...stored, ...updated }),
 		);

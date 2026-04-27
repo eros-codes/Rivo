@@ -26,7 +26,7 @@ export function initSocket(
 	onTypingStart,
 	onTypingStop,
 ) {
-	const token = sessionStorage.getItem("token");
+	const token = localStorage.getItem("token");
 
 	socket = io({
 		auth: { token },

@@ -102,7 +102,7 @@ export async function openChat(fromClick = false) {
 }
 
 function _currentUserId() {
-	return JSON.parse(sessionStorage.getItem("user") || "{}").id;
+	return JSON.parse(localStorage.getItem("user") || "{}").id;
 }
 
 export function closeChat() {

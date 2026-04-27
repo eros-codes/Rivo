@@ -3,7 +3,7 @@
 // 	"/",
 // 	"/index.html",
 // 	"/src/pages/auth/auth.html",
-// 	"/src/pages/main/main-page.html",
+// 	"/src/pages/main/main.html",
 // 	"/public/css/global.css",
 // 	"/public/assets/icons/Icon-192.png",
 // 	"/public/assets/icons/Icon-512.png",

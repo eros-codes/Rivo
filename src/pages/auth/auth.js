@@ -124,7 +124,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
 				localStorage.setItem("token", data.token);
 				localStorage.setItem("user", JSON.stringify(data.user));
-				window.location.href = "../main/main-page.html";
+				window.location.href = "../main/main.html";
 			} catch {
 				showError(loginUsername, "Connection error");
 			}

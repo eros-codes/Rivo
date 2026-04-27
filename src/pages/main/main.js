@@ -194,6 +194,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 	const settingsThemeRow = document.getElementById("settings-theme-row");
 	const settingsThemeValue = document.getElementById("settings-theme-value");
 	const settingsDeleteAccount = document.getElementById("settings-delete-account");
+	const settingsChangePassword = document.getElementById("settings-change-password");
+	const settingsChangePasswordForm = document.getElementById("settings-change-password-form");
+	const settingsCurrentPassword = document.getElementById("settings-current-password");
+	const settingsNewPassword = document.getElementById("settings-new-password");
+	const settingsConfirmPassword = document.getElementById("settings-confirm-password");
+	const settingsChangePasswordSubmit = document.getElementById("settings-change-password-submit");
+	const settingsSendResetEmail = document.getElementById("settings-send-reset-email");
 	const settingsPrivacyOnline = document.getElementById("settings-privacy-online");
 	const settingsPrivacyEmail = document.getElementById("settings-privacy-email");
 	const settingsPrivacyProfile = document.getElementById("settings-privacy-profile");
@@ -201,7 +208,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 	const pickerEmail = document.getElementById("picker-email");
 	const pickerProfile = document.getElementById("picker-profile");
 	const settingsArchived = document.getElementById("settings-archived");
-	const settingsBlocked = document.getElementById("settings-blocked");
 	const addContactDialog = document.getElementById("add-contact-dialog");
 	const addContactName = document.getElementById("add-contact-name");
 	const addContactUsername = document.getElementById("add-contact-username");
@@ -239,6 +245,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 	let swipeMsg = null;
 	let swipeIcon = null;
 	let didSwipe = false;
+	let swipeBounced = false;
 	const SWIPE_THRESHOLD = 100;
 
 	// ─── Typing indicator ─────────────────────────────────────────────────────
@@ -263,6 +270,14 @@ document.addEventListener("DOMContentLoaded", async function () {
 		chatHeader,
 		emptyStateEl,
 		chatProfilePicture,
+	});
+
+	// Empty chat CTA: send "hi" when user taps the empty state
+	emptyStateEl.addEventListener("click", () => {
+		if (!state.contactUserId) return;
+		messageInput.value = "hi";
+		messageInput.dispatchEvent(new Event("input"));
+		sendMessage();
 	});
 
 	initChatLogic({
@@ -422,6 +437,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 		settingsThemeRow,
 		settingsThemeValue,
 		settingsDeleteAccount,
+		settingsChangePassword,
+		settingsChangePasswordForm,
+		settingsCurrentPassword,
+		settingsNewPassword,
+		settingsConfirmPassword,
+		settingsChangePasswordSubmit,
+		settingsSendResetEmail,
 		settingsPrivacyOnline,
 		settingsPrivacyEmail,
 		settingsPrivacyProfile,
@@ -429,7 +451,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 		pickerEmail,
 		pickerProfile,
 		settingsArchived,
-		settingsBlocked,
 		chatPart,
 		peoplePart,
 	}, currentUser);
@@ -445,14 +466,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 			addFriendsBtn,
 		},
 		(newContact) => {
-			// کارت بساز و به لیست اضافه کن
 			const card = createContactCard(
 				{ ...newContact, hasMessages: false },
 				_onContactAction,
 			);
 			contactsContainer.appendChild(card);
 
-			// چت رو باز کن
 			state.contactUserId = newContact.id;
 			openChat(true);
 		},
@@ -483,15 +502,46 @@ document.addEventListener("DOMContentLoaded", async function () {
 		},
 		// delete
 		(data) => {
-			const userMsgs = messages[state.contactUserId];
-			if (!userMsgs) return;
-			const index = userMsgs.findIndex((m) => m.id === data.messageId);
-			if (index === -1) return;
-			userMsgs.splice(index, 1);
-			const msgEl = document.querySelector(
-				`.chat-message[data-index="${index}"]`,
-			);
-			if (msgEl) msgEl.remove();
+			// Find which conversation contains this messageId
+			let foundUserId = null;
+			let foundIndex = -1;
+			for (const [uid, msgs] of Object.entries(messages)) {
+				if (!Array.isArray(msgs)) continue;
+				const idx = msgs.findIndex((m) => m.id === data.messageId);
+				if (idx !== -1) {
+					foundUserId = Number(uid);
+					foundIndex = idx;
+					break;
+				}
+			}
+			if (foundUserId === null) return;
+			const userMsgs = messages[foundUserId];
+			userMsgs.splice(foundIndex, 1);
+
+			// If this conversation is open, re-render messages so indexes stay correct
+			if (state.contactUserId === foundUserId) {
+				injectMessages(foundUserId);
+			}
+
+			// Update contact card last-message preview
+			const friend = contacts.find((c) => c.id === foundUserId);
+			if (friend) {
+				if (userMsgs.length > 0) {
+					const lastMsg = userMsgs.at(-1);
+					friend.lastMessage = lastMsg.text;
+					friend.lastMessageTime = lastMsg.time;
+					friend.lastMessageDate = lastMsg.date || "";
+					friend.lastMessageSeen = lastMsg.user ? false : true;
+				} else {
+					friend.lastMessage = "";
+					friend.lastMessageTime = "";
+					friend.lastMessageDate = "";
+					friend.lastMessageSeen = true;
+				}
+				refreshCard(friend);
+				sortActiveChats();
+				sortContacts();
+			}
 		},
 		// online
 		(userId) => {
@@ -690,6 +740,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 	updateTotalUnreadCount();
 	sortActiveChats();
 	sortContacts();
+	updateContactsEmptyState();
 
 	// ─── Settings ─────────────────────────────────────────────────────────────
 	if (settingsSectionLi && settingsList) {
@@ -941,14 +992,18 @@ document.addEventListener("DOMContentLoaded", async function () {
 		scrollToBottomBtn
 	) {
 		chatEl.addEventListener("touchstart", (e) => {
+			// Disable swipe interactions while a context menu is open
+			if (state.isMenuOpen) return;
+
 			const msg = e.target.closest(".chat-message");
 			swipeMsg = msg || null;
 			swipeStartX = e.touches[0].clientX;
 			swipeStartY = e.touches[0].clientY;
 			didSwipe = false;
+			swipeBounced = false;
 
 			if (msg) {
-				// Create reply
+				// Create reply icon if missing
 				if (!msg.querySelector(".swipe-reply-icon")) {
 					const icon = document.createElement("div");
 					icon.className = "swipe-reply-icon";
@@ -969,19 +1024,21 @@ document.addEventListener("DOMContentLoaded", async function () {
 			"touchmove",
 			(e) => {
 				if (!swipeMsg) return;
+				// Do not allow swiping while context menu is open
+				if (state.isMenuOpen) return;
 
 				const dx = e.touches[0].clientX - swipeStartX;
 				const dy = e.touches[0].clientY - swipeStartY;
 
-				// if its more likely verticle, its not swip
+				// if its more likely verticle, its not swipe
 				if (Math.abs(dy) > Math.abs(dx)) return;
 
-				// right swip only
+				// right swipe only
 				if (dx <= 0) return;
 
 				didSwipe = true;
 				clearTimeout(state.touchTimeout);
-				e.preventDefault();
+				if (e.cancelable) e.preventDefault();
 
 				const progress = Math.min(dx / SWIPE_THRESHOLD, 1);
 				const translate = Math.min(dx * 0.4, SWIPE_THRESHOLD * 0.4);
@@ -990,15 +1047,36 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 				if (swipeIcon) {
 					swipeIcon.style.opacity = progress;
+					// trigger bounce while swiping when threshold is reached
+					if (progress >= 1 && !swipeBounced) {
+						swipeBounced = true;
+						const icon = swipeIcon;
+						if (icon) {
+							icon.classList.add('visible');
+							icon.classList.add('bounce');
+							const onEnd = () => {
+								if (icon) icon.classList.remove('bounce');
+								icon.removeEventListener('animationend', onEnd);
+							};
+							icon.addEventListener('animationend', onEnd);
+						}
+					} else if (progress < 1 && swipeBounced) {
+						// allow re-bounce if user moves back and re-crosses threshold
+						swipeBounced = false;
+						if (swipeIcon) swipeIcon.classList.remove('bounce');
+					}
 				}
 			},
 			{ passive: false },
 		);
 
 		chatEl.addEventListener("touchend", (e) => {
+			// if context menu is open, ignore swipe end
 			if (state.isMenuOpen) {
-				state.isMenuOpen = false;
-				e.preventDefault();
+				if (e.cancelable) e.preventDefault();
+				clearTimeout(state.touchTimeout);
+				swipeMsg = null;
+				didSwipe = false;
 				return;
 			}
 			clearTimeout(state.touchTimeout);
@@ -1009,19 +1087,18 @@ document.addEventListener("DOMContentLoaded", async function () {
 				swipeMsg.style.translate = "";
 
 				if (dx >= SWIPE_THRESHOLD && didSwipe) {
-					// bounce
-					if (swipeIcon) {
-						swipeIcon.classList.add("bounce");
-						swipeIcon.classList.add("visible");
-						swipeIcon.remove();
-						swipeIcon = null;
-					}
-
-					// trigle reply
+					// trigger reply immediately; do not add bounce on touchend
 					const idx = Number(swipeMsg.dataset.index);
 					state.msgIndex = idx;
 					state.selectedMsg = swipeMsg;
 					replyMessage();
+
+					if (swipeIcon) {
+						// remove icon without animating (bounce already handled during touchmove)
+						swipeIcon.remove();
+						swipeIcon = null;
+					}
+
 				} else if (swipeIcon) {
 					swipeIcon.style.opacity = 0;
 				}

@@ -114,7 +114,9 @@ export function deleteMessage(msg, index) {
 			msg.remove();
 			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (friend) {
-				const remaining = messages[state.contactUserId];
+				const idx = Number(index);
+				const all = Array.isArray(messages[state.contactUserId]) ? messages[state.contactUserId] : [];
+				const remaining = all.filter((_, i) => i !== idx);
 				if (remaining.length > 0) {
 					const lastMsg = remaining.at(-1);
 					friend.lastMessage = lastMsg.text;
@@ -139,10 +141,7 @@ export function deleteMessage(msg, index) {
 					moveToContacts(friend);
 				}
 			}
-			if (
-				Array.isArray(messages[state.contactUserId]) &&
-				messages[state.contactUserId].length === 0
-			) {
+			if (remaining.length === 0) {
 				showEmptyState(_dom.chatEl, _dom.emptyStateEl);
 			}
 		}, 310);

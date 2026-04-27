@@ -179,6 +179,30 @@ router.delete("/me", requireAuth, async (req, res) => {
 	}
 });
 
+// ─── Change password ─────────────────────────────────────────────────────────
+router.patch("/me/password", requireAuth, async (req, res) => {
+	const { currentPassword, newPassword } = req.body;
+	if (!currentPassword || !newPassword) return res.status(400).json({ error: "Missing fields" });
+	if (typeof newPassword !== 'string' || newPassword.length < 8) return res.status(400).json({ error: "New password too short" });
+
+	try {
+		const user = await prisma.user.findUnique({ where: { id: req.userId } });
+		if (!user) return res.status(404).json({ error: "User not found" });
+
+		const match = await bcrypt.compare(currentPassword, user.passwordHash);
+		if (!match) return res.status(401).json({ error: "Wrong password" });
+
+		const hashed = await bcrypt.hash(newPassword, 10);
+		await prisma.user.update({ where: { id: req.userId }, data: { passwordHash: hashed } });
+
+		// Note: JWT invalidation / session revocation is not implemented here.
+		return res.json({ success: true });
+	} catch (err) {
+		console.error(err);
+		return res.status(500).json({ error: "Server error" });
+	}
+});
+
 // ─── Upload avatar ────────────────────────────────────────────────────────────
 router.post("/me/avatar", requireAuth, upload.single("avatar"), async (req, res) => {
     if (!req.file) {

@@ -94,15 +94,16 @@
     position: absolute;
     right: 0.5rem;
     top: 50%;
-    transform: translateY(-75%);
+    transform: translateY(-90%);
     background: transparent;
     border: none;
-    padding: 0.25rem;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     color: var(--sub-text-main-color);
+    width: 1rem;
+    height: 1rem;
 }
 .password-toggle:focus { outline: none; }
 .password-input { padding-right: 2.25rem; }

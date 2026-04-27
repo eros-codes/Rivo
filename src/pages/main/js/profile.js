@@ -141,7 +141,11 @@ export function closeProfile() {
 			() => {
 				_dom.contactProfileDetails.classList.remove("slide-out");
 				_dom.contactProfileDetails.style.display = "none";
-				_dom.chatPart.style.display = "flex";
+				if (!state.skipShowChatOnProfileClose) {
+					_dom.chatPart.style.display = "flex";
+				} else {
+					state.skipShowChatOnProfileClose = false;
+				}
 			},
 			{ once: true },
 		);
@@ -153,8 +157,10 @@ export function closeProfile() {
 export function handleDeleteChat() {
 	const contact = contacts.find((c) => c.id === state.contactUserId);
 	if (!contact) return;
-	if (window.innerWidth > 700 && _dom.profileDialog)
-		_dom.profileDialog.close();
+	// Close profile view (desktop dialog or mobile panel)
+	// Prevent profile.closeProfile() from forcing the chat panel visible again on mobile
+	state.skipShowChatOnProfileClose = true;
+	closeProfile();
 
 	_dom.chatEl.innerHTML = "";
 	closeChat();

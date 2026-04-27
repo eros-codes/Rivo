@@ -64,7 +64,7 @@
 	box-shadow: var(--light-shadow);
 	z-index: 101;
 	padding: 0.5rem 1rem;
-	display: flex;
+	display: none;
 	flex-direction: row;
 	justify-content: start;
 	align-items: center;

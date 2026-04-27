@@ -20,6 +20,7 @@ export const state = {
 	selectedMessages: [],
 	currentUndoAction: null,
 	isProfileDialogOpen : false,
+	skipShowChatOnProfileClose: false,
 };
 
 // ─── Contacts ─────────────────────────────────────────────────────────────────

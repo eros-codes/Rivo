@@ -145,3 +145,11 @@ export async function deleteAccount(password) {
 		body: JSON.stringify({ password }),
 	}).then((r) => r.json());
 }
+
+export async function changePassword(currentPassword, newPassword) {
+	return await fetch(`/api/users/me/password`, {
+		method: "PATCH",
+		headers: authHeader(),
+		body: JSON.stringify({ currentPassword, newPassword }),
+	}).then((r) => r.json());
+}

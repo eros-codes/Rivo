@@ -16,12 +16,10 @@
 .pinned-view-dialog[open] {
 	display: flex;
 }
-
 .pinned-view-dialog::backdrop {
     background: rgba(37, 37, 37, 0.5);
     backdrop-filter: blur(2px);
 }
-
 .pinned-view-header {
     display: flex;
     justify-content: space-between;
@@ -33,7 +31,6 @@
     background: var(--header-color);
     z-index: 1;
 }
-
 .pinned-view-title {
     color: var(--text-secondary-color);
     font-weight: 600;
@@ -41,7 +38,6 @@
     text-transform: uppercase;
     letter-spacing: 0.05rem;
 }
-
 .pinned-view-close {
     background: var(--header-glass-bg-color);
     border: 1px solid var(--glass-border);
@@ -55,16 +51,13 @@
     color: var(--text-secondary-color);
     transition: background 0.15s ease;
 }
-
 .pinned-view-close:hover {
     background: var(--glass-bg-input-color);
 }
-
 .pinned-view-close svg {
     width: 1rem;
     height: 1rem;
 }
-
 .pinned-view-list {
     overflow-y: auto;
     display: flex;
@@ -72,7 +65,6 @@
     gap: 0.5rem;
     padding: 0.75rem;
 }
-
 .pinned-view-item {
     display: flex;
     flex-direction: column;
@@ -85,7 +77,6 @@
     transition: background 0.15s ease;
     user-select: none;
 }
-
 .pinned-view-item:hover {
     background: var(--glass-bg-input-color);
 }
@@ -95,7 +86,6 @@
     justify-content: space-between;
     align-items: center;
 }
-
 .pinned-view-item-sender {
     font-size: 0.7rem;
     font-weight: 600;
@@ -103,19 +93,16 @@
     text-transform: uppercase;
     letter-spacing: 0.05rem;
 }
-
 .pinned-view-item-time {
     font-size: 0.7rem;
     color: var(--chat-time);
 }
-
 .pinned-view-item-text {
     font-size: 0.875rem;
     color: var(--text-secondary-color);
     line-height: 1.5;
     word-break: break-word;
 }
-
 .pinned-view-empty {
     text-align: center;
     color: var(--chat-time);

@@ -8,7 +8,6 @@
 	0 0 10px rgba(0, 0, 0, 0.1);
 	user-select: none;
 }
-
 .card-actions {
 	position: absolute;
 	top: 0;
@@ -17,17 +16,14 @@
 	align-items: stretch;
 	z-index: 0;
 }
-
 .card-actions--left {
 	left: 0;
 	flex-direction: row;
 }
-
 .card-actions--right {
 	right: 0;
 	flex-direction: row;
 }
-
 .card-action-btn {
 	display: flex;
 	align-items: center;
@@ -42,11 +38,9 @@
 	inset -1px 0 15px rgba(255, 255, 255, 0.12),
 	inset 0px 0 15px rgba(255, 255, 255, 0.12);
 }
-
 .card-action-btn:active {
 	filter: brightness(0.82);
 }
-
 .card-action-btn svg {
 	width: 1.375rem;
 	height: 1.375rem;
@@ -56,14 +50,12 @@
 .card-action-btn:hover svg {
 	scale: 1.2;
 }
-
 .card-action-btn--pin {
 	background: #4a7cc9;
 	color: #fff;
 	border-radius: 0 6rem 6rem 0;
 	justify-content: end;
 }
-
 .card-action-btn--mute {
 	background: var(--chat-time);
 	color: #fff;
@@ -71,7 +63,6 @@
 	justify-content: end;
 	transform: translateX(3rem);
 }
-
 .card-action-btn--delete {
 	background: #d23b3b;
 	color: #fff;

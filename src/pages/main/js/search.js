@@ -96,7 +96,7 @@ function _renderMessageResults(query) {
 				index: idx,
 				isEdited: msg.isEdited,
 				replyTo: msg.replyTo,
-				seen: msg.seen,
+				isSeen: msg.isSeen,
 				isPinned: msg.isPinned,
 			});
 

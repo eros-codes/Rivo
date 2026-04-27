@@ -146,9 +146,10 @@ export function executeBulkForward(friend, sourceName) {
 	cancelSelection();
 	_dom.forwardDialog.close();
 
-	_dom.chatProfilePic.src = friend.profilePics[0];
+	_dom.chatProfilePic.src =
+		friend.profilePics[0] || "../../../public/assets/images/profile.jpeg";
 	_dom.chatName.textContent = friend.nickname || friend.name;
-	openChat();
+	openChat(true);
 	injectMessages(friend.id);
 	scrollChatToBottom();
 

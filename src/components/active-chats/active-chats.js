@@ -60,7 +60,7 @@ export function createActiveChatCard({
 	active.className = isPinned ? "active-chat pinned" : "active-chat";
 	active.dataset.userId = id;
 	active.innerHTML = `
-	<img class="active-chat-profile ${isOnline ? "online-active-chat" : ""}" src="${profilePics[0]}" alt="active-profile"/>
+	<img class="active-chat-profile ${isOnline ? "online-active-chat" : ""}" src="${(profilePics && profilePics[0]) || "../../../public/assets/images/profile.jpeg"}" alt="active-profile"/>
 	<span class="active-chat-info">
 		<span class="active-chat-name">${nickname || name}${pinEl}</span>
 		<span class="active-chat-last-message">${lastMessage}${muteEl}</span>

@@ -35,7 +35,6 @@
     backdrop-filter 0.18s ease;
   transform: translateY(4px) scale(0.985);
 }
-
 .message-menu::before {
   content: "";
   position: absolute;
@@ -61,7 +60,6 @@
   mix-blend-mode: screen;
   opacity: 0.7;
 }
-
 .message-menu::after {
   content: "";
   position: absolute;
@@ -74,8 +72,6 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.10),
     inset 0 -1px 0 rgba(0, 0, 0, 0.10);
 }
-
-
 .message-menu ul{
   display: flex;
   flex-direction: column;

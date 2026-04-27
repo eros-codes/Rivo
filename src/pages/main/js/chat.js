@@ -1,11 +1,13 @@
-import {
-	sendMessage as apiSendMessage,
-	editMessage as apiEditMessage,
-} from "./api.js";
 import { state, messages, contacts } from "./state.js";
 import { showEmptyState, hideEmptyState } from "./ui.js";
-import { createMessage } from "../../../components/messages/messages.js";
-import { moveToActiveChats, refreshCard, sortActiveChats } from "./chat-logic.js";
+import { createMessage, markMessagesAsSeen } from "../../../components/messages/messages.js";
+import {
+	moveToActiveChats,
+	refreshCard,
+	sortActiveChats,
+} from "./chat-logic.js";
+import { emitMessage, emitEditMessage, emitMessageSeen } from "./socket.js";
+import { getMessages } from "./api.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 export const basePadding = 4;
@@ -15,15 +17,6 @@ export const maxHeight = lineHeight * maxLines;
 
 let _dom = {};
 
-/**
-
-- @param {{
-- chatPart, mainContent, peoplePart, chatEl, contactProfileDetails,
-- messageInput, sendMessageBtn, msgAction, cancelEditBtn,
-- pinnedMessageContainer, pinnedMessageText, pinnedMessageCount,
-- chatHeader, emptyStateEl
-- }} dom
-  */
 export function initChat(dom) {
 	_dom = dom;
 }
@@ -35,7 +28,7 @@ export function scrollChatToBottom() {
 }
 
 // ─── Open / Close ─────────────────────────────────────────────────────────────
-export function openChat() {
+export async function openChat(fromClick = false) {
 	const isAlreadyOpen = _dom.chatPart.style.display === "flex";
 	const isMobile = window.matchMedia("(max-width: 768px)").matches;
 
@@ -62,7 +55,54 @@ export function openChat() {
 				"none";
 		}, 200);
 	}
+
+	// load messages از backend
+	const contact = contacts.find((c) => c.id === state.contactUserId);
+	if (contact?.conversationId) {
+		try {
+			const serverMessages = await getMessages(contact.conversationId);
+			// normalize برای فرانت
+			messages[state.contactUserId] = serverMessages.map((m) => ({
+				id: m.id,
+				user: m.senderId === _currentUserId(),
+				text: m.text,
+				time: new Date(m.createdAt).toLocaleTimeString([], {
+					hour: "2-digit",
+					minute: "2-digit",
+					hour12: false,
+				}),
+				date: new Date(m.createdAt).toISOString().slice(0, 10),
+				isEdited: m.isEdited,
+				isPinned: m.isPinned,
+				isSeen: m.isSeen,
+				replyTo: m.replyToId
+					? {
+							name: m.replyToName,
+							text: m.replyToText,
+						}
+					: null,
+				forwardedFrom: m.forwardedFrom || null,
+				forwardedText: m.forwardedText || null,
+			}));
+		} catch {
+			messages[state.contactUserId] = [];
+		}
+	}
+
+	injectMessages(state.contactUserId);
+	if (contact?.conversationId && fromClick) {
+		emitMessageSeen(contact.conversationId);
+	}
+	if (contact?.isOnline) {
+		_dom.chatProfilePicture.classList.add("online");
+	} else {
+		_dom.chatProfilePicture.classList.remove("online");
+	}
 	scrollChatToBottom();
+}
+
+function _currentUserId() {
+	return JSON.parse(sessionStorage.getItem("user") || "{}").id;
 }
 
 export function closeChat() {
@@ -89,6 +129,7 @@ export function closeChat() {
 		_dom.mainContent.style.flexDirection = "row-reverse";
 	}
 }
+
 // ─── Reset input ──────────────────────────────────────────────────────────────
 export function resetInput() {
 	_dom.messageInput.value = "";
@@ -175,7 +216,7 @@ export function injectMessages(userId) {
 	if (!_dom.chatEl) return;
 	const userMessages = messages[userId];
 	if (!userMessages) {
-		alert("No messages for this user");
+		showEmptyState(_dom.chatEl, _dom.emptyStateEl);
 		return;
 	}
 
@@ -217,8 +258,62 @@ export function injectMessages(userId) {
 	_dom.chatEl.appendChild(fragment);
 }
 
+// ─── Receive incoming message (from socket) ───────────────────────────────────
+export function receiveMessage(message) {
+	const contact = contacts.find(
+		(c) => c.conversationId === message.conversationId,
+	);
+	if (!contact) return;
+
+	const normalized = {
+		id: message.id,
+		user: false,
+		text: message.text,
+		time: new Date(message.createdAt).toLocaleTimeString([], {
+			hour: "2-digit",
+			minute: "2-digit",
+			hour12: false,
+		}),
+		date: new Date(message.createdAt).toISOString().slice(0, 10),
+		isEdited: false,
+		isPinned: false,
+		isSeen: message.isSeen || false,
+		replyTo: message.replyToId
+			? {
+					name: message.replyToName,
+					text: message.replyToText,
+				}
+			: null,
+	};
+
+	if (!messages[contact.id]) messages[contact.id] = [];
+	messages[contact.id].push(normalized);
+
+	// اگه همین چت بازه نشون بده
+	if (state.contactUserId === contact.id) {
+		hideEmptyState(_dom.chatEl, _dom.emptyStateEl);
+		normalized.index = messages[contact.id].length - 1;
+		_dom.chatEl.appendChild(createMessage(normalized));
+		scrollChatToBottom();
+		emitMessageSeen(contact.conversationId);
+	}
+
+	// کارت رو آپدیت کن
+	contact.lastMessage = normalized.text;
+	contact.lastMessageTime = normalized.time;
+	contact.lastMessageDate = normalized.date;
+	contact.lastMessageSeen = false;
+	if (state.contactUserId !== contact.id) {
+		contact.unreadCount = (contact.unreadCount || 0) + 1;
+	}
+
+	moveToActiveChats(contact);
+	refreshCard(contact);
+	sortActiveChats();
+}
+
 // ─── Send message ─────────────────────────────────────────────────────────────
-export function sendMessage() {
+export async function sendMessage() {
 	// Edit mode
 	if (state.isEditing) {
 		if (
@@ -227,10 +322,13 @@ export function sendMessage() {
 				_dom.messageInput.value.trim()
 		)
 			return;
-		const txt = _dom.messageInput.value;
-		apiEditMessage(state.contactUserId, Number(state.msgIndex), txt);
-		state.selectedMsg.querySelector(".chat-message-text").textContent = txt;
 
+		const txt = _dom.messageInput.value;
+		const msg = messages[state.contactUserId][Number(state.msgIndex)];
+
+		emitEditMessage(msg.id, txt);
+
+		state.selectedMsg.querySelector(".chat-message-text").textContent = txt;
 		if (!state.selectedMsg.querySelector(".chat-edited-label")) {
 			const label = document.createElement("span");
 			label.className = "chat-edited-label";
@@ -251,30 +349,34 @@ export function sendMessage() {
 				? state.forwardingMsgs
 				: [state.forwardingMsg];
 
+		const contact = contacts.find((c) => c.id === state.contactUserId);
 		hideEmptyState(_dom.chatEl, _dom.emptyStateEl);
-		msgsToSend.forEach((msg) => {
-			apiSendMessage(state.contactUserId, msg);
-			_dom.chatEl.appendChild(createMessage(msg));
-		});
+
+		for (const msg of msgsToSend) {
+			try {
+				const sent = await emitMessage({
+					conversationId: contact.conversationId,
+					text: msg.text,
+					forwardedFrom: msg.forwardedFrom || msg.user ? "You" : null,
+					forwardedText: msg.text,
+				});
+				const normalized = _normalizeOutgoing(sent);
+				messages[state.contactUserId].push(normalized);
+				_dom.chatEl.appendChild(createMessage(normalized));
+			} catch {
+				/* silent */
+			}
+		}
 
 		state.forwardingMsgs = [];
 		state.forwardingMsg = null;
 		state.isForwarding = false;
 
 		if (_dom.messageInput.value.trim() !== "") {
-			sendMessage();
+			await sendMessage();
 		} else {
 			resetInput();
-			const lastSent = msgsToSend.at(-1);
-			const fwd = contacts.find((c) => c.id === state.contactUserId);
-			if (fwd && lastSent) {
-				fwd.lastMessage = lastSent.text;
-				fwd.lastMessageTime = lastSent.time;
-				fwd.lastMessageDate = lastSent.date;
-				fwd.lastMessageSeen = false;
-				refreshCard(fwd);
-				sortActiveChats();
-			} 
+			_updateContactCard();
 		}
 		scrollChatToBottom();
 		return;
@@ -283,32 +385,118 @@ export function sendMessage() {
 	// Normal send
 	if (_dom.messageInput.value.trim() === "") return;
 
-	const now = new Date()
-	const obj = {
+	const contact = contacts.find((c) => c.id === state.contactUserId);
+	if (!contact) return;
+
+	const text = _dom.messageInput.value;
+	const replyTo = state.replyTo;
+
+	// optimistic UI
+	const now = new Date();
+	const optimistic = {
 		user: true,
-		text: _dom.messageInput.value,
-		time: now.toLocaleTimeString([], { hour: "2-digit",minute: "2-digit", hour12: false,}),
+		text,
+		time: now.toLocaleTimeString([], {
+			hour: "2-digit",
+			minute: "2-digit",
+			hour12: false,
+		}),
 		date: now.toISOString().slice(0, 10),
 		isEdited: false,
-		replyTo: state.replyTo,
-		seen: false,
+		isPinned: false,
+		replyTo,
+		isSeen: false,
 	};
+
 	hideEmptyState(_dom.chatEl, _dom.emptyStateEl);
-	apiSendMessage(state.contactUserId, obj);
-	_dom.chatEl.appendChild(createMessage(obj));
+	if (!messages[state.contactUserId]) messages[state.contactUserId] = [];
+	optimistic.index = messages[state.contactUserId].length;
+	messages[state.contactUserId].push(optimistic);
+	_dom.chatEl.appendChild(createMessage(optimistic));
 
+	resetInput();
+	state.replyTo = null;
+	scrollChatToBottom();
+	document.querySelector(".message-input").focus();
+
+	// send via socket
+	try {
+		const sent = await emitMessage({
+			conversationId: contact.conversationId,
+			text,
+			replyToId: replyTo?.id || null,
+			replyToName: replyTo?.name || null,
+			replyToText: replyTo?.text || null,
+		});
+		// id واقعی رو بذار
+		optimistic.id = sent.id;
+		optimistic.isSeen = sent.isSeen || false;
+	} catch {
+		console.error("Failed to send message");
+	}
+
+	_updateContactCard();
+}
+
+function _normalizeOutgoing(m) {
+	return {
+		id: m.id,
+		user: true,
+		text: m.text,
+		time: new Date(m.createdAt).toLocaleTimeString([], {
+			hour: "2-digit",
+			minute: "2-digit",
+			hour12: false,
+		}),
+		date: new Date(m.createdAt).toISOString().slice(0, 10),
+		isEdited: false,
+		isPinned: false,
+		replyTo: null,
+		isSeen: m.isSeen || false,
+	};
+}
+
+function _updateContactCard() {
+	const userMsgs = messages[state.contactUserId];
+	const lastMsg = userMsgs?.at(-1);
 	const friend = contacts.find((c) => c.id === state.contactUserId);
-	if (friend) {
-		friend.lastMessage = obj.text;
-		friend.lastMessageTime = obj.time;
-		friend.lastMessageDate = obj.date;
+	if (friend && lastMsg) {
+		friend.lastMessage = lastMsg.text;
+		friend.lastMessageTime = lastMsg.time;
+		friend.lastMessageDate = lastMsg.date;
 		friend.lastMessageSeen = false;
-
 		refreshCard(friend);
 		sortActiveChats();
 	}
-	scrollChatToBottom();
-	resetInput();
-	state.replyTo = null;
-	document.querySelector(".message-input").focus();
+}
+
+export function handleMessagesSeen(conversationId, messageIds = [], seenBy = null) {
+	const contact = contacts.find((c) => c.conversationId === conversationId);
+	if (!contact) return;
+
+	const userMsgs = messages[contact.id];
+	const seenIndices = [];
+
+	if (Array.isArray(messageIds) && messageIds.length > 0 && Array.isArray(userMsgs)) {
+		messageIds.forEach((mid) => {
+			const idx = userMsgs.findIndex((msg) => msg.id === mid);
+			if (idx !== -1) {
+				const msg = userMsgs[idx];
+				if (msg.user && !msg.isSeen) {
+					msg.isSeen = true;
+					seenIndices.push(idx);
+				}
+			}
+		});
+	}
+
+	// Update DOM only if this conversation is currently open
+	if (state.contactUserId === contact.id && seenIndices.length > 0) {
+		markMessagesAsSeen(_dom.chatEl, seenIndices);
+	}
+
+	contact.unreadCount = 0;
+	contact.lastMessageSeen = true;
+	refreshCard(contact);
+	sortActiveChats();
 }

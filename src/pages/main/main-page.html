@@ -9,6 +9,7 @@
 		<meta name="theme-color" content="#1a1a2e" />
 		<title>Rivo</title>
 		<link rel="stylesheet" href="main-content.css" />
+		<link rel="stylesheet" href="../../../public/css/cropper.min.css" />
 		<link rel="manifest" href="../../../public/manifest.webmanifest" />
 		<link
 			rel="apple-touch-icon"
@@ -222,11 +223,12 @@
 						<span class="chat-profile">
 							<img
 								class="chat-profile-picture"
-								src="./../../../public/assets/images/profile-active.jpeg"
+								src="./../../../public/assets/images/profile.jpeg"
 								alt="profile-picture"
 							/>
 						</span>
-						<span class="chat-name"> Arvin </span>
+						<span class="chat-name"></span>
+						<span class="chat-typing-status"></span>
 					</header>
 
 					<div class="pinned-message-container">
@@ -238,8 +240,8 @@
 						<div class="pinned-message">
 							<span class="pinned-label">Pinned Message</span>
 							<p class="pinned-message-text">
-								This is a pinned message. It will always stay
-								here until you unpin it.
+								<!-- This is a pinned message. It will always stay
+								here until you unpin it. -->
 							</p>
 						</div>
 						<div class="pinned-message-icon">
@@ -572,7 +574,7 @@
 				<div class="contact-detail-pic">
 					<div class="detail-picture">
 						<img
-							src="../../../public/assets/images/profile-active.jpeg"
+							src="../../../public/assets/images/profile.jpeg"
 							alt=""
 						/>
 					</div>
@@ -663,6 +665,11 @@
 								<path fill="currentColor" d="M12 9a3 3 0 0 0-3 3a3 3 0 0 0 3 3a3 3 0 0 0 3-3a3 3 0 0 0-3-3m0 8a5 5 0 0 1-5-5a5 5 0 0 1 5-5a5 5 0 0 1 5 5a5 5 0 0 1-5 5m0-12.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5"/>
 							</svg>
 						</button>
+						<button class="edit-profile-delete-avatar-btn" id="edit-profile-delete-avatar">
+							<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+								<path fill="currentColor" d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM8 9h8v10H8zm7.5-5l-1-1h-5l-1 1H5v2h14V4z"/>
+							</svg>
+						</button>
 					</div>
 				</div>
 				<div class="edit-profile-body">
@@ -685,6 +692,120 @@
 			<dialog class="edit-profile-dialog">
 				<!-- If user is using desktop then edit profile will be shown here -->
 			</dialog>
+
+			<div class="settings-panel">
+				<div class="settings-panel-header">
+					<button class="settings-panel-close"> 
+						<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12z"/></svg>
+					</button>
+					<span>Settings</span>
+				</div>
+
+				<span class="settings-section-label">Appearance</span>
+				<div class="settings-group">
+					<div class="settings-row" id="settings-theme-row">
+						<div class="settings-row-left">
+							<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+							<span>Theme</span>
+						</div>
+						<span class="settings-row-value" id="settings-theme-value">Dark</span>
+					</div>
+				</div>
+
+				<span class="settings-section-label">Account</span>
+				<div class="settings-group">
+					<div class="settings-row settings-row-danger" id="settings-delete-account">
+						<div class="settings-row-left">
+							<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM8 9h8v10H8zm7.5-5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+							<span>Delete Account</span>
+						</div>
+					</div>
+				</div>
+
+				<span class="settings-section-label">Privacy</span>
+				<div class="settings-group">
+					<div class="settings-row" id="settings-privacy-online">
+						<div class="settings-row-left"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/></svg><span>Online Status</span></div>
+						<span class="settings-row-value">Everyone</span>
+					</div>
+					<div class="settings-privacy-picker" id="picker-online" style="display:none">
+						<div class="settings-picker-option" data-value="everyone">Everyone</div>
+						<div class="settings-picker-option" data-value="contacts">Contacts</div>
+						<div class="settings-picker-option" data-value="nobody">Nobody</div>
+					</div>
+					<div class="settings-row" id="settings-privacy-email">
+						<div class="settings-row-left"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 4l-8 5L4 8V6l8 5 8-5v2z"/></svg><span>Email</span></div>
+						<span class="settings-row-value">Everyone</span>
+					</div>
+					<div class="settings-privacy-picker" id="picker-email" style="display:none">
+						<div class="settings-picker-option" data-value="everyone">Everyone</div>
+						<div class="settings-picker-option" data-value="contacts">Contacts</div>
+						<div class="settings-picker-option" data-value="nobody">Nobody</div>
+					</div>
+					<div class="settings-row" id="settings-privacy-profile">
+						<div class="settings-row-left"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 12a5 5 0 1 0 0-10a5 5 0 0 0 0 10zm0 2c-5.33 0-8 2.67-8 5v1h16v-1c0-2.33-2.67-5-8-5z"/></svg><span>Profile Picture</span></div>
+						<span class="settings-row-value">Everyone</span>
+					</div>
+					<div class="settings-privacy-picker" id="picker-profile" style="display:none">
+						<div class="settings-picker-option" data-value="everyone">Everyone</div>
+						<div class="settings-picker-option" data-value="contacts">Contacts</div>
+						<div class="settings-picker-option" data-value="nobody">Nobody</div>
+					</div>
+				</div>
+
+				<span class="settings-section-label">Chats</span>
+				<div class="settings-group">
+					<div class="settings-row" id="settings-archived">
+						<div class="settings-row-left"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M20.54 5.23L19.13 3.81L12 11l-7.13-7.19L4.46 5.23L12 12.77z"/></svg><span>Archived Chats</span></div>
+					</div>
+					<div class="settings-row" id="settings-blocked">
+						<div class="settings-row-left"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20zm4.95 13.95L6.05 6.05A8 8 0 0 1 16.95 15.95zM7.05 17.95L17.95 7.05A8 8 0 0 1 7.05 17.95z"/></svg><span>Blocked Contacts</span></div>
+					</div>
+				</div>
+			</div>
+
+			<dialog class="settings-dialog">
+				<!-- If user is using desktop then settings will be shown here -->
+			</dialog>
+
+			<input type="file" id="avatar-file-input" accept="image/*" style="display:none">
+
+			<dialog class="avatar-crop-dialog">
+				<div class="avatar-crop-container">
+					<img id="avatar-crop-image" src="" alt="crop">
+				</div>
+				<div class="avatar-crop-actions">
+					<button id="avatar-crop-cancel">Cancel</button>
+					<button id="avatar-crop-confirm">Apply</button>
+				</div>
+			</dialog>
+
+			<dialog class="add-contact-dialog" id="add-contact-dialog">
+				<div class="add-contact-body">
+					<h3 class="add-contact-title">Add Contact</h3>
+					<div class="add-contact-field">
+						<label>Name</label>
+						<input
+							type="text"
+							id="add-contact-name"
+							placeholder="Contact name"
+						/>
+					</div>
+					<div class="add-contact-field">
+						<label>Username</label>
+						<input
+							type="text"
+							id="add-contact-username"
+							placeholder="@username"
+						/>
+					</div>
+					<p class="add-contact-error" id="add-contact-error"></p>
+					<div class="add-contact-actions">
+						<button class="add-contact-cancel" id="add-contact-cancel">Cancel</button>
+						<button class="add-contact-submit" id="add-contact-submit">Add</button>
+					</div>
+				</div>
+			</dialog>
 			
 			<div class="toaster">
 				<div class="toast">
@@ -693,8 +814,13 @@
 					<button class="undo-btn">Undo</button>
 				</div>
 			</div>
+
+			<div class="connection-status" id="connection-status">
+				<span id="connection-status-text">Connecting...</span>
+			</div>
 		</main>
 
+		<script src="../../../public/js/cropper.min.js"></script>
 		<script type="module" src="main-page-functions.js"></script>
 		<script type="module" src="../../../public/js/index.js"></script>
 	</body>

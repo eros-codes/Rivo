@@ -59,7 +59,7 @@
 .outgoing {
 	color: var(--text-secondary-color);
 	border-bottom-right-radius: 0.5rem;
-	background: var(--active-chat-bg-color);
+	background: var(--messages-outgoing);
 	border: 1px solid rgba(255, 255, 255, 0.12);
 	align-self: end;
 	margin-right: 0.5rem;
@@ -67,7 +67,7 @@
 .incoming {
 	color: var(--text-main-color);
 	border-bottom-left-radius: 0.5rem;
-	background: var(--contact-bg-color);
+	background: var(--messages-incoming);
 	border: 1px solid rgba(0, 0, 0, 0.1);
 	align-self: start;
 	margin-left: 0.5rem;

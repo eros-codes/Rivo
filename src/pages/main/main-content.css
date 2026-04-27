@@ -17,6 +17,10 @@
 @import url(styleSheet/contact-profile.css);
 @import url(styleSheet/search-results.css);
 @import url(styleSheet/edit-profile.css);
+@import url(styleSheet/add-contact.css);
+@import url(styleSheet/avatar-crop.css);
+@import url(styleSheet/settings.css);
+@import url(styleSheet/connection-status.css);
 
 body {
 	overflow: hidden;

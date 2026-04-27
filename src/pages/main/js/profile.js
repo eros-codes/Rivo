@@ -8,6 +8,7 @@ import {
 	sortContacts,
 } from "./chat-logic.js";
 import { createContactCard } from "../../../components/contact-cards/contact-card.js";
+import { updateContact, deleteContact as apiDeleteContact, deleteChat as apiDeleteChat } from "./api.js";
 
 let _dom = {};
 
@@ -27,9 +28,28 @@ export function initProfile(dom) {
 	_dom = dom;
 }
 
+// last seen format
+function formatLastSeen(isoString) {
+	const diff = Math.floor((Date.now() - new Date(isoString)) / 1000);
+	if (diff < 60) return "just now";
+	if (diff < 3600) return `${Math.floor(diff / 60)} minutes ago`;
+	if (diff < 86400) return `${Math.floor(diff / 3600)} hours ago`;
+	if (diff < 172800) return "yesterday";
+	if (diff < 604800) return `${Math.floor(diff / 86400)} days ago`;
+	if (diff < 1209600) return "last week";
+	if (diff < 2592000) return `${Math.floor(diff / 604800)} weeks ago`;
+	if (diff < 5184000) return "last month";
+	return `${Math.floor(diff / 2592000)} months ago`;
+}
+
 // ─── Open profile ─────────────────────────────────────────────────────────────
 export function openProfile(friend) {
-	_dom.detailPictures.forEach((el) => (el.src = friend.profilePics[0]));
+	_dom.detailPictures.forEach(
+		(el) =>
+			(el.src =
+				friend.profilePics[0] ||
+				"../../../../public/assets/images/profile.jpeg"),
+	);
 	_dom.detailNames.forEach(
 		(el) => (el.textContent = friend.nickname || friend.name),
 	);
@@ -39,7 +59,7 @@ export function openProfile(friend) {
 			(el.textContent = friend.isOnline
 				? "Online"
 				: friend.lastSeen
-					? `Last seen ${friend.lastSeen}`
+					? `Last seen ${formatLastSeen(friend.lastSeen)}`
 					: ""),
 	);
 	_dom.detailUsernames.forEach(
@@ -155,6 +175,10 @@ export function handleDeleteChat() {
 
 	const timer = setTimeout(() => {
 		messages[deletingContactId] = [];
+		const contact = contacts.find((c) => c.id === deletingContactId);
+		if (contact?.conversationId) {
+			apiDeleteChat(contact.conversationId);
+		}
 		contact.lastMessage = "";
 		contact.lastMessageTime = "";
 		contact.lastMessageDate = "";
@@ -209,6 +233,7 @@ export function handleEditNicknameDone() {
 	const newName = _dom.detailNames[0].textContent.trim();
 	if (newName) {
 		friend.nickname = newName;
+		updateContact(friend.id, { nickname: newName });
 		_dom.detailNames.forEach((el) => (el.textContent = newName));
 		_dom.chatName.textContent = newName;
 		refreshCard(friend);
@@ -240,6 +265,7 @@ export function handleBlockContact() {
 	const contact = contacts.find((c) => c.id === state.contactUserId);
 	if (!contact) return;
 	contact.isBlocked = !contact.isBlocked;
+	updateContact(contact.id, { isBlocked: contact.isBlocked });
 
 	const messageContainer = document.querySelector(".chat-send-message");
 	const unblockActionBtn = document.querySelectorAll("#unblock-action-btn");
@@ -289,6 +315,7 @@ export function handleDeleteContact() {
 	const timer = setTimeout(() => {
 		if (card) card.remove();
 		contacts.splice(idx, 1);
+		apiDeleteContact(deletingContactId);
 		delete messages[deletingContactId];
 		updateTotalUnreadCount();
 	}, 3000);

@@ -71,7 +71,7 @@ export function createContactCard(contact, onAction) {
    </div>
    <img
    	class="contact-profile ${isOnline ? "online-contact" : ""}"
-   	src="${profilePics[0]}"
+   	src="${(profilePics && profilePics[0]) || "../../../public/assets/images/profile.jpeg"}"
    	alt="Profile"
    />
    <span class="contact-name">${nickname || name} ${muteEl}</span>

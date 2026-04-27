@@ -16,6 +16,9 @@ model User {
   profilePics  String[]
   isOnline     Boolean   @default(false)
   lastSeen     DateTime?
+  privacyOnline  String @default("everyone")
+  privacyEmail   String @default("everyone")
+  privacyProfile String @default("everyone")
   passwordHash String
   createdAt    DateTime  @default(now())
 
@@ -67,6 +70,7 @@ model Message {
   sender         User         @relation(fields: [senderId], references: [id])
   senderId       Int
   text           String
+  isSeen         Boolean      @default(false)
   isEdited       Boolean      @default(false)
   isPinned       Boolean      @default(false)
   isDeleted      Boolean      @default(false)

@@ -104,11 +104,13 @@ export function closeContextMenu() {
 
 // ─── Delete & undo ────────────────────────────────────────────────────────────
 export function deleteMessage(msg, index) {
+	const messageId = messages[state.contactUserId][Number(index)]?.id;
+
 	msg.style.transition = "opacity 3s ease";
 	msg.style.opacity = 0;
 	const timeout = setTimeout(() => {
 		setTimeout(() => {
-			apiDeleteMessage(state.contactUserId, Number(index))
+			if (messageId) apiDeleteMessage(messageId);
 			msg.remove();
 			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (friend) {
@@ -176,21 +178,24 @@ export function buildForwardedMsg(originalMsg, targetContactId) {
 		isEdited: false,
 		replyTo: null,
 		forwardedFrom: senderName,
-		seen: false,
+		isSeen: false,
 		index: messages[targetContactId].length,
 	};
 }
 
 // ─── Pin / Unpin ──────────────────────────────────────────────────────────────
 export function pinMessage(pinIconSvg) {
-	const idx = Number(state.msgIndex);
+	const idx = Number(state.selectedMsg?.dataset.index);
 	const msg = messages[state.contactUserId][idx];
-	apiPinMessage(state.contactUserId, idx);
+	const messageId = msg?.id;
+	if (messageId) apiPinMessage(messageId);
+
 	const msgEl = _dom.chatEl.querySelector(`[data-index="${idx}"]`);
 	const meta = msgEl.querySelector(".chat-message-meta");
 	const existingIcon = msgEl.querySelector(".chat-pinned-icon");
 
-	if (msg.isPinned) {
+	if (!msg.isPinned) {
+		msg.isPinned = true;
 		if (!existingIcon) {
 			const pinSpan = document.createElement("span");
 			pinSpan.className = "chat-pinned-icon";
@@ -200,6 +205,7 @@ export function pinMessage(pinIconSvg) {
 		state.pinnedIndexes.push(idx);
 		state.pinnedIndexes.sort((a, b) => a - b);
 	} else {
+		msg.isPinned = false;
 		if (existingIcon) existingIcon.remove();
 		state.pinnedIndexes = state.pinnedIndexes.filter((i) => i !== idx);
 	}
@@ -210,6 +216,8 @@ export function pinMessage(pinIconSvg) {
 
 // ─── Edit ─────────────────────────────────────────────────────────────────────
 export function editMessage() {
+	const msg = messages[state.contactUserId][Number(state.msgIndex)];
+
 	state.isEditing = true;
 	_dom.messageInput.value =
 		messages[state.contactUserId][Number(state.msgIndex)].text;

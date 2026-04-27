@@ -21,7 +21,7 @@
 	background: rgba(37, 37, 37, 0.6);
 	backdrop-filter: blur(4px);
 }
-/* ─── Banner ─────────────────────────────────────────────────────────────── */
+
 .edit-profile-banner {
 	height: 8rem;
 	background: var(--header-color);
@@ -68,7 +68,7 @@
 	width: 1rem;
 	height: 1rem;
 }
-/* ─── Avatar ─────────────────────────────────────────────────────────────── */
+
 .edit-profile-avatar-wrapper {
 	position: absolute;
 	bottom: -3.5rem;
@@ -110,7 +110,7 @@
 	width: 0.9rem;
 	height: 0.9rem;
 }
-/* ─── Body ───────────────────────────────────────────────────────────────── */
+
 .edit-profile-body {
 	padding: 4.5rem 1.5rem 1.5rem;
 	display: flex;
@@ -218,6 +218,29 @@
 	display: flex;
 	height: auto;
 	width: 100%;
+}
+.edit-profile-delete-avatar-btn {
+    position: absolute;
+    bottom: 0.25rem;
+    left: 0.25rem;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 50%;
+    border: 2px solid var(--background-color);
+    background: var(--red);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+.edit-profile-delete-avatar-btn:hover {
+    background: #c0392b;
+}
+.edit-profile-delete-avatar-btn svg {
+    width: 0.9rem;
+    height: 0.9rem;
 }
 
 @media (max-width: 700px) {

@@ -1,0 +1,23 @@
+.connection-status {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 9999;
+    padding: 1rem;
+    background: linear-gradient(to top, rgba(0,0,0,0.85), transparent);
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
+    pointer-events: none;
+    transform: translateY(100%);
+    transition: transform 0.4s ease;
+}
+.connection-status.visible {
+    transform: translateY(0);
+}
+#connection-status-text {
+    color: white;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+}

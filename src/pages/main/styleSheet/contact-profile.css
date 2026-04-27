@@ -83,6 +83,7 @@
 	overflow: hidden;
 	border-radius: 1rem;
 	padding: 0rem 0.5rem;
+	color: var(--text-main-color);
 }
 .contact-detail-name svg {
 	width: 2.5rem;
@@ -94,6 +95,8 @@
 .contact-detail-name h6 {
 	font-size: 1.2rem;
 	overflow: hidden;
+	font-weight: 300;
+	color: var(--text-main-color);
 }
 .contact-detail-name p {
 	font-size: 1rem;

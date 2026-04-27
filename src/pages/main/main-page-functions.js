@@ -1,4 +1,4 @@
-import { updateContact as apiUpdateContact, logout as apiLogout } from "./js/api.js";
+import { updateContact as apiUpdateContact, logout as apiLogout, getContacts } from "./js/api.js";
 import { createContactCard } from "../../components/contact-cards/contact-card.js";
 import { createActiveChatCard } from "../../components/active-chats/active-chats.js";
 import { createForwardedContactCard } from "../../components/contact-cards/contacts-forward.js";
@@ -22,6 +22,8 @@ import {
 	lineHeight,
 	maxLines,
 	maxHeight,
+	receiveMessage,
+	handleMessagesSeen,
 } from "./js/chat.js";
 import {
 	initChatLogic,
@@ -66,8 +68,18 @@ import {
 import { initCardContextMenu } from "./js/card-context-menu.js";
 import { initSearch, runSearch } from "./js/search.js";
 import { initEditProfile, openEditProfile } from "./js/edit-profile.js";
+import { initSettings, openSettings, closeSettings } from "./js/settings.js";
+import { initAddContact, openAddContact } from "./js/add-contact.js";
+import { initSocket, emitTypingStart, emitTypingStop } from "./js/socket.js";
 
-document.addEventListener("DOMContentLoaded", function () {
+document.addEventListener("DOMContentLoaded", async function () {
+	const token = sessionStorage.getItem("token");
+	if (!token) {
+		window.location.href = "../auth/auth.html";
+		return;
+	}
+
+	const currentUser = JSON.parse(sessionStorage.getItem("user") || "{}");
 	// ─── DOM references ───────────────────────────────────────────────────────
 	const logoutBtn = document.getElementById("logout");
 	const chatPart = document.getElementById("chat-part");
@@ -81,7 +93,7 @@ document.addEventListener("DOMContentLoaded", function () {
 	const chatProfilePic = document.querySelector(".chat-profile-picture");
 	const chatName = document.querySelector(".chat-name");
 	const closeChatBtn = document.getElementById("close-chat");
-	const settingsBtn = document.querySelector(".settings-section");
+	const settingsBtn = document.querySelector(".settings");
 	const settingsList = document.querySelector(".settings-list");
 	const searchbar = document.querySelector(".search-bar");
 	const searchInput = document.querySelector(".search-input");
@@ -175,14 +187,49 @@ document.addEventListener("DOMContentLoaded", function () {
 	const editBioInput = document.getElementById("edit-bio-input");
 	const editProfileAvatar = document.querySelector(".edit-profile-avatar");
 	const editSection = document.querySelector(".edit-section");
-	const editProfilePanel = document.querySelector(".edit-profile-panel")
+	const editProfilePanel = document.querySelector(".edit-profile-panel");
+	const settingsPanel = document.querySelector(".settings-panel");
+	const settingsDialog = document.querySelector(".settings-dialog");
+	const settingsPanelClose = document.querySelector(".settings-panel-close");
+	const settingsThemeRow = document.getElementById("settings-theme-row");
+	const settingsThemeValue = document.getElementById("settings-theme-value");
+	const settingsDeleteAccount = document.getElementById("settings-delete-account");
+	const settingsPrivacyOnline = document.getElementById("settings-privacy-online");
+	const settingsPrivacyEmail = document.getElementById("settings-privacy-email");
+	const settingsPrivacyProfile = document.getElementById("settings-privacy-profile");
+	const pickerOnline = document.getElementById("picker-online");
+	const pickerEmail = document.getElementById("picker-email");
+	const pickerProfile = document.getElementById("picker-profile");
+	const settingsArchived = document.getElementById("settings-archived");
+	const settingsBlocked = document.getElementById("settings-blocked");
+	const addContactDialog = document.getElementById("add-contact-dialog");
+	const addContactName = document.getElementById("add-contact-name");
+	const addContactUsername = document.getElementById("add-contact-username");
+	const addContactError = document.getElementById("add-contact-error");
+	const addContactCancel = document.getElementById("add-contact-cancel");
+	const addContactSubmit = document.getElementById("add-contact-submit");
+	const addFriendsBtn = document.querySelector(".add-friends");
+	const chatProfilePicture = document.querySelector(".chat-profile");
+	const chatTypingStatus = document.querySelector(".chat-typing-status");
+	const avatarBtn = document.querySelector(".edit-profile-avatar-btn");
+	const avatarFileInput = document.getElementById("avatar-file-input");
+	const avatarCropDialog = document.querySelector(".avatar-crop-dialog");
+	const avatarCropImage = document.getElementById("avatar-crop-image");
+	const avatarCropCancel = document.getElementById("avatar-crop-cancel");
+	const avatarCropConfirm = document.getElementById("avatar-crop-confirm");
+	const avatarDeleteBtn = document.getElementById(
+		"edit-profile-delete-avatar",
+	);
+	const settingsSectionLi = document.querySelector(
+		".settings-list .settings-section",
+	);
+
 
 	// ─── SVG icons ────────────────────────────────────────────────────────────
 	const copyIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></g></svg>`;
 	const deleteIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM8 9h8v10H8zm7.5-5l-1-1h-5l-1 1H5v2h14V4z"/></svg>`;
 	const pinIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path fill="currentColor" d="M15.744 4.276c1.221-2.442 4.476-2.97 6.406-1.04l6.614 6.614c1.93 1.93 1.402 5.186-1.04 6.406l-6.35 3.176a1.5 1.5 0 0 0-.753.867l-1.66 4.983a2 2 0 0 1-3.312.782l-4.149-4.15l-6.086 6.087H4v-1.415l6.086-6.085l-4.149-4.15a2 2 0 0 1 .782-3.31l4.982-1.662a1.5 1.5 0 0 0 .868-.752z"/></svg>`;
 	const replyIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M10 9V5l-7 7l7 7v-4.1c5 0 8.5 1.6 11 5.1c-1-5-4-10-11-10"/></svg>`;
-
 	// ─── Empty state element ──────────────────────────────────────────────────
 	const emptyStateEl = createEmptyStateEl();
 
@@ -193,6 +240,9 @@ document.addEventListener("DOMContentLoaded", function () {
 	let swipeIcon = null;
 	let didSwipe = false;
 	const SWIPE_THRESHOLD = 100;
+
+	// ─── Typing indicator ─────────────────────────────────────────────────────
+	let _typingTimeout = null;
 
 	// ─── Init all modules ─────────────────────────────────────────────────────
 	initToast({ toaster, messageContainer, toastMessage, toastIcon, undoBtn });
@@ -212,6 +262,7 @@ document.addEventListener("DOMContentLoaded", function () {
 		pinnedMessageCount,
 		chatHeader,
 		emptyStateEl,
+		chatProfilePicture,
 	});
 
 	initChatLogic({
@@ -319,9 +370,11 @@ document.addEventListener("DOMContentLoaded", function () {
 			runSearch("");
 
 			state.contactUserId = contact.id;
-			chatProfilePic.src = contact.profilePics[0];
+			chatProfilePic.src =
+				contact.profilePics[0] ||
+				"../../../public/assets/images/profile.jpeg";
 			chatName.textContent = contact.nickname || contact.name;
-			openChat();
+			openChat(true);
 			injectMessages(contact.id);
 			scrollChatToBottom();
 
@@ -351,9 +404,137 @@ document.addEventListener("DOMContentLoaded", function () {
 		editUsernameInput,
 		editBioInput,
 		editProfileAvatar,
+		avatarBtn,
+		avatarFileInput,
+		avatarCropDialog,
+		avatarCropImage,
+		avatarCropCancel,
+		avatarCropConfirm,
+		avatarDeleteBtn,
 		chatPart,
 		peoplePart,
 	});
+
+	initSettings({
+		settingsPanel,
+		settingsDialog,
+		settingsPanelClose,
+		settingsThemeRow,
+		settingsThemeValue,
+		settingsDeleteAccount,
+		settingsPrivacyOnline,
+		settingsPrivacyEmail,
+		settingsPrivacyProfile,
+		pickerOnline,
+		pickerEmail,
+		pickerProfile,
+		settingsArchived,
+		settingsBlocked,
+		chatPart,
+		peoplePart,
+	}, currentUser);
+
+	initAddContact(
+		{
+			addContactDialog,
+			addContactName,
+			addContactUsername,
+			addContactError,
+			addContactCancel,
+			addContactSubmit,
+			addFriendsBtn,
+		},
+		(newContact) => {
+			// کارت بساز و به لیست اضافه کن
+			const card = createContactCard(
+				{ ...newContact, hasMessages: false },
+				_onContactAction,
+			);
+			contactsContainer.appendChild(card);
+
+			// چت رو باز کن
+			state.contactUserId = newContact.id;
+			openChat(true);
+		},
+	);
+
+	initSocket(
+		(msg) => receiveMessage(msg),
+		// edit
+		(data) => {
+			const userMsgs = messages[state.contactUserId];
+			if (!userMsgs) return;
+			const index = userMsgs.findIndex((m) => m.id === data.messageId);
+			if (index === -1) return;
+			userMsgs[index].text = data.text;
+			userMsgs[index].isEdited = true;
+			const msgEl = document.querySelector(
+				`.chat-message[data-index="${index}"]`,
+			);
+			if (!msgEl) return;
+			const textEl = msgEl.querySelector(".chat-message-text");
+			if (textEl) textEl.textContent = data.text;
+			if (!msgEl.querySelector(".chat-edited-label")) {
+				const label = document.createElement("span");
+				label.className = "chat-edited-label";
+				label.textContent = "edited";
+				msgEl.querySelector(".chat-message-meta")?.prepend(label);
+			}
+		},
+		// delete
+		(data) => {
+			const userMsgs = messages[state.contactUserId];
+			if (!userMsgs) return;
+			const index = userMsgs.findIndex((m) => m.id === data.messageId);
+			if (index === -1) return;
+			userMsgs.splice(index, 1);
+			const msgEl = document.querySelector(
+				`.chat-message[data-index="${index}"]`,
+			);
+			if (msgEl) msgEl.remove();
+		},
+		// online
+		(userId) => {
+			const contact = contacts.find((c) => c.contactId === userId);
+			if (!contact) return;
+			contact.isOnline = true;
+			if (state.contactUserId === contact.id) {
+				chatProfilePicture.classList.add("online");
+			}
+			refreshCard(contact);
+		},
+		// offline
+		(userId, lastSeen) => {
+			const contact = contacts.find((c) => c.contactId === userId);
+			if (!contact) return;
+			contact.isOnline = false;
+			contact.lastSeen = lastSeen;
+			if (state.contactUserId === contact.id) {
+				chatProfilePicture.classList.remove("online");
+			}
+			refreshCard(contact);
+		},
+		// payload: { conversationId, messageIds, seenBy }
+		(payload) => {
+			handleMessagesSeen(
+				payload.conversationId,
+				payload.messageIds,
+				payload.seenBy,
+			);
+		},
+		// start typing
+		(userId) => {
+			const contact = contacts.find((c) => c.contactId === userId);
+			if (!contact || state.contactUserId !== contact.id) return;
+			chatTypingStatus.textContent = "typing...";
+		},
+		// stop typing
+		(userId) => {
+			const contact = contacts.find((c) => c.contactId === userId);
+			if (!contact || state.contactUserId !== contact.id) return;
+			chatTypingStatus.textContent = "";
+		},
+	);
 
 	function updateContactsEmptyState() {
 		const empty = document.getElementById("contacts-empty");
@@ -443,6 +624,53 @@ document.addEventListener("DOMContentLoaded", function () {
 	}
 
 	// ─── Inject initial cards ─────────────────────────────────────────────────
+	try {
+		const serverContacts = await getContacts();
+		serverContacts.forEach((c) => {
+			contacts.push({
+				...c,
+				name: c.nickname || c.contact?.name || "",
+				username: c.contact?.username || "",
+				profilePics: c.contact?.profilePics || [],
+				isOnline: c.contact?.isOnline || false,
+				lastSeen: c.contact?.lastSeen || null,
+				bio: c.contact?.bio || "",
+				email: c.contact?.email || "",
+				lastMessage: c.conversation?.messages?.[0]?.text || "",
+				lastMessageTime: c.conversation?.messages?.[0]
+					? new Date(
+							c.conversation.messages[0].createdAt,
+						).toLocaleTimeString([], {
+							hour: "2-digit",
+							minute: "2-digit",
+							hour12: false,
+						})
+					: null,
+				lastMessageDate: c.conversation?.messages?.[0]
+					? new Date(c.conversation.messages[0].createdAt)
+							.toISOString()
+							.slice(0, 10)
+					: null,
+				unreadCount: (() => {
+					const lastMsg = c.conversation?.messages?.[0];
+					if (!lastMsg) return 0;
+					// اگه پیام آخر از طرف مقابله و seen نشده، unread داریم
+					if (lastMsg.senderId !== currentUser.id && !lastMsg.isSeen)
+						return 1;
+					return 0;
+				})(),
+				lastMessageSeen: (() => {
+					const lastMsg = c.conversation?.messages?.[0];
+					if (!lastMsg) return true;
+					if (lastMsg.senderId !== currentUser.id && !lastMsg.isSeen)
+						return false;
+					return true;
+				})(),
+			});
+		});
+	} catch {
+		console.error("Failed to load contacts");
+	}
 	contacts.forEach((contact) => {
 		if (
 			contact.isPinned ||
@@ -464,11 +692,14 @@ document.addEventListener("DOMContentLoaded", function () {
 	sortContacts();
 
 	// ─── Settings ─────────────────────────────────────────────────────────────
-	if (settingsBtn) {
-		settingsBtn.addEventListener("click", (e) => {
-			if (window.innerWidth < 700) {
-				e.stopPropagation();
-				settingsList.classList.toggle("open");
+	if (settingsSectionLi && settingsList) {
+		settingsSectionLi.addEventListener("click", (e) => {
+			e.stopPropagation();
+			if (!settingsList.classList.contains("open")) {
+				settingsList.classList.add("open");
+			} else {
+				settingsList.classList.remove("open");
+				openSettings(currentUser);
 			}
 		});
 	}
@@ -484,8 +715,8 @@ document.addEventListener("DOMContentLoaded", function () {
 	}
 
 	if (logoutBtn) {
-		logoutBtn.addEventListener("click", () => {
-			apiLogout();
+		logoutBtn.addEventListener("click", async () => {
+			await apiLogout();
 			window.location.href = "../auth/auth.html";
 		});
 	}
@@ -547,9 +778,11 @@ document.addEventListener("DOMContentLoaded", function () {
 			if (unreadEl) unreadEl.style.opacity = "0";
 			updateTotalUnreadCount();
 
-			chatProfilePic.src = friend.profilePics[0];
+			chatProfilePic.src =
+				friend.profilePics[0] ||
+				"../../../public/assets/images/profile.jpeg";
 			chatName.textContent = friend.nickname || friend.name;
-			openChat();
+			openChat(true);
 			injectMessages(state.contactUserId);
 			scrollChatToBottom();
 
@@ -607,9 +840,11 @@ document.addEventListener("DOMContentLoaded", function () {
 			card.remove();
 			activeChatsContainer.appendChild(createActiveChatCard(friend));
 
-			chatProfilePic.src = friend.profilePics[0];
+			chatProfilePic.src =
+				friend.profilePics[0] ||
+				"../../../public/assets/images/profile.jpeg";
 			chatName.textContent = friend.nickname || friend.name;
-			openChat();
+			openChat(true);
 			if (friend.isBlocked) {
 				messageContainer.style.display = "none";
 				unblockActionBtn[0].style.display = "flex";
@@ -670,6 +905,16 @@ document.addEventListener("DOMContentLoaded", function () {
 					2 * ((maxLines - 2) * 0.75 + 0.2) +
 					state.actionPreviewHeight +
 					"rem";
+			}
+
+			// typing emit
+			const _contact = contacts.find((c) => c.id === state.contactUserId);
+			if (_contact?.conversationId) {
+				emitTypingStart(_contact.conversationId);
+				clearTimeout(_typingTimeout);
+				_typingTimeout = setTimeout(() => {
+					emitTypingStop(_contact.conversationId);
+				}, 2000);
 			}
 		});
 
@@ -952,9 +1197,11 @@ document.addEventListener("DOMContentLoaded", function () {
 				? "You"
 				: contacts.find((c) => c.id === state.contactUserId)?.name;
 
-			chatProfilePic.src = friend.profilePics[0];
+			chatProfilePic.src =
+				friend.profilePics[0] ||
+				"../../../public/assets/images/profile.jpeg";
 			chatName.textContent = friend.nickname || friend.name;
-			openChat();
+			openChat(true);
 			if (friend.isBlocked) {
 				messageContainer.style.display = "none";
 				unblockActionBtn[0].style.display = "flex";
@@ -1192,24 +1439,15 @@ document.addEventListener("DOMContentLoaded", function () {
 	if (editSection) {
 		editSection.addEventListener("click", () => {
 			settingsList.classList.remove("open");
-			// فعلاً یه mock user میدیم، بک‌اند که اومد از session میگیری
-			openEditProfile({
-				name: "Your Name",
-				username: "your_username",
-				bio: "",
-				profilePics: ["../../../public/assets/images/profile.jpeg"],
-			});
+			openEditProfile(currentUser);
 		});
 	}
 
 	// ─── Global click ─────────────────────────────────────────────────────────
 	document.addEventListener("click", (e) => {
-		if (
-			!settingsList.contains(e.target) &&
-			!settingsBtn.contains(e.target)
-		) {
-			settingsList.classList.remove("open");
-		}
+			if (settingsList && (!settingsList.contains(e.target) && (!settingsBtn || !settingsBtn.contains(e.target)))) {
+				settingsList.classList.remove("open");
+			}
 		if (!searchbar.contains(e.target)) {
 			searchbar.classList.remove("open");
 			searchInput.value = "";

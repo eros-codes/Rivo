@@ -5,6 +5,7 @@ import {
 	moveToActiveChats,
 	refreshCard,
 	sortActiveChats,
+	sortContacts,
 } from "./chat-logic.js";
 import { emitMessage, emitEditMessage, emitMessageSeen } from "./socket.js";
 import { getMessages } from "./api.js";
@@ -357,7 +358,7 @@ export async function sendMessage() {
 				const sent = await emitMessage({
 					conversationId: contact.conversationId,
 					text: msg.text,
-					forwardedFrom: msg.forwardedFrom || msg.user ? "You" : null,
+					forwardedFrom: msg.forwardedFrom || (msg.user ? "You" : null),
 					forwardedText: msg.text,
 				});
 				const normalized = _normalizeOutgoing(sent);
@@ -438,6 +439,7 @@ export async function sendMessage() {
 	_updateContactCard();
 }
 
+// ─── Normalize Outgoing Message ───────────────────────────────────────────────
 function _normalizeOutgoing(m) {
 	return {
 		id: m.id,
@@ -456,6 +458,7 @@ function _normalizeOutgoing(m) {
 	};
 }
 
+// ─── Update Contact Card ────────────────────────────────────────────────────────
 function _updateContactCard() {
 	const userMsgs = messages[state.contactUserId];
 	const lastMsg = userMsgs?.at(-1);
@@ -490,13 +493,30 @@ export function handleMessagesSeen(conversationId, messageIds = [], seenBy = nul
 		});
 	}
 
-	// Update DOM only if this conversation is currently open
+	// Update DOM only if this conversation is currently open and there are indices
 	if (state.contactUserId === contact.id && seenIndices.length > 0) {
 		markMessagesAsSeen(_dom.chatEl, seenIndices);
 	}
 
-	contact.unreadCount = 0;
-	contact.lastMessageSeen = true;
-	refreshCard(contact);
-	sortActiveChats();
+	const currentUserId = _currentUserId();
+	const anyMarked = Array.isArray(messageIds) && messageIds.length > 0;
+
+	// If any messages were marked as seen, mark the contact's last message as seen
+	if (anyMarked) {
+		contact.lastMessageSeen = true;
+		if (!contact.isPinned && contact.unreadCount === 0) {
+			moveToContacts(contact);
+			sortContacts();
+		}
+	}
+
+	// Only reset unreadCount for this contact when the current user is the one who saw the messages
+	if (seenBy === currentUserId && anyMarked) {
+		contact.unreadCount = 0;
+	}
+
+	if (seenIndices.length > 0 || anyMarked) {
+		refreshCard(contact);
+		sortActiveChats();
+	}
 }

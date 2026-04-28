@@ -91,7 +91,9 @@
 	border-radius: 1rem;
 	background: var(--header-color);
 	cursor: pointer;
-    transition: transform 0.15s ease, opacity 0.15s ease;
+	transition:
+		transform 0.15s ease,
+		opacity 0.15s ease;
 }
 .settings-row-left {
 	display: flex;
@@ -108,14 +110,15 @@
 	font-weight: 600;
 }
 .settings-row-value {
-	color: var(--orange);
-	font-weight: 600;
+	color: var(--chat-time);
+	font-weight: 400;
 }
 
 .settings-row.settings-row-danger {
 	color: var(--red);
 }
-.settings-row.settings-row-danger .settings-row-left span {
+.settings-row.settings-row-danger .settings-row-left span,
+.settings-row.settings-row-danger .settings-row-left svg {
 	color: var(--red);
 }
 
@@ -143,11 +146,11 @@
 .settings-picker-option {
 	padding: 0.5rem 0.75rem;
 	cursor: pointer;
-	color: var(--text-secondary-color);
+	color: var(--chat-time);
 }
 .settings-picker-option.active {
-	color: var(--orange);
-	font-weight: 700;
+	color: var(--text-secondary-color);
+	font-weight: 400;
 }
 
 .settings-change-password-form {
@@ -176,13 +179,14 @@
 	display: flex;
 	flex-direction: column;
 	gap: 0.3rem;
-	margin-bottom: 0.5rem;
+	margin-bottom: 0.7rem;
 }
 .settings-change-password-field label {
-	font-size: 0.88rem;
+	font-size: 1rem;
 	color: var(--text-secondary-color);
-	font-weight: 600;
-    padding-left: 0.5rem;
+	font-weight: 400;
+	padding-left: 0.5rem;
+	margin-bottom: 0.5rem;
 }
 .settings-change-password-form input {
 	font-size: 16px;
@@ -225,13 +229,14 @@
 }
 .settings-change-password-actions {
 	display: flex;
-	margin-top: 1rem;
+	margin-top: 1.5rem;
+	padding-left: 0.25rem;
 }
 .password-wrapper svg {
-    width: 1.25rem;
-    height: 1.25rem;
-    color: var(--chat-time);
-    cursor: pointer;
+	width: 1.25rem;
+	height: 1.25rem;
+	color: var(--chat-time);
+	cursor: pointer;
 }
 .settings-change-password-submit {
 	padding: 0.6rem 0.9rem;
@@ -242,11 +247,9 @@
 	cursor: pointer;
 	box-shadow: 0 6px 16px rgba(255, 140, 0, 0.12);
 	font-weight: 700;
-    transition: transform 0.15s ease, opacity 0.15s ease;
-}
-.settings-change-password-submit:hover {
-	transform: translateY(-1px);
-	opacity: 0.98;
+	transition:
+		transform 0.15s ease,
+		opacity 0.15s ease;
 }
 .settings-change-password-submit:disabled {
 	opacity: 0.6;
@@ -258,13 +261,13 @@
 	background: transparent;
 	color: var(--text-secondary-color);
 	border-radius: 0.5rem;
-    border: none;
+	border: none;
 	cursor: pointer;
-    transition: transform 0.15s ease, opacity 0.15s ease;
+	transition:
+		transform 0.15s ease,
+		opacity 0.15s ease;
 }
-.settings-send-reset-email:hover {
-	background: rgba(0, 0, 0, 0.02);
-}
+
 .settings-change-password-form .password-wrapper {
 	position: relative;
 }
@@ -282,7 +285,7 @@
 	height: 34px;
 	border-radius: 8px;
 	display: flex;
-    gap: 0.5rem;
+	gap: 0.5rem;
 	align-items: center;
 	justify-content: center;
 }
@@ -292,11 +295,6 @@
 }
 .settings-change-password-form .settings-password-input {
 	padding-right: 3rem;
-}
-
-.settings-row:hover {
-	transform: translateY(-2px);
-	box-shadow: 0 6px 18px rgba(12, 14, 20, 0.04);
 }
 
 @media (max-width: 700px) {
@@ -311,5 +309,17 @@
 		height: 100dvh;
 		z-index: 300;
 		background: var(--background-color);
+	}
+
+	.settings-change-password-submit:hover {
+		transform: translateY(-1px);
+		opacity: 0.98;
+	}
+	.settings-send-reset-email:hover {
+		background: rgba(0, 0, 0, 0.02);
+	}
+	.settings-row:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 6px 18px rgba(12, 14, 20, 0.04);
 	}
 }

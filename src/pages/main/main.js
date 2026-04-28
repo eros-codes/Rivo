@@ -70,7 +70,7 @@ import { initSearch, runSearch } from "./js/search.js";
 import { initEditProfile, openEditProfile } from "./js/edit-profile.js";
 import { initSettings, openSettings, closeSettings } from "./js/settings.js";
 import { initAddContact, openAddContact } from "./js/add-contact.js";
-import { initSocket, emitTypingStart, emitTypingStop } from "./js/socket.js";
+import { initSocket, emitTypingStart, emitTypingStop, emitPinMessage } from "./js/socket.js";
 
 document.addEventListener("DOMContentLoaded", async function () {
 	const token = localStorage.getItem("token");
@@ -272,14 +272,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 		chatProfilePicture,
 	});
 
-	// Empty chat CTA: send "hi" when user taps the empty state
-	emptyStateEl.addEventListener("click", () => {
-		if (!state.contactUserId) return;
-		messageInput.value = "hi";
-		messageInput.dispatchEvent(new Event("input"));
-		sendMessage();
-	});
-
 	initChatLogic({
 		activeChatsContainer,
 		contactsContainer,
@@ -390,7 +382,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 				"../../../public/assets/images/profile.jpeg";
 			chatName.textContent = contact.nickname || contact.name;
 			openChat(true);
-			injectMessages(contact.id);
 			scrollChatToBottom();
 
 			if (msgIndex === null) return;
@@ -466,18 +457,34 @@ document.addEventListener("DOMContentLoaded", async function () {
 			addFriendsBtn,
 		},
 		(newContact) => {
+			contacts.push({
+				...newContact,
+				profilePics: newContact.contact?.profilePics || [],
+				name: newContact.nickname || newContact.contact?.name || "",
+				username: newContact.contact?.username || "",
+				isOnline: false,
+				lastSeen: null,
+				bio: newContact.contact?.bio || "",
+				email: newContact.contact?.email || "",
+				lastMessage: "",
+				lastMessageTime: null,
+				lastMessageDate: null,
+				unreadCount: 0,
+				lastMessageSeen: true,
+			});
+			updateContactsEmptyState();
 			const card = createContactCard(
 				{ ...newContact, hasMessages: false },
 				_onContactAction,
 			);
 			contactsContainer.appendChild(card);
-
 			state.contactUserId = newContact.id;
 			openChat(true);
 		},
 	);
 
 	initSocket(
+		// new message
 		(msg) => receiveMessage(msg),
 		// edit
 		(data) => {
@@ -531,7 +538,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 					friend.lastMessage = lastMsg.text;
 					friend.lastMessageTime = lastMsg.time;
 					friend.lastMessageDate = lastMsg.date || "";
-					friend.lastMessageSeen = lastMsg.user ? false : true;
+					friend.lastMessageSeen = lastMsg.user ? lastMsg.isSeen === true : true;
 				} else {
 					friend.lastMessage = "";
 					friend.lastMessageTime = "";
@@ -584,13 +591,26 @@ document.addEventListener("DOMContentLoaded", async function () {
 			if (!contact || state.contactUserId !== contact.id) return;
 			chatTypingStatus.textContent = "";
 		},
+		// message pinned
+		({ messageId, isPinned }) => {
+			for (const [uid, msgs] of Object.entries(messages)) {
+				if (!Array.isArray(msgs)) continue;
+				const idx = msgs.findIndex((m) => m.id === messageId);
+				if (idx !== -1) {
+					msgs[idx].isPinned = isPinned;
+					if (state.contactUserId === Number(uid)) {
+						injectMessages(Number(uid));
+					}
+					break;
+				}
+			}
+		}
 	);
 
 	function updateContactsEmptyState() {
 		const empty = document.getElementById("contacts-empty");
-		const hasCards =
-			contactsContainer.querySelectorAll(".contacts-card").length > 0;
-		empty.style.display = hasCards ? "none" : "flex";
+		if (!empty) return;
+		empty.style.display = contacts.length === 0 ? "flex" : "none";
 	}
 
 	function _onContactAction(action, userId) {
@@ -701,20 +721,11 @@ document.addEventListener("DOMContentLoaded", async function () {
 							.toISOString()
 							.slice(0, 10)
 					: null,
-				unreadCount: (() => {
-					const lastMsg = c.conversation?.messages?.[0];
-					if (!lastMsg) return 0;
-					// اگه پیام آخر از طرف مقابله و seen نشده، unread داریم
-					if (lastMsg.senderId !== currentUser.id && !lastMsg.isSeen)
-						return 1;
-					return 0;
-				})(),
+				unreadCount: c.unreadCount ?? 0,
 				lastMessageSeen: (() => {
 					const lastMsg = c.conversation?.messages?.[0];
 					if (!lastMsg) return true;
-					if (lastMsg.senderId !== currentUser.id && !lastMsg.isSeen)
-						return false;
-					return true;
+					return lastMsg.isSeen === true;
 				})(),
 			});
 		});
@@ -780,6 +791,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (friend) {
 				friend.isInChat = false;
+				// persist isInChat to server
+				apiUpdateContact(friend.id, { isInChat: false }).catch(() => {});
 				if (
 					!friend.isPinned &&
 					friend.unreadCount === 0 &&
@@ -805,6 +818,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			);
 			if (prevFriend && prevFriend.id !== Number(active.dataset.userId)) {
 				prevFriend.isInChat = false;
+				apiUpdateContact(prevFriend.id, { isInChat: false }).catch(() => {});
 				if (
 					!prevFriend.isPinned &&
 					prevFriend.unreadCount === 0 &&
@@ -820,8 +834,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (!friend) return;
 
+			if (friend.unreadCount > 0) {
+				friend.lastMessageSeen = true;
+			}
 			friend.unreadCount = 0;
-			apiUpdateContact(friend.id, { unreadCount: 0 });
+			friend.isInChat = true;
+			apiUpdateContact(friend.id, { unreadCount: 0, isInChat: true }).catch(() => {});
 			friend.isInChat = true;
 			const unreadEl = active.querySelector(
 				".active-chat-unread-messages",
@@ -834,7 +852,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 				"../../../public/assets/images/profile.jpeg";
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
-			injectMessages(state.contactUserId);
 			scrollChatToBottom();
 
 			if (friend.isBlocked) {
@@ -868,6 +885,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			);
 			if (prevFriend && prevFriend.id !== Number(card.dataset.userId)) {
 				prevFriend.isInChat = false;
+				apiUpdateContact(prevFriend.id, { isInChat: false }).catch(() => {});
 				if (
 					!prevFriend.isPinned &&
 					prevFriend.unreadCount === 0 &&
@@ -883,9 +901,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (!friend) return;
 
+			if (friend.unreadCount > 0) {
+				friend.lastMessageSeen = true;
+			}
 			friend.unreadCount = 0;
-			apiUpdateContact(friend.id, { unreadCount: 0 });
 			friend.isInChat = true;
+			apiUpdateContact(friend.id, { unreadCount: 0, isInChat: true }).catch(() => {});
 			updateTotalUnreadCount();
 
 			card.remove();
@@ -903,7 +924,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 				messageContainer.style.display = "flex";
 				unblockActionBtn[0].style.display = "none";
 			}
-			injectMessages(state.contactUserId);
 			scrollChatToBottom();
 		});
 	}
@@ -1100,7 +1120,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 					}
 
 				} else if (swipeIcon) {
-					swipeIcon.style.opacity = 0;
+					swipeIcon.remove();
+					swipeIcon = null;
 				}
 			}
 
@@ -1165,8 +1186,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 				const chatRect = chatEl.getBoundingClientRect();
 				if (rect.top >= chatRect.top && rect.top <= chatRect.bottom) {
 					pinnedMessageText.dataset.index = idx;
-					pinnedMessageText.textContent =
-						messages[state.contactUserId][idx].text;
+					const msgs = messages[state.contactUserId][idx];
+					if (!msgs) return;
+					pinnedMessageText.textContent = msgs.text;
 					updatePinCount(idx);
 					break;
 				}
@@ -1196,9 +1218,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 			const prevPos =
 				(pos - 1 + state.pinnedIndexes.length) %
 				state.pinnedIndexes.length;
+			const prevIdx = state.pinnedIndexes[prevPos];
 
 			const targetMsg = chatEl.querySelector(
-				`[data-index="${currentIdx}"]`,
+				`[data-index=${currentIdx}]`,
 			);
 			if (targetMsg) {
 				state.isProgrammaticScroll = true;
@@ -1206,22 +1229,23 @@ document.addEventListener("DOMContentLoaded", async function () {
 					behavior: "smooth",
 					block: "center",
 				});
+				highlightMessage(targetMsg);
+
+				// when reached to pinned message, show next pinned message in the bar after short delay
 				setTimeout(() => {
 					state.isProgrammaticScroll = false;
+					const msgs = messages[state.contactUserId][prevIdx];
+					if (!msgs) return;
+					pinnedMessageText.textContent = msgs.text;
+					pinnedMessageText.dataset.index = prevIdx;
+					pinnedMessageContainer.style.animation = "highlightPin 0.5s";
+					setTimeout(
+						() => (pinnedMessageContainer.style.animation = ""),
+						500,
+					);
+					updatePinCount(prevIdx);
 				}, 800);
-				highlightMessage(targetMsg);
 			}
-
-			const prevIdx = state.pinnedIndexes[prevPos];
-			pinnedMessageText.textContent =
-				messages[state.contactUserId][prevIdx].text;
-			pinnedMessageText.dataset.index = prevIdx;
-
-			pinnedMessageContainer.style.animation = "highlightPin 0.5s";
-			setTimeout(() => {
-				pinnedMessageContainer.style.animation = "";
-			}, 500);
-			updatePinCount(prevIdx);
 		});
 	}
 
@@ -1295,15 +1319,17 @@ document.addEventListener("DOMContentLoaded", async function () {
 			chatEl.style.paddingBottom =
 				basePadding + state.actionPreviewHeight + "rem";
 			msgActionText.textContent = "Forwarding message from " + senderName;
-			msgActionmsg.textContent =
-				messages[state.contactUserId][Number(state.msgIndex)].text;
+			const msgs =
+				messages[state.contactUserId][Number(state.msgIndex)];
+			if (!msgs) return;
+			msgActionmsg.textContent = msgs.text;
 			messageInput.style.borderRadius = "0 0 2rem 2rem";
 			sendMessageBtn.style.display = "block";
 			scrollChatToBottom();
 
 			state.isForwarding = true;
 			state.forwardingMsg = buildForwardedMsg(
-				messages[state.contactUserId][Number(state.msgIndex)],
+				msgs,
 				friend.id,
 			);
 			forwardDialog.close();
@@ -1364,7 +1390,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 					friend.lastMessage = lastMsg.text;
 					friend.lastMessageTime = lastMsg.time;
 					friend.lastMessageDate = lastMsg.date || "";
-					friend.lastMessageSeen = lastMsg.user ? false : true;
+					friend.lastMessageSeen = lastMsg.user ? lastMsg.isSeen === true : true;
 				} else {
 					friend.lastMessage = "";
 					friend.lastMessageTime = "";
@@ -1517,6 +1543,16 @@ document.addEventListener("DOMContentLoaded", async function () {
 		editSection.addEventListener("click", () => {
 			settingsList.classList.remove("open");
 			openEditProfile(currentUser);
+		});
+	}
+
+	// ─── Empty state click to send message ─────────────────────────────────────
+	if (emptyStateEl) {
+		emptyStateEl.addEventListener("click", () => {
+			if (!state.contactUserId) return;
+			messageInput.value = "hi";
+			messageInput.dispatchEvent(new Event("input"));
+			sendMessage();
 		});
 	}
 

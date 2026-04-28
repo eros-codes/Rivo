@@ -159,7 +159,7 @@ router.post("/", requireAuth, async (req, res) => {
 // ─── Update contact (pin, mute, block, nickname) ──────────────────────────────
 router.patch("/:id", requireAuth, async (req, res) => {
 	const contactId = parseInt(req.params.id);
-	const { isPinned, pinOrder, isMuted, isBlocked, nickname } = req.body;
+	const { isPinned, pinOrder, isMuted, isBlocked, nickname, unreadCount, isInChat } = req.body;
 
 	try {
 		const contact = await prisma.contact.findFirst({
@@ -181,6 +181,8 @@ router.patch("/:id", requireAuth, async (req, res) => {
 				...(isMuted !== undefined && { isMuted }),
 				...(isBlocked !== undefined && { isBlocked }),
 				...(nickname !== undefined && { nickname }),
+				...(unreadCount !== undefined && { unreadCount }),
+				...(isInChat !== undefined && { isInChat }),
 			},
 		});
 

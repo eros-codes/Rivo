@@ -28,13 +28,13 @@ export function initSocket(httpServer) {
 	io.on("connection", async (socket) => {
 		console.log(`User ${socket.userId} connected`);
 
-		// user رو online کن
+		// show user online
 		await prisma.user.update({
 			where: { id: socket.userId },
 			data: { isOnline: true },
 		});
 
-		// user رو به room های همه conversation هاش اضافه کن
+		// join user to all their conversation rooms
 		const memberships = await prisma.conversationMember.findMany({
 			where: { userId: socket.userId },
 			select: { conversationId: true },
@@ -44,7 +44,7 @@ export function initSocket(httpServer) {
 			socket.join(`conversation:${conversationId}`);
 		});
 
-		// به بقیه اطلاع بده که online شد
+		// notify other users that this user is online
 		socket.broadcast.emit("user:online", { userId: socket.userId });
 
 		// ─── Send message ──────────────────────────────────────────────────────
@@ -103,8 +103,28 @@ export function initSocket(httpServer) {
 					data: { lastMessageAt: message.createdAt },
 				});
 
-				// به همه توی این conversation بفرست
-				socket.to(`conversation:${conversationId}`).emit("message:new", message);
+				const recipientContacts = await prisma.contact.findMany({
+					where: { conversationId, ownerId: { not: socket.userId } },
+					select: { id: true, ownerId: true },
+				});
+
+				const roomSockets = await io
+					.in(`conversation:${conversationId}`)
+					.fetchSockets();
+				const usersInRoom = new Set(roomSockets.map((s) => s.userId));
+
+				for (const contact of recipientContacts) {
+					if (!usersInRoom.has(contact.ownerId)) {
+						await prisma.contact.update({
+							where: { id: contact.id },
+							data: { unreadCount: { increment: 1 } },
+						});
+					}
+				}
+
+				socket
+					.to(`conversation:${conversationId}`)
+					.emit("message:new", message);
 
 				callback?.({ success: true, message });
 			} catch (err) {
@@ -178,6 +198,33 @@ export function initSocket(httpServer) {
 			}
 		});
 
+		// ─── Pin/Unpin message ─────────────────────────────────────────────────
+		socket.on("message:pin", async ({ messageId }, callback) => {
+			try {
+				const message = await prisma.message.findUnique({
+					where: { id: messageId },
+				});
+				if (!message) return callback?.({ error: "Not found" });
+
+				const updated = await prisma.message.update({
+					where: { id: messageId },
+					data: { isPinned: !message.isPinned },
+				});
+
+				io.to(`conversation:${message.conversationId}`).emit(
+					"message:pinned",
+					{
+						messageId,
+						isPinned: updated.isPinned,
+					},
+				);
+
+				callback?.({ success: true, isPinned: updated.isPinned });
+			} catch (err) {
+				callback?.({ error: "Server error" });
+			}
+		});
+
 		// ─── Typing ────────────────────────────────────────────────────────────
 		socket.on("typing:start", ({ conversationId }) => {
 			socket.to(`conversation:${conversationId}`).emit("typing:start", {
@@ -214,10 +261,10 @@ export function initSocket(httpServer) {
 			});
 		});
 
-		// --- Seen message
+		// ─── Message seen ───────────────────────────────────────────────────────
 		socket.on("message:seen", async ({ conversationId }) => {
 			try {
-				// find message ids that will be marked as seen
+				// find message ids that will be marked as seen (messages sent by others to this socket)
 				const toMark = await prisma.message.findMany({
 					where: {
 						conversationId,
@@ -232,13 +279,24 @@ export function initSocket(httpServer) {
 						where: { id: { in: toMark.map((m) => m.id) } },
 						data: { isSeen: true },
 					});
-				}
 
-				socket.to(`conversation:${conversationId}`).emit("message:seen", {
-					conversationId,
-					messageIds: toMark.map((m) => m.id),
-					seenBy: socket.userId,
-				});
+					await prisma.contact.updateMany({
+						where: {
+							conversationId,
+							ownerId: socket.userId,
+						},
+						data: { unreadCount: 0 },
+					});
+
+					// notify other participants only when there are messages actually marked as seen
+					socket
+						.to(`conversation:${conversationId}`)
+						.emit("message:seen", {
+							conversationId,
+							messageIds: toMark.map((m) => m.id),
+							seenBy: socket.userId,
+						});
+				}
 			} catch (err) {
 				console.error("message:seen handler error", err);
 			}

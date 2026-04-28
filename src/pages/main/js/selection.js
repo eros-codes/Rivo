@@ -8,7 +8,12 @@ import {
 	basePadding,
 } from "./chat.js";
 import { createForwardedContactCard } from "../../../components/contact-cards/contacts-forward.js";
-import { refreshCard, sortActiveChats, sortContacts, moveToContacts } from "./chat-logic.js";
+import {
+	refreshCard,
+	sortActiveChats,
+	sortContacts,
+	moveToContacts,
+} from "./chat-logic.js";
 
 let _dom = {};
 
@@ -58,6 +63,14 @@ export function updateSelectionCount() {
 // ─── Bulk delete ──────────────────────────────────────────────────────────────
 export function handleBulkDelete() {
 	const msgsToDelete = [...state.selectedMessages].sort((a, b) => b - a);
+
+	const friend = contacts.find((c) => c.id === state.contactUserId);
+	// save before state changes for undo
+	const prevLastMessage = friend?.lastMessage;
+	const prevLastMessageTime = friend?.lastMessageTime;
+	const prevLastMessageDate = friend?.lastMessageDate;
+	const prevLastMessageSeen = friend?.lastMessageSeen;
+
 	cancelSelection();
 	showToast(`${msgsToDelete.length} messages deleted`, _dom.deleteIcon, true);
 	msgsToDelete.forEach((idx) => {
@@ -65,15 +78,16 @@ export function handleBulkDelete() {
 		if (msgEl) state.deletingTimeouts.push(deleteMessage(msgEl, idx));
 	});
 
-	const friend = contacts.find((c) => c.id === state.contactUserId);
 	if (friend) {
-		const remaining = (messages[state.contactUserId] || []).filter((_, i) => !msgsToDelete.includes(i));
+		const remaining = (messages[state.contactUserId] || []).filter(
+			(_, i) => !msgsToDelete.includes(i),
+		);
 		if (remaining.length > 0) {
 			const lastMsg = remaining.at(-1);
 			friend.lastMessage = lastMsg.text;
 			friend.lastMessageTime = lastMsg.time;
 			friend.lastMessageDate = lastMsg.date || "";
-			friend.lastMessageSeen = lastMsg.user ? false : true;
+			friend.lastMessageSeen = lastMsg.user ? lastMsg.isSeen === true : true;
 		} else {
 			friend.lastMessage = "";
 			friend.lastMessageTime = "";
@@ -97,6 +111,16 @@ export function handleBulkDelete() {
 				}, 150);
 			}
 		});
+		// restore deleted messages in state
+		if (friend) {
+			friend.lastMessage = prevLastMessage;
+			friend.lastMessageTime = prevLastMessageTime;
+			friend.lastMessageDate = prevLastMessageDate;
+			friend.lastMessageSeen = prevLastMessageSeen;
+			refreshCard(friend);
+			sortActiveChats();
+			sortContacts();
+		}
 	};
 }
 

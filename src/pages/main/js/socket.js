@@ -25,15 +25,12 @@ export function initSocket(
 	onMessageSeen,
 	onTypingStart,
 	onTypingStop,
+	onMessagePinned,
 ) {
 	const token = localStorage.getItem("token");
 
 	socket = io({
 		auth: { token },
-	});
-
-	socket.on("connect", () => {
-		console.log("Socket connected");
 	});
 
 	socket.on("message:new", (message) => {
@@ -56,12 +53,12 @@ export function initSocket(
 		onUserOffline(userId, lastSeen);
 	});
 
-	socket.on("disconnect", () => {
-		console.log("Socket disconnected");
-	});
-
 	socket.on("message:seen", (data) => {
 		onMessageSeen(data);
+	});
+
+	socket.on("message:pinned", (data) => {
+		onMessagePinned?.(data);
 	});
 
 	socket.on("typing:start", ({ userId }) => onTypingStart?.(userId));
@@ -116,4 +113,13 @@ export function emitTypingStop(conversationId) {
 
 export function emitMessageSeen(conversationId) {
 	socket.emit("message:seen", { conversationId });
+}
+
+export function emitPinMessage(messageId) {
+	return new Promise((resolve, reject) => {
+		socket.emit("message:pin", { messageId }, (res) => {
+			if (res?.error) reject(res.error);
+			else resolve(res?.isPinned);
+		});
+	});
 }

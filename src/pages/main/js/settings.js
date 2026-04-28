@@ -115,6 +115,13 @@ export function initSettings(dom, currentUser) {
 				el.style.display = 'none';
 			}
 		}
+
+		// clear password fields when closing any interactive element
+		if (_dom.settingsCurrentPassword)
+			_dom.settingsCurrentPassword.value = "";
+		if (_dom.settingsNewPassword) _dom.settingsNewPassword.value = "";
+		if (_dom.settingsConfirmPassword)
+			_dom.settingsConfirmPassword.value = "";
 	}
 
 	pickers.forEach((p) => {
@@ -250,13 +257,9 @@ export function initSettings(dom, currentUser) {
 		}
 	}
 
-	// Archived/Blocked
+	// Archived
 	if (_dom.settingsArchived)
 		_dom.settingsArchived.addEventListener("click", () =>
-			showToast("Coming soon"),
-		);
-	if (_dom.settingsBlocked)
-		_dom.settingsBlocked.addEventListener("click", () =>
 			showToast("Coming soon"),
 		);
 

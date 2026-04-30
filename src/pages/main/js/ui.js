@@ -10,7 +10,7 @@ export function initToast(dom) {
 	_t = dom;
 }
 
-export function showToast(message, icon, showUndo = false) {
+export function showToast(message, icon= "", showUndo = false) {
 	_t.toaster.style.display = "flex";
 	_t.toaster.style.bottom =
 		_t.messageContainer.getBoundingClientRect().height + 14 + "px";

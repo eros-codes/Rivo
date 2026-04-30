@@ -3,6 +3,7 @@ import { createContactCard } from "../../components/contact-cards/contact-card.j
 import { createActiveChatCard } from "../../components/active-chats/active-chats.js";
 import { createForwardedContactCard } from "../../components/contact-cards/contacts-forward.js";
 import { state, contacts, messages } from "./js/state.js";
+import { escapeHtml } from "../../components/messages/messages.js";
 import {
 	initToast,
 	showToast,
@@ -70,7 +71,7 @@ import { initSearch, runSearch } from "./js/search.js";
 import { initEditProfile, openEditProfile } from "./js/edit-profile.js";
 import { initSettings, openSettings, closeSettings } from "./js/settings.js";
 import { initAddContact, openAddContact } from "./js/add-contact.js";
-import { initSocket, emitTypingStart, emitTypingStop, emitPinMessage } from "./js/socket.js";
+import { initSocket, emitTypingStart, emitTypingStop, emitPinMessage, getSocket } from "./js/socket.js";
 
 document.addEventListener("DOMContentLoaded", async function () {
 	const token = localStorage.getItem("token");
@@ -223,7 +224,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 	const avatarCropImage = document.getElementById("avatar-crop-image");
 	const avatarCropCancel = document.getElementById("avatar-crop-cancel");
 	const avatarCropConfirm = document.getElementById("avatar-crop-confirm");
-	const avatarDeleteBtn = document.getElementById(
+	const deleteAvatarBtn = document.getElementById(
 		"edit-profile-delete-avatar",
 	);
 	const settingsSectionLi = document.querySelector(
@@ -401,7 +402,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 		},
 	});
 
-	initEditProfile({
+		initEditProfile({
 		editProfilePanel,
 		editProfileDialog,
 		editProfileClose,
@@ -416,7 +417,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 		avatarCropImage,
 		avatarCropCancel,
 		avatarCropConfirm,
-		avatarDeleteBtn,
+		deleteAvatarBtn,
 		chatPart,
 		peoplePart,
 	});
@@ -459,6 +460,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 		(newContact) => {
 			contacts.push({
 				...newContact,
+				contactId: newContact.contact?.id,
+				conversationId: newContact.conversationId,
 				profilePics: newContact.contact?.profilePics || [],
 				name: newContact.nickname || newContact.contact?.name || "",
 				username: newContact.contact?.username || "",
@@ -472,7 +475,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 				unreadCount: 0,
 				lastMessageSeen: true,
 			});
+			const _sock = getSocket();
+			if (_sock && newContact.conversationId) {
+				_sock.emit("conversation:join", { conversationId: newContact.conversationId });
+			}
+
 			updateContactsEmptyState();
+			
 			const card = createContactCard(
 				{ ...newContact, hasMessages: false },
 				_onContactAction,
@@ -481,6 +490,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			state.contactUserId = newContact.id;
 			openChat(true);
 		},
+
 	);
 
 	initSocket(
@@ -672,7 +682,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 <span class="pinned-view-item-sender">${msg.user ? "You" : friend?.nickname || friend?.name || ""}</span>
                 <span class="pinned-view-item-time">${msg.time}</span>
             </div>
-            <p class="pinned-view-item-text">${msg.text}</p>
+            <p class="pinned-view-item-text">${escapeHtml(msg.text)}</p>
         `;
 
 			item.addEventListener("click", () => {
@@ -840,7 +850,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 			friend.unreadCount = 0;
 			friend.isInChat = true;
 			apiUpdateContact(friend.id, { unreadCount: 0, isInChat: true }).catch(() => {});
-			friend.isInChat = true;
 			const unreadEl = active.querySelector(
 				".active-chat-unread-messages",
 			);
@@ -1215,6 +1224,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 			const currentIdx = Number(pinnedMessageText.dataset.index);
 			const pos = state.pinnedIndexes.indexOf(currentIdx);
+			if (pos === -1) return;
 			const prevPos =
 				(pos - 1 + state.pinnedIndexes.length) %
 				state.pinnedIndexes.length;
@@ -1379,7 +1389,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 			const prevLastMessageSeen = friend?.lastMessageSeen;
 			const prevLastMessageDate = friend?.lastMessageDate;
 
-			state.deleting = deleteMessage(state.selectedMsg, state.msgIndex);
+			const { timeout, deletedMsg, idx: deletedIdx } = deleteMessage(state.selectedMsg, state.msgIndex);
+			state.deleting = timeout;
 
 			if (friend) {
 				const remaining = messages[state.contactUserId].filter(
@@ -1413,6 +1424,18 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 			state.currentUndoAction = () => {
 				undoDeleteMessage(state.selectedMsg);
+
+				if (deletedMsg !== undefined) {
+					const arr = messages[state.contactUserId];
+					arr.splice(deletedIdx, 0, deletedMsg);
+					arr.forEach((m, i) => {
+						m.index = i;
+					});
+					state.pinnedIndexes = arr
+						.map((m, i) => (m.isPinned ? i : -1))
+						.filter((i) => i !== -1);
+				}
+
 				if (friend) {
 					friend.lastMessage = prevLastMessage;
 					friend.lastMessageTime = prevLastMessageTime;

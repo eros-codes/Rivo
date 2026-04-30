@@ -93,4 +93,24 @@ router.post("/logout", (req, res) => {
     return res.json({ success: true });
 });
 
+router.post("/reset-password", async (req, res) => {
+	const { identifier, newPassword } = req.body;
+	try {
+		const user = await prisma.user.findFirst({
+			where: {
+				OR: [{ email: identifier }, { username: identifier }],
+			},
+		});
+		if (!user) return res.status(404).json({ error: "User not found" });
+		const hashed = await bcrypt.hash(newPassword, 10);
+		await prisma.user.update({
+			where: { id: user.id },
+			data: { password: hashed },
+		});
+		res.json({ success: true });
+	} catch {
+		res.status(500).json({ error: "Server error" });
+	}
+});
+
 export default router;

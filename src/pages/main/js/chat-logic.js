@@ -80,9 +80,7 @@ export function sortActiveChats() {
 	_dom.activeChatsContainer
 		.querySelectorAll(".active-chat-wrapper")
 		.forEach((el) => {
-			const card = el.classList.contains("active-chat-wrapper")
-				? el.querySelector(".active-chat")
-				: el;
+			const card = el.querySelector(".active-chat")
 			if (!card) return;
 			const friend = contacts.find(
 				(c) => c.id === Number(card.dataset.userId),

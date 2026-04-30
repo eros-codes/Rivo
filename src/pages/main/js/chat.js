@@ -3,6 +3,7 @@ import { showEmptyState, hideEmptyState } from "./ui.js";
 import { createMessage, markMessagesAsSeen } from "../../../components/messages/messages.js";
 import {
 	moveToActiveChats,
+	moveToContacts,
 	refreshCard,
 	sortActiveChats,
 	sortContacts,
@@ -268,7 +269,7 @@ export function receiveMessage(message) {
 
 	const normalized = {
 		id: message.id,
-		user: false,
+		user: message.senderId === _currentUserId(),
 		text: message.text,
 		time: new Date(message.createdAt).toLocaleTimeString([], {
 			hour: "2-digit",
@@ -285,6 +286,8 @@ export function receiveMessage(message) {
 					text: message.replyToText,
 				}
 			: null,
+		forwardedFrom: message.forwardedFrom || null,
+		forwardedText: message.forwardedText || null,
 	};
 
 	if (!messages[contact.id]) messages[contact.id] = [];
@@ -362,6 +365,7 @@ export async function sendMessage() {
 					forwardedText: msg.text,
 				});
 				const normalized = _normalizeOutgoing(sent);
+				normalized.index = messages[state.contactUserId].length;
 				messages[state.contactUserId].push(normalized);
 				_dom.chatEl.appendChild(createMessage(normalized));
 			} catch {
@@ -434,6 +438,12 @@ export async function sendMessage() {
 		optimistic.isSeen = sent.isSeen || false;
 	} catch {
 		console.error("Failed to send message");
+		const idx = messages[state.contactUserId].indexOf(optimistic);
+		if (idx !== -1) messages[state.contactUserId].splice(idx, 1);
+		const msgEl = _dom.chatEl.querySelector(
+			`[data-index="${optimistic.index}"]`,
+		);
+		if (msgEl) msgEl.remove();
 	}
 
 	_updateContactCard();
@@ -467,20 +477,28 @@ function _updateContactCard() {
 		friend.lastMessage = lastMsg.text;
 		friend.lastMessageTime = lastMsg.time;
 		friend.lastMessageDate = lastMsg.date;
-		friend.lastMessageSeen = false;
+		friend.lastMessageSeen = false; //new outgoing message which 2nd person has not seen
 		refreshCard(friend);
 		sortActiveChats();
 	}
 }
 
-export function handleMessagesSeen(conversationId, messageIds = [], seenBy = null) {
+export function handleMessagesSeen(
+	conversationId,
+	messageIds = [],
+	seenBy = null,
+) {
 	const contact = contacts.find((c) => c.conversationId === conversationId);
 	if (!contact) return;
 
 	const userMsgs = messages[contact.id];
 	const seenIndices = [];
 
-	if (Array.isArray(messageIds) && messageIds.length > 0 && Array.isArray(userMsgs)) {
+	if (
+		Array.isArray(messageIds) &&
+		messageIds.length > 0 &&
+		Array.isArray(userMsgs)
+	) {
 		messageIds.forEach((mid) => {
 			const idx = userMsgs.findIndex((msg) => msg.id === mid);
 			if (idx !== -1) {
@@ -501,15 +519,6 @@ export function handleMessagesSeen(conversationId, messageIds = [], seenBy = nul
 	const currentUserId = _currentUserId();
 	const anyMarked = Array.isArray(messageIds) && messageIds.length > 0;
 
-	// If any messages were marked as seen, mark the contact's last message as seen
-	if (anyMarked) {
-		contact.lastMessageSeen = true;
-		if (!contact.isPinned && contact.unreadCount === 0) {
-			moveToContacts(contact);
-			sortContacts();
-		}
-	}
-
 	// Only reset unreadCount for this contact when the current user is the one who saw the messages
 	if (seenBy === currentUserId && anyMarked) {
 		contact.unreadCount = 0;
@@ -518,5 +527,14 @@ export function handleMessagesSeen(conversationId, messageIds = [], seenBy = nul
 	if (seenIndices.length > 0 || anyMarked) {
 		refreshCard(contact);
 		sortActiveChats();
+	}
+
+	// If any messages were marked as seen, mark the contact's last message as seen
+	if (anyMarked && seenBy !== null && seenBy !== _currentUserId()) {
+		contact.lastMessageSeen = true;
+		if (!contact.isPinned && contact.unreadCount === 0) {
+			moveToContacts(contact);
+			sortContacts();
+		}
 	}
 }

@@ -6,7 +6,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "live-server --port=3000 --open=index.html",
+    "dev": "nodemon server/index.js",
     "start": "node server/index.js",
     "server": "nodemon server/index.js"
   },

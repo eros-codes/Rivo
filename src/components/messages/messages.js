@@ -10,7 +10,7 @@ const pinIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" 
 					</svg>`;
 
 // This file contains functions related to creating and manipulating message elements in the chat, as well as the context menu for messages.
-function escapeHtml(str) {
+export function escapeHtml(str) {
 	if (!str) return "";
 	return String(str)
 		.replace(/&/g, "&amp;")

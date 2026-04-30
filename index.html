@@ -3,8 +3,8 @@
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<link rel="manifest" href="public/manifest.webmanifest">
 	<meta name="theme-color" content="#1a1a2e">
+	<link rel="manifest" href="public/manifest.webmanifest">
 	<link rel="apple-touch-icon" href="public/assets/icons/Icon-180.png">
 	<link rel="icon" type="image/png" sizes="32x32" href="public/assets/icons/Favicon-32.png">
 	<link rel="icon" type="image/png" sizes="16x16" href="public/assets/icons/Favicon-16.png">
@@ -16,7 +16,7 @@
 			display: flex;
 			justify-content: center;
 			align-items: center;
-			background: #F7F0F0;
+			background: #f7f0f0;
 			overflow: hidden;
 		}
 		/* From Uiverse.io by Pradeepsaranbishnoi */ 
@@ -187,10 +187,20 @@
 	<script src="public/js/register-sw.js"></script>
 	<script>
 		window.addEventListener("load", () => {
+			const theme = localStorage.getItem("rivo-theme");
+			if (theme === "dark") document.body.style.background = "#1a1a1a";
+
 			setTimeout(() => {
-				window.location.href = "src/pages/auth/auth.html";
-			}, 1600)
-		})
+				const token = localStorage.getItem("token");
+				const user = localStorage.getItem("user");
+
+				if (token && user) {
+					window.location.href = "src/pages/main/main.html";
+				} else {
+					window.location.href = "src/pages/auth/auth.html";
+				}
+			}, 1600);
+		});
 	</script>
 </body>
 </html>

@@ -17,3 +17,13 @@ export async function registerUser(name, email, username, password) {
 	const data = await res.json();
 	return { ok: res.ok, data };
 }
+
+export async function resetPassword(identifier, newPassword) {
+	const res = await fetch("/api/auth/reset-password", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ identifier, newPassword }),
+	});
+	const data = await res.json();
+	return { ok: res.ok, data };
+}

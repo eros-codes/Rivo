@@ -184,7 +184,7 @@ export function initSocket(httpServer) {
 					data: { isDeleted: true },
 				});
 
-				io.to(`conversation:${message.conversationId}`).emit(
+				socket.to(`conversation:${message.conversationId}`).emit(
 					"message:deleted",
 					{
 						messageId,
@@ -205,6 +205,14 @@ export function initSocket(httpServer) {
 					where: { id: messageId },
 				});
 				if (!message) return callback?.({ error: "Not found" });
+
+				const member = await prisma.conversationMember.findFirst({
+					where: {
+						conversationId: message.conversationId,
+						userId: socket.userId,
+					},
+				});
+				if (!member) return callback?.({ error: "Forbidden" });
 
 				const updated = await prisma.message.update({
 					where: { id: messageId },
@@ -300,6 +308,10 @@ export function initSocket(httpServer) {
 			} catch (err) {
 				console.error("message:seen handler error", err);
 			}
+		});
+
+		socket.on("conversation:join", ({ conversationId }) => {
+			socket.join(`conversation:${conversationId}`);
 		});
 	});
 

@@ -7,7 +7,7 @@ import {
 	clearResendTimer,
 	clearCodeInputs,
 } from "./js/auth-timer.js";
-import { loginUser, registerUser } from "./js/auth-api.js";
+import { loginUser, registerUser, resetPassword } from "./js/auth-api.js";
 
 const theme = localStorage.getItem("rivo-theme") || "light";
 if (theme === "dark") document.body.classList.add("dark-mode");
@@ -308,8 +308,20 @@ document.addEventListener("DOMContentLoaded", function () {
 			if (!valid) return;
 
 			if (forgotPass) {
-				showForm(allForms, loginForm);
-				alert("Password reset successfully. Please log in.");
+				try {
+					const { ok, data } = await resetPassword(
+						forgotInput.value.trim(),
+						passwordInput.value,
+					);
+					if (!ok) {
+						showError(passwordInput, data.error || "Reset failed");
+						return;
+					}
+					showForm(allForms, loginForm);
+					alert("Password reset successfully. Please log in.");
+				} catch {
+					showError(passwordInput, "Connection error");
+				}
 			} else {
 				try {
 					const { ok, data } = await registerUser(

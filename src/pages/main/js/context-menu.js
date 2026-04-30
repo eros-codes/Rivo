@@ -1,4 +1,3 @@
-import { deleteMessage as apiDeleteMessage} from "./api.js";
 import { state, messages, contacts } from "./state.js";
 import { showEmptyState } from "./ui.js";
 import {
@@ -6,7 +5,12 @@ import {
 	updatePinnedMessage,
 	basePadding,
 } from "./chat.js";
-import { refreshCard, moveToContacts, sortActiveChats, sortContacts } from "./chat-logic.js";
+import {
+	refreshCard,
+	moveToContacts,
+	sortActiveChats,
+	sortContacts,
+} from "./chat-logic.js";
 import { emitDeleteMessage, emitPinMessage } from "./socket.js";
 
 const pinIconForMenu = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4a1 1 0 0 1 1 1z"/></svg>`;
@@ -117,7 +121,15 @@ export function deleteMessage(msg, index) {
 			const all = Array.isArray(messages[state.contactUserId])
 				? messages[state.contactUserId]
 				: [];
-			const remaining = all.filter((_, i) => i !== idx);
+			const deletedMsg = all[idx];
+			all.splice(idx, 1);
+			all.forEach((m, i) => {
+				m.index = i;
+			});
+			state.pinnedIndexes = all
+				.map((m, i) => (m.isPinned ? i : -1))
+				.filter((i) => i !== -1);
+			const remaining = all;
 
 			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (friend) {
@@ -126,7 +138,9 @@ export function deleteMessage(msg, index) {
 					friend.lastMessage = lastMsg.text;
 					friend.lastMessageTime = lastMsg.time;
 					friend.lastMessageDate = lastMsg.date || "";
-					friend.lastMessageSeen = lastMsg.user ? false : true;
+					friend.lastMessageSeen = lastMsg.user
+						? lastMsg.isSeen === true
+						: true;
 				} else {
 					friend.lastMessage = "";
 					friend.lastMessageTime = "";
@@ -151,7 +165,7 @@ export function deleteMessage(msg, index) {
 		}, 310);
 	}, 3000);
 
-	return timeout;
+	return { timeout, deletedMsg, idx };
 }
 
 export function undoDeleteMessage(msg) {
@@ -191,7 +205,15 @@ export function pinMessage(pinIconSvg) {
 	const idx = Number(state.selectedMsg?.dataset.index);
 	const msg = messages[state.contactUserId][idx];
 	const messageId = msg?.id;
-	if (messageId) emitPinMessage(messageId).catch(() => {});
+	if (messageId) {
+		emitPinMessage(messageId).catch(() => {
+			msg.isPinned = !msg.isPinned;
+			state.pinnedIndexes = messages[state.contactUserId]
+				.map((m, i) => (m.isPinned ? i : -1))
+				.filter((i) => i !== -1);
+			updatePinnedMessage();
+		});
+	}
 
 	const msgEl = _dom.chatEl.querySelector(`[data-index="${idx}"]`);
 	const meta = msgEl.querySelector(".chat-message-meta");
@@ -234,7 +256,7 @@ export function editMessage() {
 	_dom.msgActionmsg.textContent =
 		messages[state.contactUserId][Number(state.msgIndex)].text;
 	closeContextMenu();
-	
+
 	_dom.messageInput.style.borderRadius = "0 0 2rem 2rem";
 	_dom.sendMessageBtn.style.display = "block";
 	const nearBottom =
@@ -266,6 +288,7 @@ export function replyMessage() {
 		text: messages[state.contactUserId][Number(state.msgIndex)].text,
 		sender: senderName,
 		index: Number(state.msgIndex),
+		id: messages[state.contactUserId][Number(state.msgIndex)].id,
 	};
 	closeContextMenu();
 

@@ -89,7 +89,7 @@ export function initEditProfile(dom) {
 		);
 	});
 
-	_dom.avatarDeleteBtn.addEventListener("click", async () => {
+	_dom.deleteAvatarBtn.addEventListener("click", async () => {
 		await deleteAvatar();
 		_dom.editProfileAvatar.src = "";
 		if (_currentUser) _currentUser.profilePics = [];

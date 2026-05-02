@@ -89,7 +89,7 @@
 .pinned-view-item-sender {
     font-size: 0.7rem;
     font-weight: 600;
-    color: var(--orange);
+    color: var(--accent);
     text-transform: uppercase;
     letter-spacing: 0.05rem;
 }

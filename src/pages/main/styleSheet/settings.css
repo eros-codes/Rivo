@@ -115,11 +115,11 @@
 }
 
 .settings-row.settings-row-danger {
-	color: var(--red);
+	color: var(--danger-color);
 }
 .settings-row.settings-row-danger .settings-row-left span,
 .settings-row.settings-row-danger .settings-row-left svg {
-	color: var(--red);
+	color: var(--danger-color);
 }
 
 .settings-privacy-picker {
@@ -240,7 +240,7 @@
 }
 .settings-change-password-submit {
 	padding: 0.6rem 0.9rem;
-	background: var(--orange);
+	background: var(--accent);
 	color: var(--text-secondary-color);
 	border-radius: 0.75rem;
 	border: none;
@@ -295,6 +295,96 @@
 }
 .settings-change-password-form .settings-password-input {
 	padding-right: 3rem;
+}
+
+.settings-accent-panel {
+    display: none;
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
+    padding: 0 1rem;
+}
+
+.settings-accent-panel.open {
+    max-height: 200px;
+    opacity: 1;
+    padding: 0.75rem 1rem;
+}
+
+.settings-accent-presets {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.accent-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: transform 0.15s, border-color 0.15s;
+}
+
+.accent-swatch:hover {
+    transform: scale(1.15);
+}
+
+.accent-swatch.active {
+    border-color: var(--text-color);
+    transform: scale(1.15);
+}
+
+.accent-color-picker {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px dashed var(--chat-time);
+    cursor: pointer;
+    padding: 0;
+    background: none;
+    overflow: hidden;
+}
+.accent-swatch-custom {
+    background: linear-gradient(
+        red, yellow, lime, cyan, blue, magenta, red
+    );
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+}
+.accent-swatch-custom svg {
+	width: 1rem;
+	height: 1rem;
+	color: black;
+}
+
+.settings-wallpaper-actions {
+    display: flex;
+    gap: 0.75rem;
+}
+
+.settings-wallpaper-btn {
+    flex: 1;
+    padding: 0.5rem 1rem;
+    border-radius: 0.75rem;
+    border: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    background: var(--accent);
+    color: #fff;
+    transition: opacity 0.2s;
+}
+
+.settings-wallpaper-btn:hover {
+    opacity: 0.85;
+}
+
+.settings-wallpaper-btn-remove {
+    background: var(--danger-color);
 }
 
 @media (max-width: 700px) {

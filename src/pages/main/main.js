@@ -72,13 +72,20 @@ import { initEditProfile, openEditProfile } from "./js/edit-profile.js";
 import { initSettings, openSettings, closeSettings } from "./js/settings.js";
 import { initAddContact, openAddContact } from "./js/add-contact.js";
 import { initSocket, emitTypingStart, emitTypingStop, emitPinMessage, getSocket } from "./js/socket.js";
+import { loadThemeFromStorage } from "../../utils/theme.js";
 
 document.addEventListener("DOMContentLoaded", async function () {
-	const token = localStorage.getItem("token");
-	if (!token) {
+	// Rely on HttpOnly cookie for auth; if user info not present, redirect to login.
+	const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
+	if (!currentUser || !currentUser.id) {
 		window.location.href = "../auth/auth.html";
 		return;
 	}
+
+	const theme = localStorage.getItem("rivo-theme") || "light";
+	if (theme === "dark") document.body.classList.add("dark-mode");
+
+	loadThemeFromStorage();
 
 	const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
 	// ─── DOM references ───────────────────────────────────────────────────────
@@ -230,6 +237,34 @@ document.addEventListener("DOMContentLoaded", async function () {
 	const settingsSectionLi = document.querySelector(
 		".settings-list .settings-section",
 	);
+	const settingsAccentRow = document.getElementById("settings-accent-row");
+	const settingsAccentPanel = document.getElementById(
+		"settings-accent-panel",
+	);
+	const settingsAccentPicker = document.getElementById(
+		"settings-accent-picker",
+	);
+	const settingsAccentValue = document.getElementById(
+		"settings-accent-value",
+	);
+	const settingsWallpaperRow = document.getElementById(
+		"settings-wallpaper-row",
+	);
+	const settingsWallpaperPanel = document.getElementById(
+		"settings-wallpaper-panel",
+	);
+	const settingsWallpaperInput = document.getElementById(
+		"settings-wallpaper-input",
+	);
+	const settingsWallpaperUpload = document.getElementById(
+		"settings-wallpaper-upload",
+	);
+	const settingsWallpaperRemove = document.getElementById(
+		"settings-wallpaper-remove",
+	);
+	const settingsWallpaperValue = document.getElementById(
+		"settings-wallpaper-value",
+	);
 
 
 	// ─── SVG icons ────────────────────────────────────────────────────────────
@@ -380,7 +415,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			state.contactUserId = contact.id;
 			chatProfilePic.src =
 				contact.profilePics[0] ||
-				"../../../public/assets/images/profile.jpeg";
+				"/assets/images/profile.jpeg";
 			chatName.textContent = contact.nickname || contact.name;
 			openChat(true);
 			scrollChatToBottom();
@@ -402,7 +437,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 		},
 	});
 
-		initEditProfile({
+	initEditProfile({
 		editProfilePanel,
 		editProfileDialog,
 		editProfileClose,
@@ -422,30 +457,43 @@ document.addEventListener("DOMContentLoaded", async function () {
 		peoplePart,
 	});
 
-	initSettings({
-		settingsPanel,
-		settingsDialog,
-		settingsPanelClose,
-		settingsThemeRow,
-		settingsThemeValue,
-		settingsDeleteAccount,
-		settingsChangePassword,
-		settingsChangePasswordForm,
-		settingsCurrentPassword,
-		settingsNewPassword,
-		settingsConfirmPassword,
-		settingsChangePasswordSubmit,
-		settingsSendResetEmail,
-		settingsPrivacyOnline,
-		settingsPrivacyEmail,
-		settingsPrivacyProfile,
-		pickerOnline,
-		pickerEmail,
-		pickerProfile,
-		settingsArchived,
-		chatPart,
-		peoplePart,
-	}, currentUser);
+	initSettings(
+		{
+			settingsPanel,
+			settingsDialog,
+			settingsPanelClose,
+			settingsThemeRow,
+			settingsThemeValue,
+			settingsDeleteAccount,
+			settingsChangePassword,
+			settingsChangePasswordForm,
+			settingsCurrentPassword,
+			settingsNewPassword,
+			settingsConfirmPassword,
+			settingsChangePasswordSubmit,
+			settingsSendResetEmail,
+			settingsPrivacyOnline,
+			settingsPrivacyEmail,
+			settingsPrivacyProfile,
+			pickerOnline,
+			pickerEmail,
+			pickerProfile,
+			settingsArchived,
+			chatPart,
+			peoplePart,
+			settingsAccentRow,
+			settingsAccentPanel,
+			settingsAccentPicker,
+			settingsAccentValue,
+			settingsWallpaperRow,
+			settingsWallpaperPanel,
+			settingsWallpaperInput,
+			settingsWallpaperUpload,
+			settingsWallpaperRemove,
+			settingsWallpaperValue,
+		},
+		currentUser,
+	);
 
 	initAddContact(
 		{
@@ -849,7 +897,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}
 			friend.unreadCount = 0;
 			friend.isInChat = true;
-			apiUpdateContact(friend.id, { unreadCount: 0, isInChat: true }).catch(() => {});
+			apiUpdateContact(friend.id, { isInChat: true }).catch(() => {});
 			const unreadEl = active.querySelector(
 				".active-chat-unread-messages",
 			);
@@ -858,7 +906,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 			chatProfilePic.src =
 				friend.profilePics[0] ||
-				"../../../public/assets/images/profile.jpeg";
+				"/assets/images/profile.jpeg";
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 			scrollChatToBottom();
@@ -915,7 +963,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}
 			friend.unreadCount = 0;
 			friend.isInChat = true;
-			apiUpdateContact(friend.id, { unreadCount: 0, isInChat: true }).catch(() => {});
+			apiUpdateContact(friend.id, { isInChat: true }).catch(() => {});
 			updateTotalUnreadCount();
 
 			card.remove();
@@ -923,7 +971,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 			chatProfilePic.src =
 				friend.profilePics[0] ||
-				"../../../public/assets/images/profile.jpeg";
+				"/assets/images/profile.jpeg";
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 			if (friend.isBlocked) {
@@ -1165,9 +1213,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 			const reply = e.target.closest(".chat-reply");
 			if (!reply) return;
-			const targetMsg = chatEl.querySelector(
-				`[data-index="${reply.dataset.replyTo}"]`,
-			);
+			// Try to locate by message id first (new format), fallback to index (legacy)
+			const targetMsg =
+				chatEl.querySelector(`[data-message-id="${reply.dataset.replyTo}"]`) ||
+				chatEl.querySelector(`[data-index="${reply.dataset.replyTo}"]`);
 			if (targetMsg) {
 				targetMsg.scrollIntoView({
 					behavior: "smooth",
@@ -1310,7 +1359,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 			chatProfilePic.src =
 				friend.profilePics[0] ||
-				"../../../public/assets/images/profile.jpeg";
+				"/assets/images/profile.jpeg";
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 			if (friend.isBlocked) {

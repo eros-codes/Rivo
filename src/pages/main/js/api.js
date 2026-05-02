@@ -1,20 +1,30 @@
-// ─── Auth header helper ───────────────────────────────────────────────────────
-const authHeader = () => ({
-	"Content-Type": "application/json",
-	Authorization: `Bearer ${localStorage.getItem("token")}`,
-});
+// Use credentials (cookies) for auth; no Authorization header from localStorage.
+function getCsrfToken() {
+	const m = document.cookie.match(/(?:^|; )csrfToken=([^;]+)/);
+	return m ? decodeURIComponent(m[1]) : null;
+}
+
+function buildHeaders(isJson = true) {
+	const h = {};
+	if (isJson) h["Content-Type"] = "application/json";
+	const t = getCsrfToken();
+	if (t) h["X-CSRF-Token"] = t;
+	return h;
+}
 
 // ─── Contacts ─────────────────────────────────────────────────────────────────
 export async function getContacts() {
 	return await fetch("/api/contacts", {
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 	}).then((r) => r.json());
 }
 
 export async function updateContact(contactId, changes) {
 	return await fetch(`/api/contacts/${contactId}`, {
 		method: "PATCH",
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 		body: JSON.stringify(changes),
 	}).then((r) => r.json());
 }
@@ -22,14 +32,16 @@ export async function updateContact(contactId, changes) {
 // ─── Messages ─────────────────────────────────────────────────────────────────
 export async function getMessages(conversationId) {
 	return await fetch(`/api/messages/${conversationId}`, {
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 	}).then((r) => r.json());
 }
 
 export async function sendMessage(conversationId, msg) {
 	return await fetch("/api/messages", {
 		method: "POST",
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 		body: JSON.stringify({ conversationId, ...msg }),
 	}).then((r) => r.json());
 }
@@ -37,14 +49,16 @@ export async function sendMessage(conversationId, msg) {
 export async function deleteMessage(messageId) {
 	await fetch(`/api/messages/${messageId}`, {
 		method: "DELETE",
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 	});
 }
 
 export async function editMessage(messageId, text) {
 	await fetch(`/api/messages/${messageId}`, {
 		method: "PATCH",
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 		body: JSON.stringify({ text }),
 	});
 }
@@ -52,7 +66,8 @@ export async function editMessage(messageId, text) {
 export async function pinMessage(messageId) {
 	return await fetch(`/api/messages/${messageId}/pin`, {
 		method: "POST",
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 	}).then((r) => r.json());
 }
 
@@ -76,24 +91,26 @@ export async function register(name, email, username, password) {
 export async function logout() {
 	await fetch("/api/auth/logout", {
 		method: "POST",
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 	});
 	// remove only auth data so site-wide preferences (theme, rememberedUser) persist
-	localStorage.removeItem("token");
 	localStorage.removeItem("user");
 }
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 export async function getMe() {
 	return await fetch("/api/users/me", {
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 	}).then((r) => r.json());
 }
 
 export async function updateMe(changes) {
 	return await fetch("/api/users/me", {
 		method: "PATCH",
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 		body: JSON.stringify(changes),
 	}).then((r) => r.json());
 }
@@ -101,23 +118,25 @@ export async function updateMe(changes) {
 export async function deleteContact(contactId) {
 	await fetch(`/api/contacts/${contactId}`, {
 		method: "DELETE",
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 	});
 }
 
 export async function deleteChat(conversationId) {
 	await fetch(`/api/conversations/${conversationId}/messages`, {
 		method: "DELETE",
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 	});
 }
 
 export async function uploadAvatar(formData) {
 	return await fetch("/api/users/me/avatar", {
 		method: "POST",
-		headers: {
-			Authorization: `Bearer ${localStorage.getItem("token")}`,
-		},
+		credentials: "include",
+		// multipart formdata; do not set Content-Type so the browser sets boundary
+		headers: buildHeaders(false),
 		body: formData,
 	}).then((r) => r.json());
 }
@@ -125,7 +144,8 @@ export async function uploadAvatar(formData) {
 export async function deleteAvatar() {
 	return await fetch("/api/users/me", {
 		method: "PATCH",
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 		body: JSON.stringify({ profilePics: [] }),
 	}).then((r) => r.json());
 }
@@ -133,7 +153,8 @@ export async function deleteAvatar() {
 export async function updatePrivacy(changes) {
 	return await fetch("/api/users/me", {
 		method: "PATCH",
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 		body: JSON.stringify(changes),
 	}).then((r) => r.json());
 }
@@ -141,7 +162,8 @@ export async function updatePrivacy(changes) {
 export async function deleteAccount(password) {
 	return await fetch("/api/users/me", {
 		method: "DELETE",
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 		body: JSON.stringify({ password }),
 	}).then((r) => r.json());
 }
@@ -149,7 +171,8 @@ export async function deleteAccount(password) {
 export async function changePassword(currentPassword, newPassword) {
 	return await fetch(`/api/users/me/password`, {
 		method: "PATCH",
-		headers: authHeader(),
+		credentials: "include",
+		headers: buildHeaders(),
 		body: JSON.stringify({ currentPassword, newPassword }),
 	}).then((r) => r.json());
 }

@@ -5,12 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#1a1a2e">
     <title>Rivo</title>
-    <link rel="stylesheet" href="../../../public/css/global.css" />
+    <link rel="stylesheet" href="/css/global.css" />
     <link rel="stylesheet" href="auth.css" />
-    <link rel="manifest" href="../../../public/manifest.webmanifest">
-    <link rel="apple-touch-icon" href="../../../public/assets/icons/Icon-180.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="../../../public/assets/icons/Favicon-32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="../../../public/assets/icons/Favicon-16.png">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/assets/icons/Icon-180.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/icons/Favicon-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/icons/Favicon-16.png">
+    <script>
+      const accent = localStorage.getItem("rivo-accent");
+      if (accent) {
+        document.documentElement.style.setProperty("--accent", accent);
+        // circles
+        const d = (hex, p) => {
+          const n = parseInt(hex.replace("#", ""), 16);
+          const c = v => Math.max(0, v - Math.round(2.55 * p)).toString(16).padStart(2, "0");
+          return `#${c(n >> 16)}${c((n >> 8) & 255)}${c(n & 255)}`;
+        };
+        document.documentElement.style.setProperty("--accent-gradient-top", `radial-gradient(circle at top, ${d(accent, 8)}, ${accent})`);
+        document.documentElement.style.setProperty("--accent-gradient-bottom", `radial-gradient(circle at right, ${d(accent, 8)}, ${accent})`);
+      }
+    </script>
   </head>
   <body class="login-body">
     <div class="container">

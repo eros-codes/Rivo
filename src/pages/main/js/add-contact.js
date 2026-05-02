@@ -51,11 +51,17 @@ async function _handleSubmit() {
     _dom.addContactError.textContent = "";
 
     try {
+        function getCsrfToken() {
+            const m = document.cookie.match(/(?:^|; )csrfToken=([^;]+)/);
+            return m ? decodeURIComponent(m[1]) : null;
+        }
+
         const res = await fetch("/api/contacts", {
             method: "POST",
+            credentials: "include",
             headers: {
                 "Content-Type": "application/json",
-                Authorization: `Bearer ${localStorage.getItem("token")}`,
+                "X-CSRF-Token": getCsrfToken(),
             },
             body: JSON.stringify({ username, name }),
         });

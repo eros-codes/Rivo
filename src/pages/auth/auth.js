@@ -122,7 +122,7 @@ document.addEventListener("DOMContentLoaded", function () {
 					return;
 				}
 
-				localStorage.setItem("token", data.token);
+				// Server sets HttpOnly cookie for auth; persist only non-sensitive user info.
 				localStorage.setItem("user", JSON.stringify(data.user));
 				window.location.href = "../main/main.html";
 			} catch {

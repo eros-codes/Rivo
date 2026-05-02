@@ -4,12 +4,13 @@ import prisma from "../prisma.js";
 
 export function initSocket(httpServer) {
 	const io = new Server(httpServer, {
-		cors: { origin: "*" },
+		cors: { origin: "http://localhost:3000", credentials: true },
 	});
 
 	// ─── Auth middleware ───────────────────────────────────────────────────────
 	io.use((socket, next) => {
-		const token = socket.handshake.auth?.token;
+		// Prefer token in cookie, fallback to handshake auth token
+		let token = socket.handshake.headers?.cookie?.match(/token=([^;]+)/)?.[1] || socket.handshake.auth?.token;
 
 		if (!token) {
 			return next(new Error("Unauthorized"));
@@ -19,33 +20,33 @@ export function initSocket(httpServer) {
 			const payload = jwt.verify(token, process.env.JWT_SECRET);
 			socket.userId = payload.userId;
 			next();
-		} catch {
+		} catch (err) {
 			return next(new Error("Invalid token"));
 		}
 	});
 
 	// ─── Connection ───────────────────────────────────────────────────────────
 	io.on("connection", async (socket) => {
-		console.log(`User ${socket.userId} connected`);
+		try {
+			console.log(`User ${socket.userId} connected`);
+			await prisma.user.update({
+				where: { id: socket.userId },
+				data: { isOnline: true },
+			});
+			const memberships = await prisma.conversationMember.findMany({
+				where: { userId: socket.userId },
+				select: { conversationId: true },
+			});
+			memberships.forEach(({ conversationId }) => {
+				socket.join(`conversation:${conversationId}`);
+			});
+			socket.broadcast.emit("user:online", { userId: socket.userId });
+		} catch (err) {
+			console.error("Connection error", err);
+			socket.disconnect();
+		}
 
-		// show user online
-		await prisma.user.update({
-			where: { id: socket.userId },
-			data: { isOnline: true },
-		});
 
-		// join user to all their conversation rooms
-		const memberships = await prisma.conversationMember.findMany({
-			where: { userId: socket.userId },
-			select: { conversationId: true },
-		});
-
-		memberships.forEach(({ conversationId }) => {
-			socket.join(`conversation:${conversationId}`);
-		});
-
-		// notify other users that this user is online
-		socket.broadcast.emit("user:online", { userId: socket.userId });
 
 		// ─── Send message ──────────────────────────────────────────────────────
 		socket.on("message:send", async (data, callback) => {
@@ -113,13 +114,15 @@ export function initSocket(httpServer) {
 					.fetchSockets();
 				const usersInRoom = new Set(roomSockets.map((s) => s.userId));
 
-				for (const contact of recipientContacts) {
-					if (!usersInRoom.has(contact.ownerId)) {
-						await prisma.contact.update({
-							where: { id: contact.id },
-							data: { unreadCount: { increment: 1 } },
-						});
-					}
+				const toUpdateIds = recipientContacts
+					.filter((c) => !usersInRoom.has(c.ownerId))
+					.map((c) => c.id);
+
+				if (toUpdateIds.length > 0) {
+					await prisma.contact.updateMany({
+						where: { id: { in: toUpdateIds } },
+						data: { unreadCount: { increment: 1 } },
+					});
 				}
 
 				socket
@@ -150,7 +153,7 @@ export function initSocket(httpServer) {
 					data: { text: text.trim(), isEdited: true },
 				});
 
-				io.to(`conversation:${message.conversationId}`).emit(
+				socket.to(`conversation:${message.conversationId}`).emit(
 					"message:edited",
 					{
 						messageId,
@@ -219,7 +222,7 @@ export function initSocket(httpServer) {
 					data: { isPinned: !message.isPinned },
 				});
 
-				io.to(`conversation:${message.conversationId}`).emit(
+				socket.to(`conversation:${message.conversationId}`).emit(
 					"message:pinned",
 					{
 						messageId,
@@ -272,6 +275,14 @@ export function initSocket(httpServer) {
 		// ─── Message seen ───────────────────────────────────────────────────────
 		socket.on("message:seen", async ({ conversationId }) => {
 			try {
+				const member = await prisma.conversationMember.findFirst({
+					where: {
+						conversationId,
+						userId: socket.userId,
+					},
+				});
+				if (!member) return; // user is not a member of this conversation
+
 				// find message ids that will be marked as seen (messages sent by others to this socket)
 				const toMark = await prisma.message.findMany({
 					where: {
@@ -310,7 +321,14 @@ export function initSocket(httpServer) {
 			}
 		});
 
-		socket.on("conversation:join", ({ conversationId }) => {
+		socket.on("conversation:join", async ({ conversationId }) => {
+			const member = await prisma.conversationMember.findFirst({
+				where: {
+					conversationId,
+					userId: socket.userId,
+				},
+			});
+			if (!member) return; // user is not a member of this conversation
 			socket.join(`conversation:${conversationId}`);
 		});
 	});

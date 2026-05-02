@@ -109,7 +109,7 @@ export function openEditProfile(user) {
 	if (_dom.editProfileAvatar) {
 		_dom.editProfileAvatar.src =
 			user.profilePics?.[0] ||
-			"../../../../public/assets/images/profile.jpeg";
+			"/assets/images/profile.jpeg";
 	}
 
 	if (window.innerWidth > 700) {

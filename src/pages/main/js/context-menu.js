@@ -109,27 +109,48 @@ export function closeContextMenu() {
 
 // ─── Delete & undo ────────────────────────────────────────────────────────────
 export function deleteMessage(msg, index) {
-	const messageId = messages[state.contactUserId][Number(index)]?.id;
+	const idx = Number(index);
+	const arr = Array.isArray(messages[state.contactUserId])
+		? messages[state.contactUserId]
+		: [];
+	const deletedMsg = arr[idx];
+	const messageId = deletedMsg?.id;
 
 	msg.style.transition = "opacity 3s ease";
 	msg.style.opacity = 0;
 	const timeout = setTimeout(() => {
 		setTimeout(() => {
-			if (messageId) emitDeleteMessage(messageId);
+			try {
+				if (messageId) emitDeleteMessage(messageId);
+			} catch (e) {
+				/* ignore */
+			}
+
+			// Remove message by id if possible, otherwise by localId, otherwise by index
+			const currentArr = messages[state.contactUserId] || [];
+			let removeIdx = -1;
+			if (messageId) removeIdx = currentArr.findIndex((m) => m.id === messageId);
+			if (removeIdx === -1 && deletedMsg && deletedMsg._localId)
+				removeIdx = currentArr.findIndex((m) => m._localId === deletedMsg._localId);
+			if (removeIdx === -1) removeIdx = idx;
+
+			// Remove element from DOM and data structures
 			msg.remove();
-			const idx = Number(index);
-			const all = Array.isArray(messages[state.contactUserId])
-				? messages[state.contactUserId]
-				: [];
-			const deletedMsg = all[idx];
-			all.splice(idx, 1);
-			all.forEach((m, i) => {
-				m.index = i;
+			if (removeIdx !== -1 && removeIdx < currentArr.length) {
+				currentArr.splice(removeIdx, 1);
+			}
+			currentArr.forEach((m, i) => (m.index = i));
+
+			// Re-index DOM elements
+			document.querySelectorAll(".chat-message").forEach((msgEl, i) => {
+				msgEl.dataset.index = i;
 			});
-			state.pinnedIndexes = all
+
+			state.pinnedIndexes = currentArr
 				.map((m, i) => (m.isPinned ? i : -1))
 				.filter((i) => i !== -1);
-			const remaining = all;
+
+			const remaining = currentArr;
 
 			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (friend) {
@@ -196,7 +217,7 @@ export function buildForwardedMsg(originalMsg, targetContactId) {
 		replyTo: null,
 		forwardedFrom: senderName,
 		isSeen: false,
-		index: messages[targetContactId].length,
+		index: (messages[targetContactId] || []).length,
 	};
 }
 

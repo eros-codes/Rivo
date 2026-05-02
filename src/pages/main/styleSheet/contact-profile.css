@@ -17,7 +17,7 @@
 }
 .contact-detail-pic {
 	box-shadow: 0 -8px 14px rgba(0, 0, 0, 0.2) inset;
-	background: var(--orange);
+	background: var(--accent);
 	height: 10rem;
 	width: 100%;
 	position: relative;
@@ -145,7 +145,7 @@
 }
 .contact-actions :nth-child(3),
 .contact-actions :nth-child(4) {
-	color: var(--red);
+	color: var(--danger-color);
 }
 
 .profile-dialog {

@@ -8,11 +8,11 @@
 	<meta name="theme-color" content="#1a1a2e" />
 	<title>Rivo</title>
 	<link rel="stylesheet" href="main.css" />
-	<link rel="stylesheet" href="../../../public/css/cropper.min.css" />
-	<link rel="manifest" href="../../../public/manifest.webmanifest" />
-	<link rel="apple-touch-icon" href="../../../public/assets/icons/Icon-180.png" />
-	<link rel="icon" type="image/png" sizes="32x32" href="../../../public/assets/icons/Favicon-32.png" />
-	<link rel="icon" type="image/png" sizes="16x16" href="../../../public/assets/icons/Favicon-16.png" />
+	<link rel="stylesheet" href="/css/cropper.min.css" />
+	<link rel="manifest" href="/manifest.webmanifest" />
+	<link rel="apple-touch-icon" href="/assets/icons/Icon-180.png" />
+	<link rel="icon" type="image/png" sizes="32x32" href="/assets/icons/Favicon-32.png" />
+	<link rel="icon" type="image/png" sizes="16x16" href="/assets/icons/Favicon-16.png" />
 </head>
 
 <body>
@@ -124,8 +124,7 @@
 						<span class="unread-message-count">5</span>
 					</span>
 					<span class="chat-profile">
-						<img class="chat-profile-picture" src="./../../../public/assets/images/profile.jpeg"
-							alt="profile-picture" />
+						<img class="chat-profile-picture" src="/assets/images/profile.jpeg" alt="profile-picture" />
 					</span>
 					<span class="chat-name"></span>
 					<span class="chat-typing-status"></span>
@@ -279,7 +278,7 @@
 								d="M14.828 14.828a4 4 0 0 1-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0" />
 						</svg>
 					</button>
-					<emoji-picker class="emoji-picker" data-source="../../../public/assets/data.json"></emoji-picker>
+					<emoji-picker class="emoji-picker" data-source="/assets/data.json"></emoji-picker>
 
 					<textarea rows="1" placeholder="Message..." class="message-input" name="msg"></textarea>
 					<button class="send-btn">
@@ -319,7 +318,7 @@
 		<div class="contact-profile-details">
 			<div class="contact-detail-pic">
 				<div class="detail-picture">
-					<img src="../../../public/assets/images/profile.jpeg" alt="" />
+					<img src="/assets/images/profile.jpeg" alt="" />
 				</div>
 				<button>
 					<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
@@ -379,7 +378,7 @@
 					</svg>
 				</button>
 				<div class="edit-profile-avatar-wrapper">
-					<img class="edit-profile-avatar" src="../../../public/assets/images/profile.jpeg" alt="" />
+					<img class="edit-profile-avatar" src="/assets/images/profile.jpeg" alt="" />
 					<button class="edit-profile-avatar-btn">
 						<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
 							<path fill="currentColor"
@@ -428,7 +427,7 @@
 				<span>Settings</span>
 			</div>
 
-			<span class="settings-section-label">Appearance</span>
+			<span class="settings-section-label">Customization</span>
 			<div class="settings-group">
 				<div class="settings-row" id="settings-theme-row">
 					<div class="settings-row-left">
@@ -438,6 +437,54 @@
 						<span>Theme</span>
 					</div>
 					<span class="settings-row-value" id="settings-theme-value">Dark</span>
+				</div>
+
+				<div class="settings-row" id="settings-accent-row">
+					<div class="settings-row-left">
+						<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24">
+							<path fill="currentColor"
+								d="M12 22C6.49 22 2 17.51 2 12S6.49 2 12 2s10 4.04 10 9c0 3.31-2.69 6-6 6h-1.77c-.28 0-.5.22-.5.5c0 .12.05.23.13.33c.41.47.64 1.06.64 1.67A2.5 2.5 0 0 1 12 22m0-18c-4.41 0-8 3.59-8 8s3.59 8 8 8c.28 0 .5-.22.5-.5a.54.54 0 0 0-.14-.35c-.41-.46-.63-1.05-.63-1.65A2.5 2.5 0 0 1 14.5 15H16c2.21 0 4-1.79 4-4c0-3.86-3.59-7-8-7" />
+						</svg>
+						<span>Accent Color</span>
+					</div>
+					<span class="settings-row-value" id="settings-accent-value"></span>
+				</div>
+				<div class="settings-accent-panel" id="settings-accent-panel">
+					<div class="settings-accent-presets" id="settings-accent-presets">
+						<button class="accent-swatch" data-color="#fa5f1a" style="background:#fa5f1a" title="Orange"></button>
+						<button class="accent-swatch" data-color="#2D6BE4" style="background:#2D6BE4" title="Blue"></button>
+						<button class="accent-swatch" data-color="#C0392B" style="background:#C0392B" title="Crimson"></button>
+						<button class="accent-swatch" data-color="#1A7A4A" style="background:#1A7A4A" title="Forest"></button>
+						<button class="accent-swatch" data-color="#7C3AED" style="background:#7C3AED" title="Purple"></button>
+						<button class="accent-swatch" data-color="#1B3A6B" style="background:#1B3A6B" title="Navy"></button>
+						<button class="accent-swatch" data-color="#E91E8C" style="background:#E91E8C" title="Pink"></button>
+						<button class="accent-swatch accent-swatch-custom" id="settings-accent-custom" title="Custom color">
+							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24">
+								<path fill="currentColor"
+									d="M20.71 5.63l-2.34-2.34a1 1 0 0 0-1.41 0l-3.12 3.12l-1.41-1.42l-1.42 1.42l1.41 1.41l-6.6 6.6A2 2 0 0 0 5 16v3h3a2 2 0 0 0 1.42-.59l6.6-6.6l1.41 1.42l1.42-1.42l-1.42-1.41l3.12-3.12a1 1 0 0 0 0-1.65M8 17H7v-1l6.6-6.6l1 1z" />
+							</svg>
+						</button>
+						<input type="color" id="settings-accent-picker" style="display:none" value="#fa5f1a" />
+					</div>
+				</div>
+			
+				<div class="settings-row" id="settings-wallpaper-row">
+					<div class="settings-row-left">
+						<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24">
+							<path fill="currentColor"
+								d="M21 3H3C2 3 1 4 1 5v14c0 1.1.9 2 2 2h18c1 0 2-1 2-2V5c0-1-1-2-2-2m0 16H3V5h18zm-9-9l-3 4h8l-2.5-3.5zM5 16l3-4l2 2.7L13 10l5 6z" />
+						</svg>
+						<span>Chat Background</span>
+					</div>
+					<span class="settings-row-value" id="settings-wallpaper-value">Default</span>
+				</div>
+				<div class="settings-accent-panel" id="settings-wallpaper-panel">
+					<div class="settings-wallpaper-actions">
+						<input type="file" id="settings-wallpaper-input" accept="image/*" style="display:none" />
+						<button class="settings-wallpaper-btn" id="settings-wallpaper-upload">Upload Image</button>
+						<button class="settings-wallpaper-btn settings-wallpaper-btn-remove"
+							id="settings-wallpaper-remove">Remove</button>
+					</div>
 				</div>
 			</div>
 
@@ -672,9 +719,9 @@
 		</div>
 	</main>
 
-	<script src="../../../public/js/cropper.min.js"></script>
+	<script src="/js/cropper.min.js"></script>
 	<script type="module" src="main.js"></script>
-	<script type="module" src="../../../public/js/index.js"></script>
+	<script type="module" src="/js/index.js"></script>
 </body>
 
 </html>

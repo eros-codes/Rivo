@@ -79,7 +79,7 @@ pointer-events: none;
 	box-shadow: var(--light-shadow);
 }
 .online-contact {
-	border: 0.3rem solid var(--green);
+	border: 0.3rem solid var(--online);
 }
 .contact-name {
 	max-width: 80%;
@@ -140,7 +140,7 @@ pointer-events: none;
 	color: var(--text-main-color);
 }
 .blocked-badge {
-	color: var(--red);
+	color: var(--danger-color);
 	padding: 0.25rem 0.5rem;
 	border-radius: 1rem;
 	font-size: 0.875rem;

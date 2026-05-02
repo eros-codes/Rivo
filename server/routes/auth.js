@@ -2,6 +2,7 @@ import { Router } from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import prisma from "../prisma.js";
+import crypto from "crypto";
 
 const router = Router();
 
@@ -69,6 +70,26 @@ router.post("/login", async (req, res) => {
             { expiresIn: "7d" }
         );
 
+        // Set HttpOnly cookie so clients can opt into cookie-based auth.
+        try {
+            res.cookie("token", token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === "production",
+                sameSite: "lax",
+                maxAge: 7 * 24 * 60 * 60 * 1000,
+            });
+            // Also set a non-HttpOnly CSRF token cookie (double-submit pattern)
+            const csrfToken = crypto.randomBytes(24).toString("hex");
+            res.cookie("csrfToken", csrfToken, {
+                httpOnly: false,
+                secure: process.env.NODE_ENV === "production",
+                sameSite: "lax",
+                maxAge: 7 * 24 * 60 * 60 * 1000,
+            });
+        } catch (e) {
+            // ignore cookie set errors
+        }
+
         return res.json({
             success: true,
             token,
@@ -89,28 +110,18 @@ router.post("/login", async (req, res) => {
 
 // ─── Logout ───────────────────────────────────────────────────────────────────
 router.post("/logout", (req, res) => {
-    // token-based auth — client فقط token رو پاک می‌کنه
+    // Clear cookie-based tokens
+    res.clearCookie("token");
+    res.clearCookie("csrfToken");
     return res.json({ success: true });
 });
 
+// Disabled: insecure unauthenticated password reset. Implement a secure
+// email + token-based reset flow before enabling this endpoint.
 router.post("/reset-password", async (req, res) => {
-	const { identifier, newPassword } = req.body;
-	try {
-		const user = await prisma.user.findFirst({
-			where: {
-				OR: [{ email: identifier }, { username: identifier }],
-			},
-		});
-		if (!user) return res.status(404).json({ error: "User not found" });
-		const hashed = await bcrypt.hash(newPassword, 10);
-		await prisma.user.update({
-			where: { id: user.id },
-			data: { password: hashed },
-		});
-		res.json({ success: true });
-	} catch {
-		res.status(500).json({ error: "Server error" });
-	}
+    return res.status(501).json({
+        error: "Not implemented. Use a secure password-reset flow (email token).",
+    });
 });
 
 export default router;

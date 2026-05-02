@@ -95,7 +95,7 @@
 	height: 1.75rem;
 	border-radius: 50%;
 	border: 2px solid var(--background-color);
-	background: var(--orange);
+	background: var(--accent);
 	color: white;
 	display: flex;
 	align-items: center;
@@ -227,7 +227,7 @@
     height: 1.75rem;
     border-radius: 50%;
     border: 2px solid var(--background-color);
-    background: var(--red);
+    background: var(--danger-color);
     color: white;
     display: flex;
     align-items: center;

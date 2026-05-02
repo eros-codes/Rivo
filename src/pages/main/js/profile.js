@@ -48,7 +48,7 @@ export function openProfile(friend) {
 		(el) =>
 			(el.src =
 				friend.profilePics[0] ||
-				"../../../../public/assets/images/profile.jpeg"),
+				"/assets/images/profile.jpeg"),
 	);
 	_dom.detailNames.forEach(
 		(el) => (el.textContent = friend.nickname || friend.name),

@@ -1,3 +1,4 @@
+import { escapeHtml } from "../messages/messages.js";
 export function createForwardedContactCard({
 	name,
 	profilePics,
@@ -13,7 +14,7 @@ export function createForwardedContactCard({
         src="${profilePics[0]}"
         alt="Profile"
         />
-        <span class="forwarded-contact-name">${name}</span>
+        <span class="forwarded-contact-name">${escapeHtml(name)}</span>
     `;
 	return card;
 }

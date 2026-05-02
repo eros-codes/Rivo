@@ -1,5 +1,5 @@
 /* main styles */
-@import url(../../../public/css/global.css);
+@import url(/css/global.css);
 @import url(styleSheet/header.css);
 @import url(styleSheet/contacts.css);
 @import url(styleSheet/contact-card-menu.css);

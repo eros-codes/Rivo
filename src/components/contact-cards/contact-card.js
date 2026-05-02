@@ -1,3 +1,4 @@
+import { escapeHtml } from "../messages/messages.js";
 const muteIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 4L9.91 6.09L12 8.18M4.27 3L3 4.27L7.73 9H3v6h4l5 5v-6.73l4.25 4.26c-.67.51-1.42.93-2.25 1.17v2.07c1.38-.32 2.63-.95 3.68-1.81L19.73 21L21 19.73l-9-9M19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.9 8.9 0 0 0 21 12c0-4.28-3-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71m-2.5 0c0-1.77-1-3.29-2.5-4.03v2.21l2.45 2.45c.05-.2.05-.42.05-.63"/></svg>`;
 const unmuteIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77"/></svg>`;
 const pinIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4a1 1 0 0 1 1 1z"/></svg>`;
@@ -40,7 +41,7 @@ export function createContactCard(contact, onAction) {
 		messageSection = `<a class="send-message">Send message</a>`;
 	} else {
 		messageSection = `
-    <span class="last-message">${lastMessage}</span>`;
+    <span class="last-message">${escapeHtml(lastMessage)}</span>`;
 	}
 
 	// ── Card ──────────────────────────────────────────────────────────────────
@@ -71,10 +72,10 @@ export function createContactCard(contact, onAction) {
    </div>
    <img
    	class="contact-profile ${isOnline ? "online-contact" : ""}"
-   	src="${(profilePics && profilePics[0]) || "../../../public/assets/images/profile.jpeg"}"
+   	src="${(profilePics && profilePics[0]) || "/assets/images/profile.jpeg"}"
    	alt="Profile"
    />
-   <span class="contact-name">${nickname || name} ${muteEl}</span>
+   <span class="contact-name">${escapeHtml(nickname || name)} ${muteEl}</span>
    <span class="contact-message">${messageSection}</span>
 
 `;

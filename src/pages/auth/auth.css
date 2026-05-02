@@ -22,13 +22,13 @@
     will-change: transform;    
 }
 .circle-top {
-    background : var(--top-orange-circle);
+    background : var(--accent-gradient-top);
     top : -0.5rem;
     left : 0.5rem;
     animation: orbitCW 6s linear infinite;
 }
 .circle-bottom {
-    background : var(--bottom-orange-circle);
+    background : var(--accent-gradient-bottom);
     bottom : 0rem;
     right : 3.5rem; 
     animation: orbitCCW 7.5s linear infinite;

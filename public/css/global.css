@@ -1,21 +1,21 @@
 /* global styles */
 @font-face {
   font-family: 'Poppins';
-  src: url("../../public/assets/fonts/Poppins/Poppins-Regular.ttf") format('truetype');
+  src: url("../assets/fonts/Poppins/Poppins-Regular.ttf") format('truetype');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Poppins';
-  src: url("../../public/assets/fonts/Poppins/Poppins-Bold.ttf") format('truetype');
+  src: url("../assets/fonts/Poppins/Poppins-Bold.ttf") format('truetype');
   font-weight: 700;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Vazirmatn';
-  src: url("../../public/assets/fonts/Vazirmatn/Vazirmatn-VariableFont_wght.ttf") format('truetype');
+  src: url("../assets/fonts/Vazirmatn/Vazirmatn-VariableFont_wght.ttf") format('truetype');
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -94,8 +94,8 @@
 :root {
   --background-color: #F7F0F0;
 
-  --top-orange-circle: radial-gradient(circle at top, #ff512f, #fa5f1a);
-  --bottom-orange-circle: radial-gradient(circle at right, #ff512f, #fa5f1a);
+  --accent-gradient-top: radial-gradient(circle at top, #ff512f, #fa5f1a);
+  --accent-gradient-bottom: radial-gradient(circle at right, #ff512f, #fa5f1a);
   
   --glass-bg-color: rgba(255, 255, 255, 0.13);
   --glass-border: rgba(255, 255, 255, 0.25);
@@ -105,7 +105,7 @@
 
   --header-glass-bg-color: rgba(0, 0, 0, 0.5);
   --header-glass-bg-color-hover: rgba(255, 255, 255, 0.5);
-  --orange-glass-bg-color: linear-gradient(to right, #FF512F35, #F0981935);
+  --accent-glass: linear-gradient(to right, #FF512F35, #F0981935);
 
   --contact-bg-color: #fff;
   --contact-border-color: #cbcaca;
@@ -132,10 +132,11 @@
   --link-white-color: #ffffffc9;
   --white-fade: #ffffff60;
   --header-color: #252525;
-  --green: #71b280;
-  --orange: #fa5f1a;
-  --red: #ff5555;
+  --online: #71b280;
+  --danger-color: #ff5555;
   --chat-time: #999999;
+
+  --accent: #fa5f1a;
 }
 
 body.dark-mode {

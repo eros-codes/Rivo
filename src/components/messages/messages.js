@@ -20,10 +20,12 @@ export function escapeHtml(str) {
 }
 
 export function createMessage({
+	id = null,
 	user,
 	text,
 	time,
 	index,
+	_localId = null,
 	isEdited = false,
 	replyTo = null,
 	forwardedFrom = null,
@@ -32,18 +34,28 @@ export function createMessage({
 }) {
 	const message = document.createElement("div");
 
+	// Prepare reply attributes (support both id and index-based refs)
+	let _replyAttr = "";
+	let _replySender = "";
+	if (replyTo) {
+		_replyAttr = replyTo.id ?? (typeof replyTo.index !== "undefined" ? replyTo.index : "");
+		_replySender = replyTo.sender ?? replyTo.name ?? "";
+	}
+
 	// "user ?" means that if the sender is user itself or not
 	message.className = `chat-message ${user ? "outgoing" : "incoming"}`;
-	message.dataset.index = index; // Add index to message element for styling purposes
+	if (typeof index !== "undefined") message.dataset.index = index; // Add index to message element for styling purposes
+	if (id) message.dataset.messageId = id;
+	if (_localId) message.dataset.localId = _localId;
 	message.innerHTML = `
 	${
 		replyTo
 			? `
-		<div class="chat-reply" data-reply-to="${replyTo.index}">
-			<span class="chat-reply-sender">${escapeHtml(replyTo.sender)}</span>
+		<div class="chat-reply" data-reply-to="${_replyAttr}">
+			<span class="chat-reply-sender">${escapeHtml(_replySender)}</span>
 			<span class="chat-reply-text">${escapeHtml(replyTo.text)}</span>
 		</div>`
-			: ""
+		: ""
 	}
 	${
 		forwardedFrom

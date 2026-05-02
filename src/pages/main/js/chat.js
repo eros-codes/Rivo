@@ -79,9 +79,10 @@ export async function openChat(fromClick = false) {
 				isSeen: m.isSeen,
 				replyTo: m.replyToId
 					? {
-							name: m.replyToName,
-							text: m.replyToText,
-						}
+						id: m.replyToId,
+						sender: m.replyToName,
+						text: m.replyToText,
+					}
 					: null,
 				forwardedFrom: m.forwardedFrom || null,
 				forwardedText: m.forwardedText || null,
@@ -282,9 +283,10 @@ export function receiveMessage(message) {
 		isSeen: message.isSeen || false,
 		replyTo: message.replyToId
 			? {
-					name: message.replyToName,
-					text: message.replyToText,
-				}
+				id: message.replyToId,
+				sender: message.replyToName,
+				text: message.replyToText,
+			}
 			: null,
 		forwardedFrom: message.forwardedFrom || null,
 		forwardedText: message.forwardedText || null,
@@ -396,9 +398,11 @@ export async function sendMessage() {
 	const text = _dom.messageInput.value;
 	const replyTo = state.replyTo;
 
-	// optimistic UI
+	// optimistic UI using a stable temporary id to avoid index races
 	const now = new Date();
+	const localId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2,9)}`;
 	const optimistic = {
+		_localId: localId,
 		user: true,
 		text,
 		time: now.toLocaleTimeString([], {
@@ -418,6 +422,11 @@ export async function sendMessage() {
 	optimistic.index = messages[state.contactUserId].length;
 	messages[state.contactUserId].push(optimistic);
 	_dom.chatEl.appendChild(createMessage(optimistic));
+	// tag the DOM node with the localId so we can find & remove it reliably
+	const appendedEl = _dom.chatEl.querySelector(
+		`[data-index="${optimistic.index}"]`,
+	);
+	if (appendedEl) appendedEl.dataset.localId = localId;
 
 	resetInput();
 	state.replyTo = null;
@@ -430,19 +439,31 @@ export async function sendMessage() {
 			conversationId: contact.conversationId,
 			text,
 			replyToId: replyTo?.id || null,
-			replyToName: replyTo?.name || null,
+			replyToName: replyTo?.sender || replyTo?.name || null,
 			replyToText: replyTo?.text || null,
 		});
-		// id واقعی رو بذار
-		optimistic.id = sent.id;
-		optimistic.isSeen = sent.isSeen || false;
+		// replace local optimistic id with real id
+		const localIdx = messages[state.contactUserId].findIndex(
+			(m) => m._localId === localId,
+		);
+		if (localIdx !== -1) {
+			messages[state.contactUserId][localIdx].id = sent.id;
+			messages[state.contactUserId][localIdx].isSeen = sent.isSeen || false;
+			delete messages[state.contactUserId][localIdx]._localId;
+		}
+		// update DOM node if present
+		const domEl = _dom.chatEl.querySelector(`[data-local-id="${localId}"]`);
+		if (domEl) {
+			domEl.dataset.messageId = sent.id;
+			delete domEl.dataset.localId;
+		}
 	} catch {
 		console.error("Failed to send message");
-		const idx = messages[state.contactUserId].indexOf(optimistic);
-		if (idx !== -1) messages[state.contactUserId].splice(idx, 1);
-		const msgEl = _dom.chatEl.querySelector(
-			`[data-index="${optimistic.index}"]`,
+		const idx = messages[state.contactUserId].findIndex(
+			(m) => m._localId === localId,
 		);
+		if (idx !== -1) messages[state.contactUserId].splice(idx, 1);
+		const msgEl = _dom.chatEl.querySelector(`[data-local-id="${localId}"]`);
 		if (msgEl) msgEl.remove();
 	}
 

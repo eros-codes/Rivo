@@ -27,10 +27,8 @@ export function initSocket(
 	onTypingStop,
 	onMessagePinned,
 ) {
-	const token = localStorage.getItem("token");
-
 	socket = io({
-		auth: { token },
+		withCredentials: true,
 	});
 
 	socket.on("message:new", (message) => {

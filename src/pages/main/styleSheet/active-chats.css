@@ -155,7 +155,7 @@
 	font-size: 0.8rem;
 }
 .online-active-chat {
-	border: 0.2rem solid var(--green);
+	border: 0.2rem solid var(--online);
 }
 
 @media all and (max-width: 700px) {

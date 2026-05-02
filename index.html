@@ -4,10 +4,10 @@
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<meta name="theme-color" content="#1a1a2e">
-	<link rel="manifest" href="public/manifest.webmanifest">
-	<link rel="apple-touch-icon" href="public/assets/icons/Icon-180.png">
-	<link rel="icon" type="image/png" sizes="32x32" href="public/assets/icons/Favicon-32.png">
-	<link rel="icon" type="image/png" sizes="16x16" href="public/assets/icons/Favicon-16.png">
+	<link rel="manifest" href="/manifest.webmanifest">
+	<link rel="apple-touch-icon" href="/assets/icons/Icon-180.png">
+	<link rel="icon" type="image/png" sizes="32x32" href="/assets/icons/Favicon-32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="/assets/icons/Favicon-16.png">
 	<title>Loading...</title>
 	<style>
 		body{
@@ -184,11 +184,14 @@
 		<div class="thumb"></div>
 	</div>
 
-	<script src="public/js/register-sw.js"></script>
+	<script src="/js/register-sw.js"></script>
 	<script>
 		window.addEventListener("load", () => {
 			const theme = localStorage.getItem("rivo-theme");
 			if (theme === "dark") document.body.style.background = "#1a1a1a";
+
+			const accent = localStorage.getItem("rivo-accent");
+			if (accent) document.documentElement.style.setProperty("--accent", accent)
 
 			setTimeout(() => {
 				const token = localStorage.getItem("token");

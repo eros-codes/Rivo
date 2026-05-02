@@ -75,7 +75,10 @@ export function handleBulkDelete() {
 	showToast(`${msgsToDelete.length} messages deleted`, _dom.deleteIcon, true);
 	msgsToDelete.forEach((idx) => {
 		const msgEl = _dom.chatEl.querySelector(`[data-index="${idx}"]`);
-		if (msgEl) state.deletingTimeouts.push(deleteMessage(msgEl, idx));
+		if (msgEl) {
+			const { timeout } = deleteMessage(msgEl, idx);
+			state.deletingTimeouts.push(timeout);
+		}
 	});
 
 	if (friend) {
@@ -171,7 +174,7 @@ export function executeBulkForward(friend, sourceName) {
 	_dom.forwardDialog.close();
 
 	_dom.chatProfilePic.src =
-		friend.profilePics[0] || "../../../public/assets/images/profile.jpeg";
+		friend.profilePics[0] || "/assets/images/profile.jpeg";
 	_dom.chatName.textContent = friend.nickname || friend.name;
 	openChat(true);
 	injectMessages(friend.id);

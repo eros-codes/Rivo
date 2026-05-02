@@ -209,7 +209,7 @@ router.post("/me/avatar", requireAuth, upload.single("avatar"), async (req, res)
         return res.status(400).json({ error: "No file uploaded" });
     }
 
-    const url = `/public/assets/images/user-profiles/${req.userId}.jpg`;
+	const url = `/assets/images/user-profiles/${req.userId}.jpg`;
 
     try {
         await prisma.user.update({

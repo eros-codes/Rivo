@@ -109,6 +109,32 @@ document.addEventListener("DOMContentLoaded", async function () {
 	const activeChatsContainer = document.querySelector(
 		".active-chats-container",
 	);
+
+// Rejoin active conversation after socket reconnect and emit leave on unload
+try {
+	const sock = getSocket();
+	if (sock) {
+		sock.on("connect", () => {
+			try {
+				const friend = contacts.find((c) => c.id === state.contactUserId);
+				if (friend && friend.conversationId) {
+					sock.emit("conversation:join", { conversationId: friend.conversationId });
+				}
+			} catch (e) {
+				// ignore
+			}
+		});
+	}
+	window.addEventListener("beforeunload", () => {
+		try {
+			const friend = contacts.find((c) => c.id === state.contactUserId);
+			if (friend && friend.conversationId) {
+				const s = getSocket();
+				if (s) s.emit("conversation:leave", { conversationId: friend.conversationId });
+			}
+		} catch (e) {}
+	});
+} catch (e) {}
 	const chatProfilePic = document.querySelector(".chat-profile-picture");
 	const chatName = document.querySelector(".chat-name");
 	const closeChatBtn = document.getElementById("close-chat");
@@ -922,6 +948,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 				(c) => c.id === state.contactUserId,
 			);
 			if (prevFriend && prevFriend.id !== Number(active.dataset.userId)) {
+				// leave previous conversation room if any
+				try {
+					const sock = getSocket();
+					if (sock && prevFriend.conversationId) {
+						sock.emit("conversation:leave", { conversationId: prevFriend.conversationId });
+					}
+				} catch (e) {}
 				prevFriend.isInChat = false;
 				// local-only: do not persist isInChat from client
 				if (
@@ -938,6 +971,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 			state.contactUserId = Number(active.dataset.userId);
 			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (!friend) return;
+
+			// join the new conversation room so server considers us present
+			try {
+				const sock = getSocket();
+				if (sock && friend.conversationId) sock.emit("conversation:join", { conversationId: friend.conversationId });
+			} catch (e) {}
 
 			if (friend.unreadCount > 0) {
 				friend.lastMessageSeen = true;
@@ -991,7 +1030,14 @@ document.addEventListener("DOMContentLoaded", async function () {
 				(c) => c.id === state.contactUserId,
 			);
 			if (prevFriend && prevFriend.id !== Number(card.dataset.userId)) {
-				prevFriend.isInChat = false;
+					// leave previous conversation room if any
+					try {
+						const sock = getSocket();
+						if (sock && prevFriend.conversationId) {
+							sock.emit("conversation:leave", { conversationId: prevFriend.conversationId });
+						}
+					} catch (e) {}
+					prevFriend.isInChat = false;
 				// local-only: do not persist isInChat from client
 				if (
 					!prevFriend.isPinned &&
@@ -1007,6 +1053,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 			state.contactUserId = Number(card.dataset.userId);
 			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (!friend) return;
+
+			// join the new conversation room so server considers us present
+			try {
+				const sock = getSocket();
+				if (sock && friend.conversationId) sock.emit("conversation:join", { conversationId: friend.conversationId });
+			} catch (e) {}
 
 			if (friend.unreadCount > 0) {
 				friend.lastMessageSeen = true;
@@ -1727,4 +1779,48 @@ document.addEventListener("DOMContentLoaded", async function () {
 				}
 			});
 	});
+
+	// prevent pinch zoom and double tap zoom on mobile devices for better UX
+	document.addEventListener(
+		"touchmove",
+		function (e) {
+			if (e.touches.length > 1) e.preventDefault();
+		},
+		{ passive: false },
+	);
+	document.addEventListener(
+		"gesturestart",
+		function (e) {
+			e.preventDefault();
+		},
+		{ passive: false },
+	);
+	document.addEventListener(
+		"gesturechange",
+		function (e) {
+			e.preventDefault();
+		},
+		{ passive: false },
+	);
+
+	document.addEventListener(
+		"gestureend",
+		function (e) {
+			e.preventDefault();
+		},
+		{ passive: false },
+	);
+	let lastTap = 0;
+
+	document.addEventListener(
+		"touchend",
+		function (e) {
+			const now = Date.now();
+			if (now - lastTap < 300) {
+				e.preventDefault();
+			}
+			lastTap = now;
+		},
+		{ passive: false },
+	);
 });

@@ -112,9 +112,11 @@ router.delete("/:id/messages", requireAuth, async (req, res) => {
 
         if (!member) return res.status(403).json({ error: "Forbidden" });
 
-		// Only delete messages authored by the requesting user to avoid wiping history for others
+		// Clear the conversation messages. Requesting user must be a member.
+		// Mark all messages in the conversation as deleted so they no longer
+		// appear when conversations/messages are fetched.
 		await prisma.message.updateMany({
-			where: { conversationId, senderId: req.userId },
+			where: { conversationId },
 			data: { isDeleted: true },
 		});
 

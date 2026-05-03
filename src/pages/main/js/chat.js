@@ -7,9 +7,12 @@ import {
 	refreshCard,
 	sortActiveChats,
 	sortContacts,
+	updateTotalUnreadCount,
 } from "./chat-logic.js";
-import { emitMessage, emitEditMessage, emitMessageSeen } from "./socket.js";
-import { getMessages } from "./api.js";
+import { emitMessage, emitEditMessage, emitMessageSeen, getSocket } from "./socket.js";
+import { getMessages, getContacts } from "./api.js";
+import { createContactCard } from "../../../components/contact-cards/contact-card.js";
+import { createActiveChatCard } from "../../../components/active-chats/active-chats.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 export const basePadding = 4;
@@ -134,6 +137,20 @@ export function closeChat() {
 		_dom.chatPart.style.display = "none";
 		_dom.mainContent.style.flexDirection = "row-reverse";
 	}
+
+	// Inform server we're leaving the active conversation (if any) so presence
+	// and unread handling remain accurate, and clear local active contact.
+	try {
+		const prevContact = contacts.find((c) => c.id === state.contactUserId);
+		if (prevContact && prevContact.conversationId) {
+			const sock = getSocket();
+			if (sock) sock.emit("conversation:leave", { conversationId: prevContact.conversationId });
+		}
+	} catch (e) {
+		// ignore
+	}
+
+	state.contactUserId = null;
 }
 
 // ─── Reset input ──────────────────────────────────────────────────────────────
@@ -267,11 +284,79 @@ export function injectMessages(userId) {
 }
 
 // ─── Receive incoming message (from socket) ───────────────────────────────────
-export function receiveMessage(message) {
-	const contact = contacts.find(
+export async function receiveMessage(message) {
+	let contact = contacts.find(
 		(c) => c.conversationId === message.conversationId,
 	);
-	if (!contact) return;
+
+	// If we don't know about this conversation yet, try to refresh contacts
+	// from the server (handles case where someone added the current user).
+	if (!contact) {
+		try {
+			const serverContacts = await getContacts();
+			if (Array.isArray(serverContacts)) {
+				const raw = serverContacts.find(
+					(c) => c.conversationId === message.conversationId,
+				);
+				if (raw) {
+					const newContact = {
+						...raw,
+						name: raw.nickname || raw.contact?.name || "",
+						username: raw.contact?.username || "",
+						profilePics: raw.contact?.profilePics || [],
+						isOnline: raw.contact?.isOnline || false,
+						lastSeen: raw.contact?.lastSeen || null,
+						bio: raw.contact?.bio || "",
+						email: raw.contact?.email || "",
+						lastMessage: raw.conversation?.messages?.[0]?.text || "",
+						lastMessageTime: raw.conversation?.messages?.[0]
+							? new Date(raw.conversation.messages[0].createdAt).toLocaleTimeString([], {
+								  hour: "2-digit",
+								  minute: "2-digit",
+								  hour12: false,
+							  })
+							: null,
+						lastMessageDate: raw.conversation?.messages?.[0]
+							? new Date(raw.conversation.messages[0].createdAt).toISOString().slice(0, 10)
+							: null,
+						unreadCount: raw.unreadCount ?? 0,
+						lastMessageSeen: (() => {
+							const lastMsg = raw.conversation?.messages?.[0];
+							if (!lastMsg) return true;
+							return lastMsg.isSeen === true;
+						})(),
+					};
+
+					// Avoid duplicates
+					if (!contacts.find((c) => c.id === newContact.id)) {
+						contacts.push(newContact);
+
+						// append DOM card to the appropriate container
+						const contactsContainer = document.querySelector(".contacts-container");
+						const activeChatsContainer = document.querySelector(".active-chats-container");
+						if (contactsContainer && activeChatsContainer) {
+							if (newContact.isPinned || newContact.unreadCount > 0 || newContact.lastMessageSeen === false) {
+								activeChatsContainer.appendChild(createActiveChatCard(newContact));
+							} else {
+								contactsContainer.appendChild(createContactCard({ ...newContact, hasMessages: !!newContact.lastMessage }, null));
+							}
+							updateTotalUnreadCount();
+							sortActiveChats();
+							sortContacts();
+							// Hide the "No contacts yet" placeholder immediately
+							const emptyEl = document.getElementById("contacts-empty");
+							if (emptyEl) emptyEl.style.display = "none";
+						}
+					}
+
+					contact = contacts.find((c) => c.conversationId === message.conversationId);
+				}
+			}
+		} catch (e) {
+			console.error("receiveMessage: failed to sync contacts", e);
+		}
+		if (!contact) return;
+	}
 
 	const normalized = {
 		id: message.id,

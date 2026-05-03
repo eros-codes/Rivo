@@ -390,4 +390,48 @@ document.addEventListener("DOMContentLoaded", function () {
 			});
 		}
 	}
+
+	// prevent pinch zoom and double tap zoom on mobile devices for better UX
+	document.addEventListener(
+		"touchmove",
+		function (e) {
+			if (e.touches.length > 1) e.preventDefault();
+		},
+		{ passive: false },
+	);
+	document.addEventListener(
+		"gesturestart",
+		function (e) {
+			e.preventDefault();
+		},
+		{ passive: false },
+	);
+	document.addEventListener(
+		"gesturechange",
+		function (e) {
+			e.preventDefault();
+		},
+		{ passive: false },
+	);
+
+	document.addEventListener(
+		"gestureend",
+		function (e) {
+			e.preventDefault();
+		},
+		{ passive: false },
+	);
+	let lastTap = 0;
+
+	document.addEventListener(
+		"touchend",
+		function (e) {
+			const now = Date.now();
+			if (now - lastTap < 300) {
+				e.preventDefault();
+			}
+			lastTap = now;
+		},
+		{ passive: false },
+	);
 });

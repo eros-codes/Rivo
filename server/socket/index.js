@@ -18,6 +18,14 @@ export function initSocket(httpServer) {
 	// Map<conversationId, Set<userId>> of users currently in each conversation room
 	const convoOnline = new Map();
 
+	// Map<userId, Set<socketId>> for quick targeting of a user's connected sockets
+	const userSockets = new Map();
+
+	// Simple per-socket rate limiter: Map<socketId, Array<timestamp>>
+	const sendRate = new Map();
+	const RATE_LIMIT_WINDOW_MS = parseInt(process.env.SOCKET_RATE_WINDOW_MS || "10000"); // 10s
+	const RATE_LIMIT_MAX = parseInt(process.env.SOCKET_RATE_MAX || "20"); // max messages per window
+
 	// ─── Auth middleware ───────────────────────────────────────────────────────
 	io.use(async (socket, next) => {
 		// Enforce cookie-only JWT for socket auth. Expect `token` cookie in handshake headers.
@@ -64,19 +72,15 @@ export function initSocket(httpServer) {
 				where: { id: socket.userId },
 				data: { isOnline: true },
 			});
-			const memberships = await prisma.conversationMember.findMany({
-				where: { userId: socket.userId },
-				select: { conversationId: true },
-			});
-			// track which conversations this socket has joined
+			// Do not auto-join conversation rooms on connect. Clients should
+			// explicitly join a conversation when the user opens that chat.
 			socket.joinedConversations = new Set();
-			memberships.forEach(({ conversationId }) => {
-				socket.join(`conversation:${conversationId}`);
-				socket.joinedConversations.add(conversationId);
-				const set = convoOnline.get(conversationId) || new Set();
-				set.add(socket.userId);
-				convoOnline.set(conversationId, set);
-			});
+			// track this socket under the user's connected sockets
+			const us = userSockets.get(socket.userId) || new Set();
+			us.add(socket.id);
+			userSockets.set(socket.userId, us);
+			// init rate tracking for this socket
+			sendRate.set(socket.id, []);
 			socket.broadcast.emit("user:online", { userId: socket.userId });
 		} catch (err) {
 			console.error("Connection error", err);
@@ -102,6 +106,22 @@ export function initSocket(httpServer) {
 			}
 
 			try {
+				// Rate limiting: simple sliding window per-socket
+				try {
+					const now = Date.now();
+					const arrival = sendRate.get(socket.id) || [];
+					const minTs = now - RATE_LIMIT_WINDOW_MS;
+					const recent = arrival.filter((t) => t > minTs);
+					recent.push(now);
+					sendRate.set(socket.id, recent);
+					if (recent.length > RATE_LIMIT_MAX) {
+						return callback?.({ error: "Rate limit exceeded" });
+					}
+				} catch (e) {
+					// rate limiting must not crash handler
+					console.error('rate limit check failed', e);
+				}
+
 				const member = await prisma.conversationMember.findFirst({
 					where: {
 						conversationId,
@@ -155,15 +175,35 @@ export function initSocket(httpServer) {
 					.map((c) => c.id);
 
 				if (toUpdateIds.length > 0) {
-					await prisma.contact.updateMany({
+					// perform unread count update asynchronously so it doesn't block delivery
+					prisma.contact.updateMany({
 						where: { id: { in: toUpdateIds } },
 						data: { unreadCount: { increment: 1 } },
-					});
+					}).catch((e) => console.error('update unread failed', e));
 				}
 
 				socket
 					.to(`conversation:${conversationId}`)
 					.emit("message:new", message);
+
+				// Also deliver the message directly to connected sockets belonging to
+				// recipients who are not actively joined to the conversation room
+				// (handles case where a user was just added to contacts server-side).
+				try {
+					const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
+					for (const uid of recipientUserIds) {
+						if (usersInRoom.has(uid)) continue;
+						const sidSet = userSockets.get(uid) || new Set();
+						for (const sid of sidSet) {
+							const s = io.sockets.sockets.get(sid);
+							if (s) {
+								s.emit("message:new", message);
+							}
+						}
+					}
+				} catch (e) {
+					console.error('deliver direct message to offline-room sockets failed', e);
+				}
 
 				callback?.({ success: true, message });
 			} catch (err) {
@@ -318,36 +358,70 @@ export function initSocket(httpServer) {
 
 			const lastSeen = new Date();
 			try {
-				const updated = await prisma.user.update({
-					where: { id: socket.userId },
-					data: {
-						isOnline: false,
-						lastSeen,
-					},
-					select: { privacyOnline: true },
-				});
+				// remove this socket from the user's socket set immediately so
+				// we can determine whether other connections remain
+				try {
+					const sset = userSockets.get(socket.userId);
+					if (sset) {
+						sset.delete(socket.id);
+						if (sset.size === 0) userSockets.delete(socket.userId);
+						else userSockets.set(socket.userId, sset);
+					}
+				} catch (e) {
+					console.error('userSockets cleanup failed', e);
+				}
 
-				socket.broadcast.emit("user:offline", {
-					userId: socket.userId,
-					lastSeen,
-					privacyOnline: updated.privacyOnline,
-				});
+				const remaining = userSockets.get(socket.userId);
+				if (!remaining || remaining.size === 0) {
+					const updated = await prisma.user.update({
+						where: { id: socket.userId },
+						data: {
+							isOnline: false,
+							lastSeen,
+						},
+						select: { privacyOnline: true },
+					});
+
+					socket.broadcast.emit("user:offline", {
+						userId: socket.userId,
+						lastSeen,
+						privacyOnline: updated.privacyOnline,
+					});
+				} else {
+					// user still has other active sockets; do not mark offline
+				}
 			} catch (e) {
 				console.error('disconnect handler error', e);
-				// still broadcast basic offline info without privacy flag
+				// best-effort: if we couldn't update DB, still emit basic offline info
 				socket.broadcast.emit("user:offline", {
 					userId: socket.userId,
 					lastSeen,
 					privacyOnline: null,
 				});
 			} finally {
-				// cleanup in-memory convo presence for this socket
+				// cleanup per-socket rate tracking
+				sendRate.delete(socket.id);
+
+				// cleanup in-memory convo presence for this socket; only remove the
+				// user from a conversation if no other connected socket for this
+				// user remains joined to that conversation
 				if (socket.joinedConversations && socket.joinedConversations.size > 0) {
 					for (const cid of socket.joinedConversations) {
 						const set = convoOnline.get(cid);
-						if (set) {
+						if (!set) continue;
+						let stillPresent = false;
+						const otherSids = userSockets.get(socket.userId) || new Set();
+						for (const sid of otherSids) {
+							const s = io.sockets.sockets.get(sid);
+							if (s && s.joinedConversations && s.joinedConversations.has(cid)) {
+								stillPresent = true;
+								break;
+							}
+						}
+						if (!stillPresent) {
 							set.delete(socket.userId);
 							if (set.size === 0) convoOnline.delete(cid);
+							else convoOnline.set(cid, set);
 						}
 					}
 				}
@@ -364,6 +438,12 @@ export function initSocket(httpServer) {
 					},
 				});
 				if (!member) return; // user is not a member of this conversation
+
+				// Only allow marking messages as seen if this socket explicitly
+				// joined the conversation (prevents other tabs/sockets from auto-seeing)
+				if (!socket.joinedConversations || !socket.joinedConversations.has(conversationId)) {
+					return callback?.({ success: true, marked: [] });
+				}
 
 				// find message ids that will be marked as seen (messages sent by others to this socket)
 				const toMark = await prisma.message.findMany({
@@ -426,6 +506,37 @@ export function initSocket(httpServer) {
 					convoOnline.set(conversationId, set);
 			} catch (e) {
 				console.error("conversation:join error", e);
+			}
+		});
+
+		// Allow clients to explicitly leave a conversation room when they close it.
+		socket.on("conversation:leave", async ({ conversationId }) => {
+			try {
+				if (!socket.joinedConversations || !socket.joinedConversations.has(conversationId)) return;
+				socket.leave(`conversation:${conversationId}`);
+				socket.joinedConversations.delete(conversationId);
+				const set = convoOnline.get(conversationId);
+				if (set) {
+					// If the user has other sockets, only remove their presence if
+					// none of the other sockets remain joined to this conversation.
+					const otherSids = userSockets.get(socket.userId) || new Set();
+					let stillPresent = false;
+					for (const sid of otherSids) {
+						if (sid === socket.id) continue;
+						const s = io.sockets.sockets.get(sid);
+						if (s && s.joinedConversations && s.joinedConversations.has(conversationId)) {
+							stillPresent = true;
+							break;
+						}
+					}
+					if (!stillPresent) {
+						set.delete(socket.userId);
+						if (set.size === 0) convoOnline.delete(conversationId);
+						else convoOnline.set(conversationId, set);
+					}
+				}
+			} catch (e) {
+				console.error("conversation:leave error", e);
 			}
 		});
 	});

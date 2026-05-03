@@ -1,5 +1,5 @@
 import { state, messages, contacts } from "./state.js";
-import { showEmptyState, hideEmptyState } from "./ui.js";
+import { showEmptyState, hideEmptyState, showToast } from "./ui.js";
 import { createMessage, markMessagesAsSeen } from "../../../components/messages/messages.js";
 import {
 	moveToActiveChats,
@@ -16,6 +16,9 @@ export const basePadding = 4;
 export const lineHeight = 22.4;
 export const maxLines = 7;
 export const maxHeight = lineHeight * maxLines;
+
+// Cap messages kept per conversation to avoid unbounded client memory growth
+const MAX_MESSAGES_PER_CONVERSATION = 1000;
 
 let _dom = {};
 
@@ -147,7 +150,7 @@ export function resetInput() {
 
 // ─── Pin count ────────────────────────────────────────────────────────────────
 export function updatePinCount(activeIdx) {
-	_dom.pinnedMessageCount.innerHTML = "";
+	_dom.pinnedMessageCount.textContent = "";
 	const total = Math.min(state.pinnedIndexes.length, 3);
 	if (total === 0) return;
 
@@ -211,7 +214,9 @@ function formatDateLabel(dateStr) {
 function createDateSeparator(dateStr) {
 	const el = document.createElement("div");
 	el.className = "date-separator";
-	el.innerHTML = `<span>${formatDateLabel(dateStr)}</span>`;
+	const span = document.createElement("span");
+	span.textContent = formatDateLabel(dateStr);
+	el.appendChild(span);
 	return el;
 }
 
@@ -223,7 +228,7 @@ export function injectMessages(userId) {
 		return;
 	}
 
-	_dom.chatEl.innerHTML = "";
+	_dom.chatEl.textContent = "";
 	_dom.pinnedMessageContainer.style.display = "none";
 	_dom.chatHeader.style.borderRadius = "1rem";
 	state.pinnedIndexes = [];
@@ -295,6 +300,17 @@ export function receiveMessage(message) {
 	if (!messages[contact.id]) messages[contact.id] = [];
 	messages[contact.id].push(normalized);
 
+	// Trim older messages if this conversation exceeds the cap
+	if (messages[contact.id].length > MAX_MESSAGES_PER_CONVERSATION) {
+		const overflow = messages[contact.id].length - MAX_MESSAGES_PER_CONVERSATION;
+		messages[contact.id] = messages[contact.id].slice(overflow);
+		// If this conversation is open, re-render to keep DOM indexes in sync
+		if (state.contactUserId === contact.id) {
+			injectMessages(contact.id);
+			scrollChatToBottom();
+		}
+	}
+
 	// اگه همین چت بازه نشون بده
 	if (state.contactUserId === contact.id) {
 		hideEmptyState(_dom.chatEl, _dom.emptyStateEl);
@@ -322,6 +338,7 @@ export function receiveMessage(message) {
 export async function sendMessage() {
 	// Edit mode
 	if (state.isEditing) {
+		if (!messages[state.contactUserId] || typeof state.msgIndex === 'undefined' || !messages[state.contactUserId][Number(state.msgIndex)]) return;
 		if (
 			_dom.messageInput.value.trim() === "" ||
 			messages[state.contactUserId][Number(state.msgIndex)].text ===
@@ -332,16 +349,26 @@ export async function sendMessage() {
 		const txt = _dom.messageInput.value;
 		const msg = messages[state.contactUserId][Number(state.msgIndex)];
 
-		emitEditMessage(msg.id, txt);
+		try {
+			await emitEditMessage(msg.id, txt);
+			// update local state first
+			if (messages[state.contactUserId] && messages[state.contactUserId][Number(state.msgIndex)]) {
+				messages[state.contactUserId][Number(state.msgIndex)].text = txt;
+				messages[state.contactUserId][Number(state.msgIndex)].isEdited = true;
+			}
 
-		state.selectedMsg.querySelector(".chat-message-text").textContent = txt;
-		if (!state.selectedMsg.querySelector(".chat-edited-label")) {
-			const label = document.createElement("span");
-			label.className = "chat-edited-label";
-			label.textContent = "edited";
-			state.selectedMsg
-				.querySelector(".chat-message-meta")
-				.prepend(label);
+			state.selectedMsg.querySelector(".chat-message-text").textContent = txt;
+			if (!state.selectedMsg.querySelector(".chat-edited-label")) {
+				const label = document.createElement("span");
+				label.className = "chat-edited-label";
+				label.textContent = "edited";
+				state.selectedMsg
+					.querySelector(".chat-message-meta")
+					.prepend(label);
+			}
+		} catch (e) {
+			console.error('edit failed', e);
+			// optionally show UI error
 		}
 		state.isEditing = false;
 		resetInput();
@@ -371,7 +398,7 @@ export async function sendMessage() {
 				messages[state.contactUserId].push(normalized);
 				_dom.chatEl.appendChild(createMessage(normalized));
 			} catch {
-				/* silent */
+				showToast("Failed to forward message", "");
 			}
 		}
 
@@ -397,6 +424,16 @@ export async function sendMessage() {
 
 	const text = _dom.messageInput.value;
 	const replyTo = state.replyTo;
+
+	// Preserve previous contact preview state for rollback
+	const prevContactState = contact
+		? {
+			lastMessage: contact.lastMessage,
+			lastMessageTime: contact.lastMessageTime,
+			lastMessageDate: contact.lastMessageDate,
+			lastMessageSeen: contact.lastMessageSeen,
+		}
+		: null;
 
 	// optimistic UI using a stable temporary id to avoid index races
 	const now = new Date();
@@ -449,6 +486,13 @@ export async function sendMessage() {
 		if (localIdx !== -1) {
 			messages[state.contactUserId][localIdx].id = sent.id;
 			messages[state.contactUserId][localIdx].isSeen = sent.isSeen || false;
+			messages[state.contactUserId][localIdx].isPinned = sent.isPinned || false;
+			// preserve reply/forward metadata if server returned them
+			messages[state.contactUserId][localIdx].replyTo = sent.replyToId
+				? { id: sent.replyToId, sender: sent.replyToName, text: sent.replyToText }
+				: messages[state.contactUserId][localIdx].replyTo || null;
+			messages[state.contactUserId][localIdx].forwardedFrom = sent.forwardedFrom || messages[state.contactUserId][localIdx].forwardedFrom || null;
+			messages[state.contactUserId][localIdx].forwardedText = sent.forwardedText || messages[state.contactUserId][localIdx].forwardedText || null;
 			delete messages[state.contactUserId][localIdx]._localId;
 		}
 		// update DOM node if present
@@ -465,6 +509,16 @@ export async function sendMessage() {
 		if (idx !== -1) messages[state.contactUserId].splice(idx, 1);
 		const msgEl = _dom.chatEl.querySelector(`[data-local-id="${localId}"]`);
 		if (msgEl) msgEl.remove();
+		// rollback contact preview to previous state
+		if (contact && prevContactState) {
+			contact.lastMessage = prevContactState.lastMessage;
+			contact.lastMessageTime = prevContactState.lastMessageTime;
+			contact.lastMessageDate = prevContactState.lastMessageDate;
+			contact.lastMessageSeen = prevContactState.lastMessageSeen;
+			refreshCard(contact);
+			sortActiveChats();
+			sortContacts();
+		}
 	}
 
 	_updateContactCard();
@@ -483,8 +537,12 @@ function _normalizeOutgoing(m) {
 		}),
 		date: new Date(m.createdAt).toISOString().slice(0, 10),
 		isEdited: false,
-		isPinned: false,
-		replyTo: null,
+		isPinned: m.isPinned || false,
+		replyTo: m.replyToId
+			? { id: m.replyToId, sender: m.replyToName, text: m.replyToText }
+			: null,
+		forwardedFrom: m.forwardedFrom || null,
+		forwardedText: m.forwardedText || null,
 		isSeen: m.isSeen || false,
 	};
 }
@@ -542,6 +600,11 @@ export function handleMessagesSeen(
 
 	// Only reset unreadCount for this contact when the current user is the one who saw the messages
 	if (seenBy === currentUserId && anyMarked) {
+		contact.unreadCount = 0;
+	}
+
+	// Also, if the conversation is currently open and messages were marked seen locally, reset unread count
+	if (state.contactUserId === contact.id && seenIndices.length > 0) {
 		contact.unreadCount = 0;
 	}
 

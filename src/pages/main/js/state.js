@@ -28,3 +28,19 @@ export const contacts = [];
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
 export const messages = {};
+
+export function getMessageByIndex(contactId, index) {
+	if (!messages[contactId] || typeof index === "undefined") return null;
+	const i = Number(index);
+	if (!Number.isInteger(i) || i < 0 || i >= messages[contactId].length) return null;
+	return messages[contactId][i] || null;
+}
+
+export function findMessageById(messageId) {
+	for (const [uid, msgs] of Object.entries(messages)) {
+		if (!Array.isArray(msgs)) continue;
+		const idx = msgs.findIndex((m) => m.id === messageId);
+		if (idx !== -1) return { contactId: Number(uid), index: idx, message: msgs[idx] };
+	}
+	return null;
+}

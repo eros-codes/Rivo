@@ -1,4 +1,4 @@
-import { state, messages, contacts } from "./state.js";
+import { state, messages, contacts, getMessageByIndex } from "./state.js";
 import { showEmptyState } from "./ui.js";
 import {
 	scrollChatToBottom,
@@ -12,6 +12,7 @@ import {
 	sortContacts,
 } from "./chat-logic.js";
 import { emitDeleteMessage, emitPinMessage } from "./socket.js";
+import { parseSvg } from "../../../utils/svg.js";
 
 const pinIconForMenu = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4a1 1 0 0 1 1 1z"/></svg>`;
 const unpinIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="m20.97 17.172l-1.414 1.414l-3.535-3.535l-.073.074l-.707 3.536l-1.415 1.414l-4.242-4.243l-4.95 4.95l-1.414-1.414l4.95-4.95l-4.243-4.243L5.34 8.761l3.536-.707l.073-.074l-3.536-3.536L6.828 3.03zM10.365 9.394l-.502.502l-2.822.565l6.5 6.5l.564-2.822l.502-.502zm8.411.074l-1.34 1.34l1.414 1.415l1.34-1.34l.707.707l1.415-1.415l-8.486-8.485l-1.414 1.414l.707.707l-1.34 1.34l1.414 1.415l1.34-1.34z"/></svg>`;
@@ -52,11 +53,14 @@ export function openContextMenu(msg, e) {
 	const pinIconEl = document.querySelector(".pin-message span");
 	const isPinned = state.pinnedIndexes.includes(Number(msg.dataset.index));
 	if (pinLabels[0]) pinLabels[0].textContent = isPinned ? "Unpin" : "Pin";
-	if (pinIconEl) pinIconEl.innerHTML = isPinned ? unpinIcon : pinIconForMenu;
+	if (pinIconEl) {
+		pinIconEl.textContent = '';
+		const _i = parseSvg(isPinned ? unpinIcon : pinIconForMenu);
+		if (_i) pinIconEl.appendChild(_i.cloneNode(true));
+	}
 
 	// Forwarded messages can't be edited
-	const forwardedFrom =
-		messages[state.contactUserId][state.msgIndex]?.forwardedFrom;
+	const forwardedFrom = getMessageByIndex(state.contactUserId, state.msgIndex)?.forwardedFrom;
 	if (_dom.editMsg[0]) {
 		_dom.editMsg[0].style.display =
 			forwardedFrom === undefined ? "flex" : "none";
@@ -119,71 +123,79 @@ export function deleteMessage(msg, index) {
 	msg.style.transition = "opacity 3s ease";
 	msg.style.opacity = 0;
 	const timeout = setTimeout(() => {
-		setTimeout(() => {
+		// after undo window, attempt server deletion and then finalize local removal on success
+		(async () => {
 			try {
-				if (messageId) emitDeleteMessage(messageId);
+				if (messageId) await emitDeleteMessage(messageId);
+
+				// Remove message by id if possible, otherwise by localId, otherwise by index
+				const currentArr = messages[state.contactUserId] || [];
+				let removeIdx = -1;
+				if (messageId) removeIdx = currentArr.findIndex((m) => m.id === messageId);
+				if (removeIdx === -1 && deletedMsg && deletedMsg._localId)
+					removeIdx = currentArr.findIndex((m) => m._localId === deletedMsg._localId);
+				if (removeIdx === -1) removeIdx = idx;
+
+				// Remove element from DOM and data structures
+				msg.remove();
+				if (removeIdx !== -1 && removeIdx < currentArr.length) {
+					currentArr.splice(removeIdx, 1);
+				}
+				currentArr.forEach((m, i) => (m.index = i));
+
+				// Re-index DOM elements
+				document.querySelectorAll(".chat-message").forEach((msgEl, i) => {
+					msgEl.dataset.index = i;
+				});
+
+				state.pinnedIndexes = currentArr
+					.map((m, i) => (m.isPinned ? i : -1))
+					.filter((i) => i !== -1);
+
+				const remaining = currentArr;
+
+				const friend = contacts.find((c) => c.id === state.contactUserId);
+				if (friend) {
+					if (remaining.length > 0) {
+						const lastMsg = remaining.at(-1);
+						friend.lastMessage = lastMsg.text;
+						friend.lastMessageTime = lastMsg.time;
+						friend.lastMessageDate = lastMsg.date || "";
+						friend.lastMessageSeen = lastMsg.user
+							? lastMsg.isSeen === true
+							: true;
+					} else {
+						friend.lastMessage = "";
+						friend.lastMessageTime = "";
+						friend.lastMessageDate = "";
+						friend.lastMessageSeen = true;
+					}
+					refreshCard(friend);
+					sortActiveChats();
+					sortContacts();
+
+					if (
+						!friend.isPinned &&
+						friend.unreadCount === 0 &&
+						friend.lastMessageSeen === true
+					) {
+						moveToContacts(friend);
+					}
+				}
+				if (remaining.length === 0) {
+					showEmptyState(_dom.chatEl, _dom.emptyStateEl);
+				}
 			} catch (e) {
-				/* ignore */
+				// server delete failed; restore message opacity and notify
+				console.error('deleteMessage failed', e);
+				msg.style.transition = "opacity 0.15s ease";
+				msg.style.opacity = 1;
+				setTimeout(() => {
+					msg.style.transition = "";
+				}, 150);
+				// optionally show toast via UI; keep message in state
 			}
-
-			// Remove message by id if possible, otherwise by localId, otherwise by index
-			const currentArr = messages[state.contactUserId] || [];
-			let removeIdx = -1;
-			if (messageId) removeIdx = currentArr.findIndex((m) => m.id === messageId);
-			if (removeIdx === -1 && deletedMsg && deletedMsg._localId)
-				removeIdx = currentArr.findIndex((m) => m._localId === deletedMsg._localId);
-			if (removeIdx === -1) removeIdx = idx;
-
-			// Remove element from DOM and data structures
-			msg.remove();
-			if (removeIdx !== -1 && removeIdx < currentArr.length) {
-				currentArr.splice(removeIdx, 1);
-			}
-			currentArr.forEach((m, i) => (m.index = i));
-
-			// Re-index DOM elements
-			document.querySelectorAll(".chat-message").forEach((msgEl, i) => {
-				msgEl.dataset.index = i;
-			});
-
-			state.pinnedIndexes = currentArr
-				.map((m, i) => (m.isPinned ? i : -1))
-				.filter((i) => i !== -1);
-
-			const remaining = currentArr;
-
-			const friend = contacts.find((c) => c.id === state.contactUserId);
-			if (friend) {
-				if (remaining.length > 0) {
-					const lastMsg = remaining.at(-1);
-					friend.lastMessage = lastMsg.text;
-					friend.lastMessageTime = lastMsg.time;
-					friend.lastMessageDate = lastMsg.date || "";
-					friend.lastMessageSeen = lastMsg.user
-						? lastMsg.isSeen === true
-						: true;
-				} else {
-					friend.lastMessage = "";
-					friend.lastMessageTime = "";
-					friend.lastMessageDate = "";
-					friend.lastMessageSeen = true;
-				}
-				refreshCard(friend);
-				sortActiveChats();
-				sortContacts();
-
-				if (
-					!friend.isPinned &&
-					friend.unreadCount === 0 &&
-					friend.lastMessageSeen === true
-				) {
-					moveToContacts(friend);
-				}
-			}
-			if (remaining.length === 0) {
-				showEmptyState(_dom.chatEl, _dom.emptyStateEl);
-			}
-		}, 310);
+		})();
 	}, 3000);
 
 	return { timeout, deletedMsg, idx };
@@ -224,7 +236,7 @@ export function buildForwardedMsg(originalMsg, targetContactId) {
 // ─── Pin / Unpin ──────────────────────────────────────────────────────────────
 export function pinMessage(pinIconSvg) {
 	const idx = Number(state.selectedMsg?.dataset.index);
-	const msg = messages[state.contactUserId][idx];
+	const msg = getMessageByIndex(state.contactUserId, idx);
 	const messageId = msg?.id;
 	if (messageId) {
 		emitPinMessage(messageId).catch(() => {
@@ -245,7 +257,9 @@ export function pinMessage(pinIconSvg) {
 		if (!existingIcon) {
 			const pinSpan = document.createElement("span");
 			pinSpan.className = "chat-pinned-icon";
-			pinSpan.innerHTML = pinIconSvg;
+			pinSpan.textContent = '';
+			const _p = parseSvg(pinIconSvg);
+			if (_p) pinSpan.appendChild(_p.cloneNode(true));
 			msg.user ? meta.prepend(pinSpan) : meta.appendChild(pinSpan);
 		}
 		state.pinnedIndexes.push(idx);
@@ -262,61 +276,46 @@ export function pinMessage(pinIconSvg) {
 
 // ─── Edit ─────────────────────────────────────────────────────────────────────
 export function editMessage() {
-	const msg = messages[state.contactUserId][Number(state.msgIndex)];
+	const msg = getMessageByIndex(state.contactUserId, Number(state.msgIndex));
+	if (!msg) return;
 
 	state.isEditing = true;
-	_dom.messageInput.value =
-		messages[state.contactUserId][Number(state.msgIndex)].text;
+	_dom.messageInput.value = msg.text;
 	_dom.messageInput.focus();
 	_dom.msgAction.style.display = "flex";
-	state.actionPreviewHeight =
-		_dom.msgAction.getBoundingClientRect().height / 14;
-	_dom.chatEl.style.paddingBottom =
-		basePadding + state.actionPreviewHeight + "rem";
+	state.actionPreviewHeight = _dom.msgAction.getBoundingClientRect().height / 14;
+	_dom.chatEl.style.paddingBottom = basePadding + state.actionPreviewHeight + "rem";
 	_dom.msgActionText.textContent = "Edit";
-	_dom.msgActionmsg.textContent =
-		messages[state.contactUserId][Number(state.msgIndex)].text;
+	_dom.msgActionmsg.textContent = msg.text;
 	closeContextMenu();
 
 	_dom.messageInput.style.borderRadius = "0 0 2rem 2rem";
 	_dom.sendMessageBtn.style.display = "block";
-	const nearBottom =
-		_dom.chatEl.scrollTop + _dom.chatEl.clientHeight >=
-		_dom.chatEl.scrollHeight -
-			_dom.msgAction.getBoundingClientRect().height -
-			30;
+	const nearBottom = _dom.chatEl.scrollTop + _dom.chatEl.clientHeight >= _dom.chatEl.scrollHeight - _dom.msgAction.getBoundingClientRect().height - 30;
 	if (nearBottom) scrollChatToBottom();
 }
 
 // ─── Reply ────────────────────────────────────────────────────────────────────
 export function replyMessage() {
-	const senderName = messages[state.contactUserId][Number(state.msgIndex)]
-		.user
-		? "You"
-		: contacts.find((c) => c.id === state.contactUserId)?.name;
+	const msg = getMessageByIndex(state.contactUserId, Number(state.msgIndex));
+	if (!msg) return;
+	const senderName = msg.user ? "You" : contacts.find((c) => c.id === state.contactUserId)?.name;
 	_dom.msgAction.style.display = "flex";
-	state.actionPreviewHeight =
-		_dom.msgAction.getBoundingClientRect().height / 14;
-	_dom.chatEl.style.paddingBottom =
-		basePadding + state.actionPreviewHeight + "rem";
+	state.actionPreviewHeight = _dom.msgAction.getBoundingClientRect().height / 14;
+	_dom.chatEl.style.paddingBottom = basePadding + state.actionPreviewHeight + "rem";
 	_dom.msgActionText.textContent = "Replying to " + senderName;
-	_dom.msgActionmsg.textContent =
-		messages[state.contactUserId][Number(state.msgIndex)].text;
+	_dom.msgActionmsg.textContent = msg.text;
 	_dom.messageInput.focus();
 	_dom.messageInput.style.borderRadius = "0 0 2rem 2rem";
 
 	state.replyTo = {
-		text: messages[state.contactUserId][Number(state.msgIndex)].text,
+		text: msg.text,
 		sender: senderName,
 		index: Number(state.msgIndex),
-		id: messages[state.contactUserId][Number(state.msgIndex)].id,
+		id: msg.id,
 	};
 	closeContextMenu();
 
-	const nearBottom =
-		_dom.chatEl.scrollTop + _dom.chatEl.clientHeight >=
-		_dom.chatEl.scrollHeight -
-			_dom.msgAction.getBoundingClientRect().height -
-			20;
+	const nearBottom = _dom.chatEl.scrollTop + _dom.chatEl.clientHeight >= _dom.chatEl.scrollHeight - _dom.msgAction.getBoundingClientRect().height - 20;
 	if (nearBottom) setTimeout(scrollChatToBottom, 200);
 }

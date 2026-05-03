@@ -36,14 +36,17 @@ export function runSearch(query) {
 // ─── Contacts ─────────────────────────────────────────────────────────────────
 function _renderContactResults(query) {
 	const list = _dom.searchContactsList;
-	list.innerHTML = "";
+	list.textContent = "";
 
 	const matched = contacts.filter((c) =>
 		(c.nickname || c.name).toLowerCase().includes(query),
 	);
 
 	if (matched.length === 0) {
-		list.innerHTML = `<p class="search-no-results">No contacts found</p>`;
+		const p = document.createElement("p");
+		p.className = "search-no-results";
+		p.textContent = "No contacts found";
+		list.appendChild(p);
 		return;
 	}
 
@@ -69,7 +72,7 @@ function _renderContactResults(query) {
 // ─── Messages ─────────────────────────────────────────────────────────────────
 function _renderMessageResults(query) {
 	const list = _dom.searchMessagesList;
-	list.innerHTML = "";
+	list.textContent = "";
 
 	let found = false;
 
@@ -112,6 +115,9 @@ function _renderMessageResults(query) {
 	});
 
 	if (!found) {
-		list.innerHTML = `<p class="search-no-results">No messages found</p>`;
+		const p = document.createElement("p");
+		p.className = "search-no-results";
+		p.textContent = "No messages found";
+		list.appendChild(p);
 	}
 }

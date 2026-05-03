@@ -73,6 +73,7 @@ import { initSettings, openSettings, closeSettings } from "./js/settings.js";
 import { initAddContact, openAddContact } from "./js/add-contact.js";
 import { initSocket, emitTypingStart, emitTypingStop, emitPinMessage, emitMessageSeen, getSocket } from "./js/socket.js";
 import { loadThemeFromStorage } from "../../utils/theme.js";
+import { parseSvg } from "../../utils/svg.js";
 
 document.addEventListener("DOMContentLoaded", async function () {
 	// Rely on HttpOnly cookie for auth; if user info not present, ask server for current user.
@@ -562,23 +563,35 @@ document.addEventListener("DOMContentLoaded", async function () {
 		(msg) => receiveMessage(msg),
 		// edit
 		(data) => {
-			const userMsgs = messages[state.contactUserId];
-			if (!userMsgs) return;
-			const index = userMsgs.findIndex((m) => m.id === data.messageId);
-			if (index === -1) return;
-			userMsgs[index].text = data.text;
-			userMsgs[index].isEdited = true;
-			const msgEl = document.querySelector(
-				`.chat-message[data-index="${index}"]`,
-			);
-			if (!msgEl) return;
-			const textEl = msgEl.querySelector(".chat-message-text");
-			if (textEl) textEl.textContent = data.text;
-			if (!msgEl.querySelector(".chat-edited-label")) {
-				const label = document.createElement("span");
-				label.className = "chat-edited-label";
-				label.textContent = "edited";
-				msgEl.querySelector(".chat-message-meta")?.prepend(label);
+			// Locate the message across all conversations to keep in-memory state consistent
+			let foundUserId = null;
+			let foundIndex = -1;
+			for (const [uid, msgs] of Object.entries(messages)) {
+				if (!Array.isArray(msgs)) continue;
+				const idx = msgs.findIndex((m) => m.id === data.messageId);
+				if (idx !== -1) {
+					foundUserId = Number(uid);
+					foundIndex = idx;
+					break;
+				}
+			}
+			if (foundUserId === null) return;
+			const userMsgs = messages[foundUserId];
+			userMsgs[foundIndex].text = data.text;
+			userMsgs[foundIndex].isEdited = true;
+			if (state.contactUserId === foundUserId) {
+				const msgEl = document.querySelector(
+					`.chat-message[data-index="${foundIndex}"]`,
+				);
+				if (!msgEl) return;
+				const textEl = msgEl.querySelector(".chat-message-text");
+				if (textEl) textEl.textContent = data.text;
+				if (!msgEl.querySelector(".chat-edited-label")) {
+					const label = document.createElement("span");
+					label.className = "chat-edited-label";
+					label.textContent = "edited";
+					msgEl.querySelector(".chat-message-meta")?.prepend(label);
+				}
 			}
 		},
 		// delete
@@ -724,10 +737,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 	}
 
 	function openPinnedView() {
-		pinnedViewList.innerHTML = "";
+		pinnedViewList.textContent = "";
 
 		if (state.pinnedIndexes.length === 0) {
-			pinnedViewList.innerHTML = `<p class="pinned-view-empty">No pinned messages</p>`;
+			const empty = document.createElement("p");
+			empty.className = "pinned-view-empty";
+			empty.textContent = "No pinned messages";
+			pinnedViewList.appendChild(empty);
 			pinnedViewDialog.showModal();
 			return;
 		}
@@ -741,13 +757,24 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 			const item = document.createElement("div");
 			item.className = "pinned-view-item";
-			item.innerHTML = `
-            <div class="pinned-view-item-meta">
-                <span class="pinned-view-item-sender">${msg.user ? "You" : escapeHtml(friend?.nickname || friend?.name || "")}</span>
-                <span class="pinned-view-item-time">${msg.time}</span>
-            </div>
-            <p class="pinned-view-item-text">${escapeHtml(msg.text)}</p>
-        `;
+
+			const meta = document.createElement("div");
+			meta.className = "pinned-view-item-meta";
+			const sender = document.createElement("span");
+			sender.className = "pinned-view-item-sender";
+			sender.textContent = msg.user ? "You" : (friend?.nickname || friend?.name || "");
+			const time = document.createElement("span");
+			time.className = "pinned-view-item-time";
+			time.textContent = msg.time;
+			meta.appendChild(sender);
+			meta.appendChild(time);
+
+			const text = document.createElement("p");
+			text.className = "pinned-view-item-text";
+			text.textContent = msg.text || "";
+
+			item.appendChild(meta);
+			item.appendChild(text);
 
 			item.addEventListener("click", () => {
 				pinnedViewDialog.close();
@@ -866,7 +893,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 	if (closeChatBtn) {
 		closeChatBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
-			chatEl.innerHTML = "";
+			chatEl.textContent = "";
 			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (friend) {
 				friend.isInChat = false;
@@ -1110,7 +1137,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 				if (!msg.querySelector(".swipe-reply-icon")) {
 					const icon = document.createElement("div");
 					icon.className = "swipe-reply-icon";
-					icon.innerHTML = replyIcon;
+					// insert svg safely
+					const s = parseSvg(replyIcon);
+					if (s) icon.appendChild(s.cloneNode(true));
 					msg.appendChild(icon);
 				}
 				swipeIcon = msg.querySelector(".swipe-reply-icon");
@@ -1537,8 +1566,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 	if (forwardMsg[0]) {
 		forwardMsg[0].addEventListener("click", () => {
 			closeContextMenu();
-			forwardDialog.querySelector(".forwarded-contact-dialog").innerHTML =
-				"";
+			forwardDialog.querySelector(".forwarded-contact-dialog").textContent = "";
 			contacts.forEach((contact) => {
 				forwardDialog
 					.querySelector(".forwarded-contact-dialog")

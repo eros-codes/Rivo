@@ -112,10 +112,11 @@ router.delete("/:id/messages", requireAuth, async (req, res) => {
 
         if (!member) return res.status(403).json({ error: "Forbidden" });
 
-        await prisma.message.updateMany({
-            where: { conversationId },
-            data: { isDeleted: true },
-        });
+		// Only delete messages authored by the requesting user to avoid wiping history for others
+		await prisma.message.updateMany({
+			where: { conversationId, senderId: req.userId },
+			data: { isDeleted: true },
+		});
 
         return res.json({ success: true });
     } catch (err) {

@@ -80,6 +80,10 @@ router.post("/", requireAuth, async (req, res) => {
 		return res.status(400).json({ error: "Username is required" });
 	}
 
+	if (name !== undefined && typeof name !== "string") {
+		return res.status(400).json({ error: "Name must be a string" });
+	}
+
 	try {
 		const targetUser = await prisma.user.findUnique({
 			where: { username },

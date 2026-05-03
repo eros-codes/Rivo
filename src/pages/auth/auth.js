@@ -246,7 +246,7 @@ document.addEventListener("DOMContentLoaded", function () {
 				.join("");
 
 			if (code.length < codeDigits.length) {
-				alert("Please enter the full 6-digit code.");
+				showError(codeDigits[0], "Please enter the full 6-digit code.");
 				codeDigits[0].focus();
 				return;
 			}
@@ -258,7 +258,7 @@ document.addEventListener("DOMContentLoaded", function () {
 				showForm(allForms, passwordForm);
 				if (passwordInput) passwordInput.focus();
 			} else {
-				alert("The code entered does not match. Please try again.");
+				showError(codeDigits[0], "The code is incorrect. Please try again.");
 				clearCodeInputs(verifyForm);
 				codeDigits[0].focus();
 			}
@@ -315,7 +315,10 @@ document.addEventListener("DOMContentLoaded", function () {
 						passwordInput.value,
 					);
 					if (!ok) {
-						showError(passwordInput, data.error || "Reset failed");
+						showError(
+							passwordInput,
+							"Password reset is currently unavailable. Please contact support.",
+						);
 						return;
 					}
 					showForm(allForms, loginForm);

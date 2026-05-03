@@ -132,8 +132,7 @@ export function handleBulkDelete() {
 /** Populates the forward dialog and opens it. The actual dispatch happens in main after a contact is chosen. */
 export function prepareBulkForward() {
 	state.isSelectionForwarding = true;
-	_dom.forwardDialog.querySelector(".forwarded-contact-dialog").innerHTML =
-		"";
+	_dom.forwardDialog.querySelector(".forwarded-contact-dialog").textContent = "";
 	contacts.forEach((contact) => {
 		_dom.forwardDialog
 			.querySelector(".forwarded-contact-dialog")
@@ -157,7 +156,6 @@ export function executeBulkForward(friend, sourceName) {
 
 	const prevFriend = contacts.find((c) => c.id === state.contactUserId);
 	if (prevFriend && prevFriend.id !== friend.id) {
-		prevFriend.isInChat = false;
 		if (
 			!prevFriend.isPinned &&
 			prevFriend.unreadCount === 0 &&

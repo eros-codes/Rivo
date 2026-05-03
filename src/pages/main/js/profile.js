@@ -132,7 +132,7 @@ export function closeProfile() {
 		_dom.cancelEditNameBtn[0].style.display = "none";
 	if (state.contactUserId !== null && window.innerWidth >= 700) {
 		_dom.profileDialog.close();
-		_dom.profileDialog.innerHTML = "";
+		_dom.profileDialog.textContent = "";
 	} else {		
 		_dom.contactProfileDetails.classList.remove("slide-in");
 		_dom.contactProfileDetails.classList.add("slide-out");
@@ -162,7 +162,7 @@ export function handleDeleteChat() {
 	state.skipShowChatOnProfileClose = true;
 	closeProfile();
 
-	_dom.chatEl.innerHTML = "";
+	_dom.chatEl.textContent = "";
 	closeChat();
 
 	const innerCard =

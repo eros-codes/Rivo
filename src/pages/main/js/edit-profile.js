@@ -76,8 +76,10 @@ export function initEditProfile(dom) {
 						"user",
 						JSON.stringify({ ...stored, profilePics: [res.url] }),
 					);
+					_dom.avatarCropDialog.close();
+				} else {
+					alert(res?.error || "Upload failed. Please try again.");
 				}
-				_dom.avatarCropDialog.close();
 				if (_cropper) {
 					_cropper.destroy();
 					_cropper = null;
@@ -132,7 +134,7 @@ export function openEditProfile(user) {
 export function closeEditProfile() {
 	if (window.innerWidth > 700) {
 		_dom.editProfileDialog.close();
-		_dom.editProfileDialog.innerHTML = "";
+		_dom.editProfileDialog.textContent = "";
 	} else {
 		_dom.editProfilePanel.classList.remove("slide-in");
 		_dom.editProfilePanel.classList.add("slide-out");

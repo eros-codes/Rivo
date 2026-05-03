@@ -484,10 +484,10 @@ export function openSettings(user) {
 }
 
 export function closeSettings() {
-    if (window.innerWidth > 700) {
-        _dom.settingsDialog.close();
-        _dom.settingsDialog.innerHTML = '';
-    } else {
+	if (window.innerWidth > 700) {
+		_dom.settingsDialog.close();
+		_dom.settingsDialog.textContent = '';
+	} else {
         _dom.settingsPanel.classList.remove('slide-in');
         _dom.settingsPanel.classList.add('slide-out');
         _dom.settingsPanel.addEventListener('animationend', () => {

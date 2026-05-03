@@ -94,11 +94,21 @@ export function emitMessage(data) {
 }
 
 export function emitEditMessage(messageId, text) {
-	socket.emit("message:edit", { messageId, text });
+	return new Promise((resolve, reject) => {
+		socket.emit("message:edit", { messageId, text }, (res) => {
+			if (res?.error) reject(res.error);
+			else resolve(res);
+		});
+	});
 }
 
 export function emitDeleteMessage(messageId) {
-	socket.emit("message:delete", { messageId });
+	return new Promise((resolve, reject) => {
+		socket.emit("message:delete", { messageId }, (res) => {
+			if (res?.error) reject(res.error);
+			else resolve(res);
+		});
+	});
 }
 
 export function emitTypingStart(conversationId) {
@@ -110,7 +120,12 @@ export function emitTypingStop(conversationId) {
 }
 
 export function emitMessageSeen(conversationId) {
-	socket.emit("message:seen", { conversationId });
+	return new Promise((resolve, reject) => {
+		socket.emit("message:seen", { conversationId }, (res) => {
+			if (res?.error) return reject(res.error);
+			return resolve(res?.marked || []);
+		});
+	});
 }
 
 export function emitPinMessage(messageId) {

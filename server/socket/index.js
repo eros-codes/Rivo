@@ -14,6 +14,10 @@ export function initSocket(httpServer) {
 		},
 	});
 
+	const MAX_MESSAGE_LENGTH = parseInt(process.env.MAX_MESSAGE_LENGTH || "2000");
+	// Map<conversationId, Set<userId>> of users currently in each conversation room
+	const convoOnline = new Map();
+
 	// ─── Auth middleware ───────────────────────────────────────────────────────
 	io.use(async (socket, next) => {
 		// Enforce cookie-only JWT for socket auth. Expect `token` cookie in handshake headers.
@@ -64,8 +68,14 @@ export function initSocket(httpServer) {
 				where: { userId: socket.userId },
 				select: { conversationId: true },
 			});
+			// track which conversations this socket has joined
+			socket.joinedConversations = new Set();
 			memberships.forEach(({ conversationId }) => {
 				socket.join(`conversation:${conversationId}`);
+				socket.joinedConversations.add(conversationId);
+				const set = convoOnline.get(conversationId) || new Set();
+				set.add(socket.userId);
+				convoOnline.set(conversationId, set);
 			});
 			socket.broadcast.emit("user:online", { userId: socket.userId });
 		} catch (err) {
@@ -87,7 +97,7 @@ export function initSocket(httpServer) {
 				forwardedText,
 			} = data;
 
-			if (!conversationId || !text?.trim()) {
+			if (!text || typeof text !== "string" || !text.trim() || text.trim().length > MAX_MESSAGE_LENGTH) {
 				return callback?.({ error: "Invalid data" });
 			}
 
@@ -131,15 +141,14 @@ export function initSocket(httpServer) {
 					data: { lastMessageAt: message.createdAt },
 				});
 
+
 				const recipientContacts = await prisma.contact.findMany({
 					where: { conversationId, ownerId: { not: socket.userId } },
 					select: { id: true, ownerId: true },
 				});
 
-				const roomSockets = await io
-					.in(`conversation:${conversationId}`)
-					.fetchSockets();
-				const usersInRoom = new Set(roomSockets.map((s) => s.userId));
+				// Use in-memory map of users present in conversation to avoid expensive fetchSockets()
+				const usersInRoom = convoOnline.get(conversationId) || new Set();
 
 				const toUpdateIds = recipientContacts
 					.filter((c) => !usersInRoom.has(c.ownerId))
@@ -167,6 +176,9 @@ export function initSocket(httpServer) {
 		socket.on("message:edit", async (data, callback) => {
 			const { messageId, text } = data;
 			try {
+			if (!text || typeof text !== "string" || !text.trim() || text.trim().length > MAX_MESSAGE_LENGTH) {
+				return callback?.({ error: "Invalid data" });
+			}
 				const message = await prisma.message.findUnique({
 					where: { id: messageId },
 				});
@@ -265,17 +277,39 @@ export function initSocket(httpServer) {
 
 		// ─── Typing ────────────────────────────────────────────────────────────
 		socket.on("typing:start", ({ conversationId }) => {
-			socket.to(`conversation:${conversationId}`).emit("typing:start", {
-				userId: socket.userId,
-				conversationId,
-			});
+			// ensure sender is a member of the conversation before emitting
+			(async () => {
+				try {
+					const member = await prisma.conversationMember.findFirst({
+						where: { conversationId, userId: socket.userId },
+					});
+					if (!member) return;
+					socket.to(`conversation:${conversationId}`).emit("typing:start", {
+						userId: socket.userId,
+						conversationId,
+					});
+				} catch (e) {
+					console.error('typing:start auth check failed', e);
+				}
+			})();
 		});
 
 		socket.on("typing:stop", ({ conversationId }) => {
-			socket.to(`conversation:${conversationId}`).emit("typing:stop", {
-				userId: socket.userId,
-				conversationId,
-			});
+			// ensure sender is a member of the conversation before emitting
+			(async () => {
+				try {
+					const member = await prisma.conversationMember.findFirst({
+						where: { conversationId, userId: socket.userId },
+					});
+					if (!member) return;
+					socket.to(`conversation:${conversationId}`).emit("typing:stop", {
+						userId: socket.userId,
+						conversationId,
+					});
+				} catch (e) {
+					console.error('typing:stop auth check failed', e);
+				}
+			})();
 		});
 
 		// ─── Disconnect ────────────────────────────────────────────────────────
@@ -283,24 +317,45 @@ export function initSocket(httpServer) {
 			console.log(`User ${socket.userId} disconnected`);
 
 			const lastSeen = new Date();
-			const updated = await prisma.user.update({
-				where: { id: socket.userId },
-				data: {
-					isOnline: false,
-					lastSeen,
-				},
-				select: { privacyOnline: true },
-			});
+			try {
+				const updated = await prisma.user.update({
+					where: { id: socket.userId },
+					data: {
+						isOnline: false,
+						lastSeen,
+					},
+					select: { privacyOnline: true },
+				});
 
-			socket.broadcast.emit("user:offline", {
-				userId: socket.userId,
-				lastSeen,
-				privacyOnline: updated.privacyOnline,
-			});
+				socket.broadcast.emit("user:offline", {
+					userId: socket.userId,
+					lastSeen,
+					privacyOnline: updated.privacyOnline,
+				});
+			} catch (e) {
+				console.error('disconnect handler error', e);
+				// still broadcast basic offline info without privacy flag
+				socket.broadcast.emit("user:offline", {
+					userId: socket.userId,
+					lastSeen,
+					privacyOnline: null,
+				});
+			} finally {
+				// cleanup in-memory convo presence for this socket
+				if (socket.joinedConversations && socket.joinedConversations.size > 0) {
+					for (const cid of socket.joinedConversations) {
+						const set = convoOnline.get(cid);
+						if (set) {
+							set.delete(socket.userId);
+							if (set.size === 0) convoOnline.delete(cid);
+						}
+					}
+				}
+			}
 		});
 
 		// ─── Message seen ───────────────────────────────────────────────────────
-		socket.on("message:seen", async ({ conversationId }) => {
+		socket.on("message:seen", async ({ conversationId }, callback) => {
 			try {
 				const member = await prisma.conversationMember.findFirst({
 					where: {
@@ -342,21 +397,36 @@ export function initSocket(httpServer) {
 							messageIds: toMark.map((m) => m.id),
 							seenBy: socket.userId,
 						});
+
+					callback?.({ success: true, marked: toMark.map((m) => m.id) });
 				}
+			else {
+				callback?.({ success: true, marked: [] });
+			}
 			} catch (err) {
 				console.error("message:seen handler error", err);
+				callback?.({ error: "Server error" });
 			}
 		});
 
 		socket.on("conversation:join", async ({ conversationId }) => {
-			const member = await prisma.conversationMember.findFirst({
-				where: {
-					conversationId,
-					userId: socket.userId,
-				},
-			});
-			if (!member) return; // user is not a member of this conversation
-			socket.join(`conversation:${conversationId}`);
+			try {
+				const member = await prisma.conversationMember.findFirst({
+					where: {
+						conversationId,
+						userId: socket.userId,
+					},
+					});
+					if (!member) return;
+					socket.join(`conversation:${conversationId}`);
+					socket.joinedConversations = socket.joinedConversations || new Set();
+					socket.joinedConversations.add(conversationId);
+					const set = convoOnline.get(conversationId) || new Set();
+					set.add(socket.userId);
+					convoOnline.set(conversationId, set);
+			} catch (e) {
+				console.error("conversation:join error", e);
+			}
 		});
 	});
 

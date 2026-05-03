@@ -395,9 +395,23 @@ function toString (value) {
 }
 
 function parseTemplate (htmlString) {
+  function sanitizeHtmlForVendor (html) {
+    if (!html) return '';
+    // remove script tags
+    let s = html.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '');
+    // remove inline event handlers like onclick=, onerror= etc.
+    s = s.replace(/\son\w+\s*=\s*(?:'[^']*'|"[^"]*"|[^>\s]+)/gi, '');
+    return s;
+  }
+
+  const sanitized = sanitizeHtmlForVendor(htmlString);
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(sanitized, 'text/html');
   const template = document.createElement('template');
-  template.innerHTML = htmlString;
-  return template
+  // move parsed nodes into template.content
+  const nodes = Array.from(doc.body.childNodes);
+  if (nodes.length > 0) template.content.append(...nodes);
+  return template;
 }
 
 const parseCache = new WeakMap();
@@ -412,7 +426,8 @@ function replaceChildren (parentNode, newChildren) {
   if (hasReplaceChildren) {
     parentNode.replaceChildren(...newChildren);
   } else { // minimal polyfill for Element.prototype.replaceChildren
-    parentNode.innerHTML = '';
+    // remove children safely without assigning to innerHTML
+    while (parentNode.firstChild) parentNode.removeChild(parentNode.firstChild);
     parentNode.append(...newChildren);
   }
 }

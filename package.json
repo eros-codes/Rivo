@@ -9,6 +9,8 @@
     "dev": "nodemon server/index.js",
     "start": "node server/index.js",
     "server": "nodemon server/index.js",
+    "test:integration": "node tests/integration/socket-flow.js",
+    "lint": "eslint \"src/**\" \"server/**\" --ext .js",
     "migrate:avatars": "node scripts/migrate-avatar-urls.js"
   },
   "author": "",
@@ -29,6 +31,7 @@
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "eslint": "^8.50.0"
   }
 }

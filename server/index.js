@@ -3,6 +3,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import dotenv from "dotenv";
 import { createServer } from "http";
+import { resolve } from "path";
 import { initSocket } from "./socket/index.js";
 
 import authRoutes from "./routes/auth.js";
@@ -60,6 +61,11 @@ app.use(express.static("public"));
 app.use("/public", express.static("public"));
 app.use("/src", express.static("src"));
 app.use("/node_modules", express.static("node_modules"));
+
+// Serve root index.html from project root (useful for local dev)
+app.get("/", (req, res) => {
+	res.sendFile(resolve("index.html"));
+});
 
 // Dev-only runtime diagnostics endpoint. Exposes memory and active handle counts.
 if (process.env.NODE_ENV !== "production") {

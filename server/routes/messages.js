@@ -1,6 +1,7 @@
 import { Router } from "express";
 import prisma from "../prisma.js";
 import { requireAuth } from "../middleware/auth.js";
+import { isNonEmptyString, parseIntSafe, MAX_MESSAGE_LENGTH } from "../utils/validators.js";
 
 const router = Router();
 
@@ -58,10 +59,11 @@ router.post("/", requireAuth, async (req, res) => {
 		forwardedText,
 	} = req.body;
 
-	if (!conversationId || !text?.trim()) {
+	const convId = parseIntSafe(conversationId);
+	if (!convId || !isNonEmptyString(text, MAX_MESSAGE_LENGTH)) {
 		return res
 			.status(400)
-			.json({ error: "conversationId and text are required" });
+			.json({ error: "conversationId and text are required or invalid" });
 	}
 
 	try {
@@ -117,7 +119,7 @@ router.patch("/:id", requireAuth, async (req, res) => {
 	const messageId = parseInt(req.params.id);
 	const { text } = req.body;
 
-	if (!text?.trim()) {
+	if (!isNonEmptyString(text, MAX_MESSAGE_LENGTH)) {
 		return res.status(400).json({ error: "Text is required" });
 	}
 

@@ -19,6 +19,7 @@ model User {
   privacyOnline  String @default("everyone")
   privacyEmail   String @default("everyone")
   privacyProfile String @default("everyone")
+  passwordChangedAt DateTime?
   passwordHash String
   createdAt    DateTime  @default(now())
 
@@ -39,7 +40,6 @@ model Contact {
   pinOrder       Int?
   isMuted        Boolean      @default(false)
   isBlocked      Boolean      @default(false)
-  isInChat       Boolean      @default(false)
   isArchived     Boolean      @default(false)
   unreadCount    Int          @default(0)
   conversation   Conversation @relation(fields: [conversationId], references: [id])

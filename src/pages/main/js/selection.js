@@ -14,6 +14,7 @@ import {
 	sortContacts,
 	moveToContacts,
 } from "./chat-logic.js";
+import { emitMessageSeen } from "./socket.js";
 
 let _dom = {};
 
@@ -179,6 +180,8 @@ export function executeBulkForward(friend, sourceName) {
 	openChat(true);
 	injectMessages(friend.id);
 	scrollChatToBottom();
+	const convId = friend.conversationId ?? contacts.find((c) => c.id === friend.id)?.conversationId;
+	if (convId) emitMessageSeen(convId);
 
 	_dom.msgAction.style.display = "flex";
 	state.actionPreviewHeight =

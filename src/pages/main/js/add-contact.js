@@ -1,3 +1,5 @@
+import { buildHeaders } from "./api.js";
+
 let _dom = {};
 let _onContactAdded = null;
 
@@ -50,19 +52,11 @@ async function _handleSubmit() {
     _dom.addContactSubmit.disabled = true;
     _dom.addContactError.textContent = "";
 
-    try {
-        function getCsrfToken() {
-            const m = document.cookie.match(/(?:^|; )csrfToken=([^;]+)/);
-            return m ? decodeURIComponent(m[1]) : null;
-        }
-
+        try {
         const res = await fetch("/api/contacts", {
             method: "POST",
             credentials: "include",
-            headers: {
-                "Content-Type": "application/json",
-                "X-CSRF-Token": getCsrfToken(),
-            },
+            headers: buildHeaders(),
             body: JSON.stringify({ username, name }),
         });
 

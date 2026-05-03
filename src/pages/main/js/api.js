@@ -1,10 +1,10 @@
 // Use credentials (cookies) for auth; no Authorization header from localStorage.
-function getCsrfToken() {
+export function getCsrfToken() {
 	const m = document.cookie.match(/(?:^|; )csrfToken=([^;]+)/);
 	return m ? decodeURIComponent(m[1]) : null;
 }
 
-function buildHeaders(isJson = true) {
+export function buildHeaders(isJson = true) {
 	const h = {};
 	if (isJson) h["Content-Type"] = "application/json";
 	const t = getCsrfToken();
@@ -75,6 +75,7 @@ export async function pinMessage(messageId) {
 export async function login(identifier, password) {
 	return await fetch("/api/auth/login", {
 		method: "POST",
+		credentials: "include",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ identifier, password }),
 	}).then((r) => r.json());
@@ -82,6 +83,7 @@ export async function login(identifier, password) {
 
 export async function register(name, email, username, password) {
 	return await fetch("/api/auth/register", {
+		credentials: "include",
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ name, email, username, password }),

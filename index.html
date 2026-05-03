@@ -194,14 +194,18 @@
 			if (accent) document.documentElement.style.setProperty("--accent", accent)
 
 			setTimeout(() => {
-				const token = localStorage.getItem("token");
-				const user = localStorage.getItem("user");
-
-				if (token && user) {
-					window.location.href = "src/pages/main/main.html";
-				} else {
-					window.location.href = "src/pages/auth/auth.html";
-				}
+				(async () => {
+					try {
+						const res = await fetch('/api/users/me', { credentials: 'include' });
+						if (res.ok) {
+							window.location.href = 'src/pages/main/main.html';
+						} else {
+							window.location.href = 'src/pages/auth/auth.html';
+						}
+					} catch (e) {
+						window.location.href = 'src/pages/auth/auth.html';
+					}
+				})();
 			}, 1600);
 		});
 	</script>

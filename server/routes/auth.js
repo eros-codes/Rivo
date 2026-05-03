@@ -90,9 +90,9 @@ router.post("/login", async (req, res) => {
             // ignore cookie set errors
         }
 
+        // Don't return the JWT in the JSON response to avoid accidental client-side storage.
         return res.json({
             success: true,
-            token,
             user: {
                 id: user.id,
                 name: user.name,

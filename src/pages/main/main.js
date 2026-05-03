@@ -1,4 +1,4 @@
-import { updateContact as apiUpdateContact, logout as apiLogout, getContacts } from "./js/api.js";
+import { updateContact as apiUpdateContact, logout as apiLogout, getContacts, getMe } from "./js/api.js";
 import { createContactCard } from "../../components/contact-cards/contact-card.js";
 import { createActiveChatCard } from "../../components/active-chats/active-chats.js";
 import { createForwardedContactCard } from "../../components/contact-cards/contacts-forward.js";
@@ -71,15 +71,26 @@ import { initSearch, runSearch } from "./js/search.js";
 import { initEditProfile, openEditProfile } from "./js/edit-profile.js";
 import { initSettings, openSettings, closeSettings } from "./js/settings.js";
 import { initAddContact, openAddContact } from "./js/add-contact.js";
-import { initSocket, emitTypingStart, emitTypingStop, emitPinMessage, getSocket } from "./js/socket.js";
+import { initSocket, emitTypingStart, emitTypingStop, emitPinMessage, emitMessageSeen, getSocket } from "./js/socket.js";
 import { loadThemeFromStorage } from "../../utils/theme.js";
 
 document.addEventListener("DOMContentLoaded", async function () {
-	// Rely on HttpOnly cookie for auth; if user info not present, redirect to login.
-	const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
+	// Rely on HttpOnly cookie for auth; if user info not present, ask server for current user.
+	let currentUser = JSON.parse(localStorage.getItem("user") || "{}");
 	if (!currentUser || !currentUser.id) {
-		window.location.href = "../auth/auth.html";
-		return;
+		try {
+			const me = await getMe();
+			if (me && me.id) {
+				localStorage.setItem("user", JSON.stringify(me));
+				currentUser = me;
+			} else {
+				window.location.href = "../auth/auth.html";
+				return;
+			}
+		} catch (e) {
+			window.location.href = "../auth/auth.html";
+			return;
+		}
 	}
 
 	const theme = localStorage.getItem("rivo-theme") || "light";
@@ -87,7 +98,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 	loadThemeFromStorage();
 
-	const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
 	// ─── DOM references ───────────────────────────────────────────────────────
 	const logoutBtn = document.getElementById("logout");
 	const chatPart = document.getElementById("chat-part");
@@ -418,6 +428,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 				"/assets/images/profile.jpeg";
 			chatName.textContent = contact.nickname || contact.name;
 			openChat(true);
+			if (contact.conversationId) {
+				emitMessageSeen(contact.conversationId);
+			}
 			scrollChatToBottom();
 
 			if (msgIndex === null) return;
@@ -537,6 +550,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 			contactsContainer.appendChild(card);
 			state.contactUserId = newContact.id;
 			openChat(true);
+			if (newContact.conversationId) {
+				emitMessageSeen(newContact.conversationId);
+			}
 		},
 
 	);
@@ -727,7 +743,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			item.className = "pinned-view-item";
 			item.innerHTML = `
             <div class="pinned-view-item-meta">
-                <span class="pinned-view-item-sender">${msg.user ? "You" : friend?.nickname || friend?.name || ""}</span>
+                <span class="pinned-view-item-sender">${msg.user ? "You" : escapeHtml(friend?.nickname || friend?.name || "")}</span>
                 <span class="pinned-view-item-time">${msg.time}</span>
             </div>
             <p class="pinned-view-item-text">${escapeHtml(msg.text)}</p>
@@ -836,6 +852,11 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 	if (logoutBtn) {
 		logoutBtn.addEventListener("click", async () => {
+			try {
+				getSocket()?.disconnect();
+			} catch (e) {
+				// ignore
+			}
 			await apiLogout();
 			window.location.href = "../auth/auth.html";
 		});
@@ -849,8 +870,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (friend) {
 				friend.isInChat = false;
-				// persist isInChat to server
-				apiUpdateContact(friend.id, { isInChat: false }).catch(() => {});
+				// local-only: do not persist isInChat from client
 				if (
 					!friend.isPinned &&
 					friend.unreadCount === 0 &&
@@ -876,7 +896,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			);
 			if (prevFriend && prevFriend.id !== Number(active.dataset.userId)) {
 				prevFriend.isInChat = false;
-				apiUpdateContact(prevFriend.id, { isInChat: false }).catch(() => {});
+				// local-only: do not persist isInChat from client
 				if (
 					!prevFriend.isPinned &&
 					prevFriend.unreadCount === 0 &&
@@ -897,7 +917,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}
 			friend.unreadCount = 0;
 			friend.isInChat = true;
-			apiUpdateContact(friend.id, { isInChat: true }).catch(() => {});
+			// local-only: do not persist isInChat from client
 			const unreadEl = active.querySelector(
 				".active-chat-unread-messages",
 			);
@@ -909,6 +929,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 				"/assets/images/profile.jpeg";
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
+			if (friend.conversationId) {
+				emitMessageSeen(friend.conversationId);
+			}
 			scrollChatToBottom();
 
 			if (friend.isBlocked) {
@@ -942,7 +965,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			);
 			if (prevFriend && prevFriend.id !== Number(card.dataset.userId)) {
 				prevFriend.isInChat = false;
-				apiUpdateContact(prevFriend.id, { isInChat: false }).catch(() => {});
+				// local-only: do not persist isInChat from client
 				if (
 					!prevFriend.isPinned &&
 					prevFriend.unreadCount === 0 &&
@@ -963,7 +986,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}
 			friend.unreadCount = 0;
 			friend.isInChat = true;
-			apiUpdateContact(friend.id, { isInChat: true }).catch(() => {});
+			// local-only: do not persist isInChat from client
 			updateTotalUnreadCount();
 
 			card.remove();
@@ -974,6 +997,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 				"/assets/images/profile.jpeg";
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
+			if (friend.conversationId) {
+				emitMessageSeen(friend.conversationId);
+			}
 			if (friend.isBlocked) {
 				messageContainer.style.display = "none";
 				unblockActionBtn[0].style.display = "flex";

@@ -3,14 +3,22 @@ import jwt from "jsonwebtoken";
 import prisma from "../prisma.js";
 
 export function initSocket(httpServer) {
+	const allowedOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"]);
 	const io = new Server(httpServer, {
-		cors: { origin: "http://localhost:3000", credentials: true },
+		cors: {
+			origin: (origin, cb) => {
+				if (!origin) return cb(null, true);
+				cb(null, allowedOrigins.has(origin) ? origin : false);
+			},
+			credentials: true,
+		},
 	});
 
 	// ─── Auth middleware ───────────────────────────────────────────────────────
-	io.use((socket, next) => {
-		// Prefer token in cookie, fallback to handshake auth token
-		let token = socket.handshake.headers?.cookie?.match(/token=([^;]+)/)?.[1] || socket.handshake.auth?.token;
+	io.use(async (socket, next) => {
+		// Enforce cookie-only JWT for socket auth. Expect `token` cookie in handshake headers.
+		const cookieHeader = socket.handshake.headers?.cookie || "";
+		const token = cookieHeader.match(/token=([^;]+)/)?.[1];
 
 		if (!token) {
 			return next(new Error("Unauthorized"));
@@ -18,9 +26,28 @@ export function initSocket(httpServer) {
 
 		try {
 			const payload = jwt.verify(token, process.env.JWT_SECRET);
-			socket.userId = payload.userId;
+			const userId = payload.userId;
+
+			// Ensure token was issued after any password change
+			try {
+				const u = await prisma.user.findUnique({ where: { id: userId }, select: { passwordChangedAt: true } });
+				if (u?.passwordChangedAt) {
+					const pwdChangedAtSeconds = Math.floor(new Date(u.passwordChangedAt).getTime() / 1000);
+					const tokenIat = payload.iat || 0;
+					if (pwdChangedAtSeconds > tokenIat) {
+						return next(new Error("Invalid token"));
+					}
+				}
+			} catch (e) {
+				console.error("Socket auth passwordChangedAt check failed", e);
+			}
+
+			socket.userId = userId;
 			next();
 		} catch (err) {
+			if (err && err.name === "TokenExpiredError") {
+				return next(new Error("TokenExpired"));
+			}
 			return next(new Error("Invalid token"));
 		}
 	});

@@ -123,6 +123,7 @@ document.addEventListener("DOMContentLoaded", function () {
 				}
 
 				// Server sets HttpOnly cookie for auth; persist only non-sensitive user info.
+				// Keep `user` in localStorage for UI; ensure no JWT/token is stored anywhere.
 				localStorage.setItem("user", JSON.stringify(data.user));
 				window.location.href = "../main/main.html";
 			} catch {

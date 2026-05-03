@@ -73,7 +73,8 @@ router.patch("/me", requireAuth, async (req, res) => {
 			}
 		}
 
-		// If client explicitly clears profilePics (empty array), remove the stored file
+		// Only allow clearing profilePics via an explicit empty array.
+		// Do not accept arbitrary client-supplied `profilePics` values.
 		if (profilePics !== undefined && Array.isArray(profilePics) && profilePics.length === 0) {
 			const avatarPath = path.join(
 				process.cwd(),
@@ -86,22 +87,27 @@ router.patch("/me", requireAuth, async (req, res) => {
 			try {
 				await fs.promises.unlink(avatarPath);
 			} catch (e) {
-				// Ignore if file does not exist, log other errors
 				if (e.code && e.code !== "ENOENT") console.error(e);
 			}
 		}
 
+		const dataToUpdate = {
+			...(name && { name }),
+			...(username && { username }),
+			...(bio !== undefined && { bio }),
+			...(privacyOnline && { privacyOnline }),
+			...(privacyEmail && { privacyEmail }),
+			...(privacyProfile && { privacyProfile }),
+		};
+
+		// if client explicitly cleared profilePics, set it to an empty array
+		if (profilePics !== undefined && Array.isArray(profilePics) && profilePics.length === 0) {
+			dataToUpdate.profilePics = [];
+		}
+
 		const user = await prisma.user.update({
 			where: { id: req.userId },
-			data: {
-				...(name && { name }),
-				...(username && { username }),
-				...(bio !== undefined && { bio }),
-				...(profilePics !== undefined && { profilePics }),
-				...(privacyOnline && { privacyOnline }),
-				...(privacyEmail && { privacyEmail }),
-				...(privacyProfile && { privacyProfile }),
-			},
+			data: dataToUpdate,
 			select: {
 				id: true,
 				name: true,
@@ -193,9 +199,9 @@ router.patch("/me/password", requireAuth, async (req, res) => {
 		if (!match) return res.status(401).json({ error: "Wrong password" });
 
 		const hashed = await bcrypt.hash(newPassword, 10);
-		await prisma.user.update({ where: { id: req.userId }, data: { passwordHash: hashed } });
+		await prisma.user.update({ where: { id: req.userId }, data: { passwordHash: hashed, passwordChangedAt: new Date() } });
 
-		// Note: JWT invalidation / session revocation is not implemented here.
+		// Password changed — tokens issued before `passwordChangedAt` will be rejected.
 		return res.json({ success: true });
 	} catch (err) {
 		console.error(err);

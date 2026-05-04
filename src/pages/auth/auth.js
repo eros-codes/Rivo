@@ -53,21 +53,26 @@ document.addEventListener("DOMContentLoaded", function () {
 
 	// ─── Password toggle (show/hide) ─────────────────────────────────────────
 	// Attach a single handler to every toggle button on the page
-	document.querySelectorAll('.password-toggle').forEach((btn) => {
-		const wrapper = btn.closest('.password-wrapper');
+	document.querySelectorAll(".password-toggle").forEach((btn) => {
+		const wrapper = btn.closest(".password-wrapper");
 		if (!wrapper) return;
-		const input = wrapper.querySelector('.password-input') || wrapper.querySelector('input[type="password"], input[type="text"]');
+		const input =
+			wrapper.querySelector(".password-input") ||
+			wrapper.querySelector('input[type="password"], input[type="text"]');
 		if (!input) return;
-		btn.addEventListener('click', () => {
-			const isHidden = input.type === 'password';
-			input.type = isHidden ? 'text' : 'password';
-			const eyeOpen = btn.querySelector('.eye-open');
-			const eyeClosed = btn.querySelector('.eye-closed');
+		btn.addEventListener("click", () => {
+			const isHidden = input.type === "password";
+			input.type = isHidden ? "text" : "password";
+			const eyeOpen = btn.querySelector(".eye-open");
+			const eyeClosed = btn.querySelector(".eye-closed");
 			if (eyeOpen && eyeClosed) {
-				eyeOpen.style.display = isHidden ? '' : 'none';
-				eyeClosed.style.display = isHidden ? 'none' : '';
+				eyeOpen.style.display = isHidden ? "" : "none";
+				eyeClosed.style.display = isHidden ? "none" : "";
 			}
-			btn.setAttribute('aria-label', isHidden ? 'Hide password' : 'Show password');
+			btn.setAttribute(
+				"aria-label",
+				isHidden ? "Hide password" : "Show password",
+			);
 		});
 	});
 
@@ -258,7 +263,10 @@ document.addEventListener("DOMContentLoaded", function () {
 				showForm(allForms, passwordForm);
 				if (passwordInput) passwordInput.focus();
 			} else {
-				showError(codeDigits[0], "The code is incorrect. Please try again.");
+				showError(
+					codeDigits[0],
+					"The code is incorrect. Please try again.",
+				);
 				clearCodeInputs(verifyForm);
 				codeDigits[0].focus();
 			}

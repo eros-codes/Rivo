@@ -1,4 +1,4 @@
-import { buildHeaders } from "./api.js";
+import { buildHeaders, safeFetch } from "./api.js";
 
 let _dom = {};
 let _onContactAdded = null;
@@ -53,23 +53,21 @@ async function _handleSubmit() {
     _dom.addContactError.textContent = "";
 
         try {
-        const res = await fetch("/api/contacts", {
-            method: "POST",
-            credentials: "include",
-            headers: buildHeaders(),
-            body: JSON.stringify({ username, name }),
-        });
-
-        const data = await res.json();
-
-        if (!res.ok) {
-            _dom.addContactError.textContent = data.error || "Something went wrong";
+        try {
+            const data = await safeFetch("/api/contacts", {
+                method: "POST",
+                credentials: "include",
+                headers: buildHeaders(),
+                body: JSON.stringify({ username, name }),
+            });
+            closeAddContact();
+            _onContactAdded?.(data);
+        } catch (err) {
+            const body = err.body || {};
+            _dom.addContactError.textContent = body.error || err.message || "Something went wrong";
             _dom.addContactSubmit.disabled = false;
             return;
         }
-
-        closeAddContact();
-        _onContactAdded?.(data);
     } catch {
         _dom.addContactError.textContent = "Connection error";
         _dom.addContactSubmit.disabled = false;

@@ -61,8 +61,9 @@ export function openContextMenu(msg, e) {
 
 	// Forwarded messages can't be edited
 	const forwardedFrom = getMessageByIndex(state.contactUserId, state.msgIndex)?.forwardedFrom;
-	if (_dom.editMsg[0]) {
-		_dom.editMsg[0].style.display =
+	const editMsg0 = _dom.editMsg?.[0];
+	if (editMsg0) {
+		editMsg0.style.display =
 			forwardedFrom === undefined ? "flex" : "none";
 	}
 
@@ -83,7 +84,8 @@ export function openContextMenu(msg, e) {
 		_dom.messageMenu.style.right = window.innerWidth - rect.right + "px";
 		_dom.messageMenu.style.left = "";
 	} else {
-		if (_dom.editMsg[0]) _dom.editMsg[0].style.display = "none";
+		const editMsg0b = _dom.editMsg?.[0];
+		if (editMsg0b) editMsg0b.style.display = "none";
 		_dom.messageMenu.style.left = rect.left + "px";
 		_dom.messageMenu.style.right = "";
 	}
@@ -101,7 +103,8 @@ export function openContextMenu(msg, e) {
 export function closeContextMenu() {
 	_dom.messageMenu.style.opacity = 0;
 	_dom.chatOverlay.style.opacity = 0;
-	if (_dom.editMsg[0]) _dom.editMsg[0].style.display = "flex";
+	const editMsg0c = _dom.editMsg?.[0];
+	if (editMsg0c) editMsg0c.style.display = "flex";
 	_dom.messageMenu.style.display = "none";
 	_dom.chatOverlay.style.display = "none";
 	if (state.selectedMsg) {
@@ -280,10 +283,15 @@ export function editMessage() {
 	if (!msg) return;
 
 	state.isEditing = true;
-	_dom.messageInput.value = msg.text;
-	_dom.messageInput.focus();
-	_dom.msgAction.style.display = "flex";
-	state.actionPreviewHeight = _dom.msgAction.getBoundingClientRect().height / 14;
+	const msgInputEl = _dom.messageInput || document.querySelector('.message-input');
+	if (msgInputEl) {
+		msgInputEl.value = msg.text;
+		if (typeof msgInputEl.focus === 'function') msgInputEl.focus();
+	}
+	if (_dom.msgAction) {
+		_dom.msgAction.style.display = "flex";
+		state.actionPreviewHeight = _dom.msgAction.getBoundingClientRect().height / 14;
+	}
 	_dom.chatEl.style.paddingBottom = basePadding + state.actionPreviewHeight + "rem";
 	_dom.msgActionText.textContent = "Edit";
 	_dom.msgActionmsg.textContent = msg.text;
@@ -305,8 +313,11 @@ export function replyMessage() {
 	_dom.chatEl.style.paddingBottom = basePadding + state.actionPreviewHeight + "rem";
 	_dom.msgActionText.textContent = "Replying to " + senderName;
 	_dom.msgActionmsg.textContent = msg.text;
-	_dom.messageInput.focus();
-	_dom.messageInput.style.borderRadius = "0 0 2rem 2rem";
+	const msgInputEl2 = _dom.messageInput || document.querySelector('.message-input');
+	if (msgInputEl2 && typeof msgInputEl2.focus === 'function') {
+		msgInputEl2.focus();
+		if (msgInputEl2.style) msgInputEl2.style.borderRadius = "0 0 2rem 2rem";
+	}
 
 	state.replyTo = {
 		text: msg.text,

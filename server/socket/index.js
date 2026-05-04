@@ -232,6 +232,7 @@ export function initSocket(httpServer) {
 					data: { text: text.trim(), isEdited: true },
 				});
 
+				// Emit edit to room
 				socket.to(`conversation:${message.conversationId}`).emit(
 					"message:edited",
 					{
@@ -240,6 +241,28 @@ export function initSocket(httpServer) {
 						isEdited: true,
 					},
 				);
+
+				// Also deliver edited event directly to connected sockets of recipients
+				try {
+					const recipientContacts = await prisma.contact.findMany({
+						where: { conversationId: message.conversationId, ownerId: { not: socket.userId } },
+						select: { ownerId: true },
+					});
+					const usersInRoom = convoOnline.get(message.conversationId) || new Set();
+					const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
+					for (const uid of recipientUserIds) {
+						if (usersInRoom.has(uid)) continue;
+						const sidSet = userSockets.get(uid) || new Set();
+						for (const sid of sidSet) {
+							const s = io.sockets.sockets.get(sid);
+							if (s) {
+								s.emit('message:edited', { messageId, text: updated.text, isEdited: true });
+							}
+						}
+					}
+				} catch (e) {
+					console.error('deliver edit to direct sockets failed', e);
+				}
 
 				callback?.({ success: true });
 			} catch (err) {
@@ -309,6 +332,28 @@ export function initSocket(httpServer) {
 					},
 				);
 
+				// Also deliver pinned event directly to connected sockets of recipients
+				try {
+					const recipientContacts = await prisma.contact.findMany({
+						where: { conversationId: message.conversationId, ownerId: { not: socket.userId } },
+						select: { ownerId: true },
+					});
+					const usersInRoom = convoOnline.get(message.conversationId) || new Set();
+					const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
+					for (const uid of recipientUserIds) {
+						if (usersInRoom.has(uid)) continue;
+						const sidSet = userSockets.get(uid) || new Set();
+						for (const sid of sidSet) {
+							const s = io.sockets.sockets.get(sid);
+							if (s) {
+								s.emit('message:pinned', { messageId, isPinned: updated.isPinned });
+							}
+						}
+					}
+				} catch (e) {
+					console.error('deliver pin to direct sockets failed', e);
+				}
+
 				callback?.({ success: true, isPinned: updated.isPinned });
 			} catch (err) {
 				callback?.({ error: "Server error" });
@@ -328,6 +373,26 @@ export function initSocket(httpServer) {
 						userId: socket.userId,
 						conversationId,
 					});
+
+					// also deliver typing start to connected sockets not joined to the room
+					try {
+						const recipientContacts = await prisma.contact.findMany({
+							where: { conversationId, ownerId: { not: socket.userId } },
+							select: { ownerId: true },
+						});
+						const usersInRoom = convoOnline.get(conversationId) || new Set();
+						const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
+						for (const uid of recipientUserIds) {
+							if (usersInRoom.has(uid)) continue;
+							const sidSet = userSockets.get(uid) || new Set();
+							for (const sid of sidSet) {
+								const s = io.sockets.sockets.get(sid);
+								if (s) s.emit('typing:start', { userId: socket.userId, conversationId });
+							}
+						}
+					} catch (e) {
+						console.error('deliver typing:start to direct sockets failed', e);
+					}
 				} catch (e) {
 					console.error('typing:start auth check failed', e);
 				}
@@ -346,6 +411,26 @@ export function initSocket(httpServer) {
 						userId: socket.userId,
 						conversationId,
 					});
+
+					// also deliver typing stop to connected sockets not joined to the room
+					try {
+						const recipientContacts = await prisma.contact.findMany({
+							where: { conversationId, ownerId: { not: socket.userId } },
+							select: { ownerId: true },
+						});
+						const usersInRoom = convoOnline.get(conversationId) || new Set();
+						const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
+						for (const uid of recipientUserIds) {
+							if (usersInRoom.has(uid)) continue;
+							const sidSet = userSockets.get(uid) || new Set();
+							for (const sid of sidSet) {
+								const s = io.sockets.sockets.get(sid);
+								if (s) s.emit('typing:stop', { userId: socket.userId, conversationId });
+							}
+						}
+					} catch (e) {
+						console.error('deliver typing:stop to direct sockets failed', e);
+					}
 				} catch (e) {
 					console.error('typing:stop auth check failed', e);
 				}

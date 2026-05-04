@@ -1,4 +1,3 @@
-import { escapeHtml } from "../messages/messages.js";
 import { parseSvg } from "../../utils/svg.js";
 
 function safeSrc(url) {
@@ -32,7 +31,6 @@ export function createContactCard(contact, onAction) {
 		name,
 		nickname,
 		lastMessage,
-		lastMessageSeen,
 		profilePics,
 		isOnline,
 		isBlocked,

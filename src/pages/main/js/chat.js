@@ -111,7 +111,14 @@ export async function openChat(fromClick = false) {
 }
 
 function _currentUserId() {
-	return JSON.parse(localStorage.getItem("user") || "{}").id;
+	try {
+		const stored = localStorage.getItem("user");
+		if (!stored) return null;
+		const parsed = JSON.parse(stored);
+		return parsed?.id ?? null;
+	} catch (e) {
+		return null;
+	}
 }
 
 export function closeChat() {
@@ -311,10 +318,10 @@ export async function receiveMessage(message) {
 						lastMessage: raw.conversation?.messages?.[0]?.text || "",
 						lastMessageTime: raw.conversation?.messages?.[0]
 							? new Date(raw.conversation.messages[0].createdAt).toLocaleTimeString([], {
-								  hour: "2-digit",
-								  minute: "2-digit",
-								  hour12: false,
-							  })
+								hour: "2-digit",
+								minute: "2-digit",
+								hour12: false,
+							})
 							: null,
 						lastMessageDate: raw.conversation?.messages?.[0]
 							? new Date(raw.conversation.messages[0].createdAt).toISOString().slice(0, 10)
@@ -553,7 +560,8 @@ export async function sendMessage() {
 	resetInput();
 	state.replyTo = null;
 	scrollChatToBottom();
-	document.querySelector(".message-input").focus();
+	const msgInputEl = _dom.messageInput || document.querySelector(".message-input");
+	if (msgInputEl && typeof msgInputEl.focus === 'function') msgInputEl.focus();
 
 	// send via socket
 	try {

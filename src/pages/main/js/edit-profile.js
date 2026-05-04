@@ -1,3 +1,4 @@
+/* global Cropper */
 import { updateMe, uploadAvatar, deleteAvatar } from "./api.js";
 let _dom = {};
 let _currentUser = null;
@@ -69,9 +70,12 @@ export function initEditProfile(dom) {
 				if (res.url) {
 					_dom.editProfileAvatar.src = res.url + "?t=" + Date.now();
 					if (_currentUser) _currentUser.profilePics = [res.url];
-					const stored = JSON.parse(
-						localStorage.getItem("user") || "{}",
-					);
+					let stored = {};
+					try {
+						stored = JSON.parse(localStorage.getItem("user") || "{}");
+					} catch (e) {
+						stored = {};
+					}
 					localStorage.setItem(
 						"user",
 						JSON.stringify({ ...stored, profilePics: [res.url] }),
@@ -95,7 +99,12 @@ export function initEditProfile(dom) {
 		await deleteAvatar();
 		_dom.editProfileAvatar.src = "";
 		if (_currentUser) _currentUser.profilePics = [];
-		const stored = JSON.parse(localStorage.getItem("user") || "{}");
+		let stored = {};
+		try {
+			stored = JSON.parse(localStorage.getItem("user") || "{}");
+		} catch (e) {
+			stored = {};
+		}
 		localStorage.setItem(
 			"user",
 			JSON.stringify({ ...stored, profilePics: [] }),
@@ -169,7 +178,12 @@ async function _handleSave() {
 		}
 
 		// session رو هم آپدیت کن
-		const stored = JSON.parse(localStorage.getItem("user") || "{}");
+		let stored = {};
+		try {
+			stored = JSON.parse(localStorage.getItem("user") || "{}");
+		} catch (e) {
+			stored = {};
+		}
 		localStorage.setItem(
 			"user",
 			JSON.stringify({ ...stored, ...updated }),

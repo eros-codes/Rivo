@@ -4,7 +4,6 @@ import { closeChat } from "./chat.js";
 import {
 	updateTotalUnreadCount,
 	refreshCard,
-	sortActiveChats,
 	sortContacts,
 } from "./chat-logic.js";
 import { createContactCard } from "../../../components/contact-cards/contact-card.js";
@@ -127,9 +126,10 @@ export function closeProfile() {
 		el.setAttribute("contenteditable", "false");
 		el.style.border = "none";
 	});
-	if (_dom.editNameDoneBtn[0]) _dom.editNameDoneBtn[0].style.display = "none";
-	if (_dom.cancelEditNameBtn[0])
-		_dom.cancelEditNameBtn[0].style.display = "none";
+	const editNameDoneBtn0 = _dom.editNameDoneBtn?.[0];
+	if (editNameDoneBtn0) editNameDoneBtn0.style.display = "none";
+	const cancelEditNameBtn0 = _dom.cancelEditNameBtn?.[0];
+	if (cancelEditNameBtn0) cancelEditNameBtn0.style.display = "none";
 	if (state.contactUserId !== null && window.innerWidth >= 700) {
 		_dom.profileDialog.close();
 		_dom.profileDialog.textContent = "";
@@ -156,6 +156,7 @@ export function closeProfile() {
 // ─── Delete chat ──────────────────────────────────────────────────────────────
 export function handleDeleteChat() {
 	const contact = contacts.find((c) => c.id === state.contactUserId);
+	const deletingContactId = state.contactUserId;
 	if (!contact) return;
 	// Close profile view (desktop dialog or mobile panel)
 	// Prevent profile.closeProfile() from forcing the chat panel visible again on mobile
@@ -165,41 +166,80 @@ export function handleDeleteChat() {
 	_dom.chatEl.textContent = "";
 	closeChat();
 
-	const innerCard =
-		_dom.activeChatsContainer.querySelector(
-			`[data-user-id="${state.contactUserId}"]`,
-		) ||
-		_dom.contactsContainer.querySelector(
-			`[data-user-id="${state.contactUserId}"]`,
-		);
-	const card = innerCard?.closest(".active-chat-wrapper") ?? innerCard;
-	if (card) card.style.display = "none";
+		// Immediately clear in-memory messages for this conversation so UI won't show stale messages
+		try {
+			messages[deletingContactId] = [];
+		} catch (e) { /* ignore */ }
+
+	// Fade any matching cards in both lists (active and contacts)
+	const fadedNodes = [];
+	try {
+		const selector = `[data-user-id="${deletingContactId}"], [data-wrapper-user-id="${deletingContactId}"]`;
+		let matches = [];
+		if (_dom.activeChatsContainer)
+			matches.push(..._dom.activeChatsContainer.querySelectorAll(selector));
+		if (_dom.contactsContainer)
+			matches.push(..._dom.contactsContainer.querySelectorAll(selector));
+		// fallback to document if nothing found (dynamic containers may differ)
+		if (matches.length === 0) {
+			matches = Array.from(document.querySelectorAll(selector));
+		}
+		
+		matches.forEach((el) => {
+			const wrapper = el.closest(".active-chat-wrapper") ?? el;
+			if (!wrapper) return;
+			if (!fadedNodes.includes(wrapper)) {
+				wrapper.style.transition = "opacity 3s ease";
+				wrapper.style.opacity = "0";
+				wrapper.style.pointerEvents = "none";
+				fadedNodes.push(wrapper);
+			}
+		});
+	} catch (e) { /* ignore */ }
 
 	showToast("Chat deleted", _dom.deleteIcon, true);
 
-	const deletingContactId = state.contactUserId;
-
 	const timer = setTimeout(() => {
 		messages[deletingContactId] = [];
-		const contact = contacts.find((c) => c.id === deletingContactId);
-		if (contact?.conversationId) {
-			apiDeleteChat(contact.conversationId);
-		}
-		contact.lastMessage = "";
-		contact.lastMessageTime = "";
-		contact.lastMessageDate = "";
-		contact.lastMessageSeen = true;
-		contact.unreadCount = 0;
-		contact.isPinned = false;
-		contact.isInChat = false;
-		if (card) card.remove();
 
-		_dom.contactsContainer.appendChild(
-			createContactCard(
-				{ ...contact, hasMessages: false },
-				_dom.onContactAction,
-			),
-		);
+		// Remove any lingering active-chat wrappers or contact cards for this user
+		try {
+			const selector = `[data-user-id="${deletingContactId}"], [data-wrapper-user-id="${deletingContactId}"]`;
+			if (_dom.activeChatsContainer) {
+				_dom.activeChatsContainer.querySelectorAll(selector).forEach((el) => {
+					const wrapper = el.closest(".active-chat-wrapper") ?? el;
+					if (wrapper) wrapper.remove();
+				});
+			}
+		} catch (e) { /* ignore */ }
+		try {
+			const selector = `[data-user-id="${deletingContactId}"], [data-wrapper-user-id="${deletingContactId}"]`;
+			if (_dom.contactsContainer) {
+				_dom.contactsContainer.querySelectorAll(selector).forEach((el) => el.remove());
+			}
+		} catch (e) { /* ignore */ }
+
+		const contact = contacts.find((c) => c.id === deletingContactId);
+		
+		if (contact) {
+			if (contact.conversationId) {
+				apiDeleteChat(contact.conversationId);
+			}
+			contact.lastMessage = "";
+			contact.lastMessageTime = "";
+			contact.lastMessageDate = "";
+			contact.lastMessageSeen = true;
+			contact.unreadCount = 0;
+			contact.isPinned = false;
+			contact.isInChat = false;
+
+			_dom.contactsContainer.appendChild(
+				createContactCard(
+					{ ...contact, hasMessages: false },
+					_dom.onContactAction,
+				),
+			);
+		}
 
 		updateTotalUnreadCount();
 		sortContacts();
@@ -207,10 +247,14 @@ export function handleDeleteChat() {
 
 	state.currentUndoAction = () => {
 		clearTimeout(timer);
-		if (card) {
-			card.style.display = "";
-			card.style.pointerEvents = "";
-		}
+		// Restore any faded nodes
+		try {
+			fadedNodes.forEach((n) => {
+				n.style.transition = "opacity 0.2s ease";
+				n.style.opacity = "1";
+				n.style.pointerEvents = "";
+			});
+		} catch (e) { /* ignore */ }
 	};
 }
 
@@ -227,16 +271,19 @@ export function handleEditNickname() {
 		sel.removeAllRanges();
 		sel.addRange(range);
 	});
-	if (_dom.editNameDoneBtn[0])
-		_dom.editNameDoneBtn[0].style.display = "block";
-	if (_dom.cancelEditNameBtn[0])
-		_dom.cancelEditNameBtn[0].style.display = "block";
+	const editNameDoneBtn1 = _dom.editNameDoneBtn?.[0];
+	if (editNameDoneBtn1) editNameDoneBtn1.style.display = "block";
+	const cancelEditNameBtn1 = _dom.cancelEditNameBtn?.[0];
+	if (cancelEditNameBtn1) cancelEditNameBtn1.style.display = "block";
 }
 
 export function handleEditNicknameDone() {
 	const friend = contacts.find((c) => c.id === state.contactUserId);
 	if (!friend) return;
-	const newName = _dom.detailNames[0].textContent.trim();
+	const firstDetailName = _dom.detailNames?.[0];
+	const newName = (firstDetailName && firstDetailName.textContent
+		? firstDetailName.textContent.trim()
+		: "");
 	if (newName) {
 		friend.nickname = newName;
 		updateContact(friend.id, { nickname: newName });
@@ -281,13 +328,15 @@ export function handleBlockContact() {
 			.querySelectorAll("#block-contact-btn")
 			.forEach((btn) => (btn.textContent = "Unblock contact"));
 		messageContainer.style.display = "none";
-		unblockActionBtn[0].style.display = "flex";
+		const _ub = unblockActionBtn[0];
+		if (_ub) _ub.style.display = "flex";
 	} else {
 		document
 			.querySelectorAll("#block-contact-btn")
 			.forEach((btn) => (btn.textContent = "Block contact"));
 		messageContainer.style.display = "flex";
-		unblockActionBtn[0].style.display = "none";
+		const _ub = unblockActionBtn[0];
+		if (_ub) _ub.style.display = "none";
 	}
 }
 

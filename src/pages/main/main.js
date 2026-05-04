@@ -3,7 +3,7 @@ import { createContactCard } from "../../components/contact-cards/contact-card.j
 import { createActiveChatCard } from "../../components/active-chats/active-chats.js";
 import { createForwardedContactCard } from "../../components/contact-cards/contacts-forward.js";
 import { state, contacts, messages } from "./js/state.js";
-import { escapeHtml } from "../../components/messages/messages.js";
+// escapeHtml removed — prefer textContent for safety
 import {
 	initToast,
 	showToast,
@@ -69,15 +69,21 @@ import {
 import { initCardContextMenu } from "./js/card-context-menu.js";
 import { initSearch, runSearch } from "./js/search.js";
 import { initEditProfile, openEditProfile } from "./js/edit-profile.js";
-import { initSettings, openSettings, closeSettings } from "./js/settings.js";
-import { initAddContact, openAddContact } from "./js/add-contact.js";
-import { initSocket, emitTypingStart, emitTypingStop, emitPinMessage, emitMessageSeen, getSocket } from "./js/socket.js";
+import { initSettings, openSettings } from "./js/settings.js";
+import { initAddContact } from "./js/add-contact.js";
+import { initSocket, emitTypingStart, emitTypingStop, emitMessageSeen, getSocket } from "./js/socket.js";
 import { loadThemeFromStorage } from "../../utils/theme.js";
 import { parseSvg } from "../../utils/svg.js";
 
 document.addEventListener("DOMContentLoaded", async function () {
 	// Rely on HttpOnly cookie for auth; if user info not present, ask server for current user.
-	let currentUser = JSON.parse(localStorage.getItem("user") || "{}");
+	let currentUser = null;
+	try {
+		const stored = localStorage.getItem("user");
+		currentUser = stored ? JSON.parse(stored) : null;
+	} catch (e) {
+		currentUser = null;
+	}
 	if (!currentUser || !currentUser.id) {
 		try {
 			const me = await getMe();
@@ -120,9 +126,9 @@ try {
 				if (friend && friend.conversationId) {
 					sock.emit("conversation:join", { conversationId: friend.conversationId });
 				}
-			} catch (e) {
-				// ignore
-			}
+				} catch (e) {
+					// ignore
+				}
 		});
 	}
 	window.addEventListener("beforeunload", () => {
@@ -132,9 +138,9 @@ try {
 				const s = getSocket();
 				if (s) s.emit("conversation:leave", { conversationId: friend.conversationId });
 			}
-		} catch (e) {}
+		} catch (e) { /* ignore */ }
 	});
-} catch (e) {}
+				} catch (e) { /* ignore */ }
 	const chatProfilePic = document.querySelector(".chat-profile-picture");
 	const chatName = document.querySelector(".chat-name");
 	const closeChatBtn = document.getElementById("close-chat");
@@ -954,7 +960,7 @@ try {
 					if (sock && prevFriend.conversationId) {
 						sock.emit("conversation:leave", { conversationId: prevFriend.conversationId });
 					}
-				} catch (e) {}
+				} catch (e) { /* ignore */ }
 				prevFriend.isInChat = false;
 				// local-only: do not persist isInChat from client
 				if (
@@ -976,7 +982,7 @@ try {
 			try {
 				const sock = getSocket();
 				if (sock && friend.conversationId) sock.emit("conversation:join", { conversationId: friend.conversationId });
-			} catch (e) {}
+					} catch (e) { /* ignore */ }
 
 			if (friend.unreadCount > 0) {
 				friend.lastMessageSeen = true;
@@ -1002,10 +1008,12 @@ try {
 
 			if (friend.isBlocked) {
 				messageContainer.style.display = "none";
-				unblockActionBtn[0].style.display = "flex";
+				const _ub = unblockActionBtn[0];
+				if (_ub) _ub.style.display = "flex";
 			} else {
 				messageContainer.style.display = "flex";
-				unblockActionBtn[0].style.display = "none";
+				const _ub = unblockActionBtn[0];
+				if (_ub) _ub.style.display = "none";
 			}
 
 			const existingCard = activeChatsContainer.querySelector(
@@ -1036,7 +1044,7 @@ try {
 						if (sock && prevFriend.conversationId) {
 							sock.emit("conversation:leave", { conversationId: prevFriend.conversationId });
 						}
-					} catch (e) {}
+					} catch (e) { /* ignore */ }
 					prevFriend.isInChat = false;
 				// local-only: do not persist isInChat from client
 				if (
@@ -1058,7 +1066,7 @@ try {
 			try {
 				const sock = getSocket();
 				if (sock && friend.conversationId) sock.emit("conversation:join", { conversationId: friend.conversationId });
-			} catch (e) {}
+			} catch (e) { /* ignore */ }
 
 			if (friend.unreadCount > 0) {
 				friend.lastMessageSeen = true;
@@ -1081,10 +1089,12 @@ try {
 			}
 			if (friend.isBlocked) {
 				messageContainer.style.display = "none";
-				unblockActionBtn[0].style.display = "flex";
+				const _ub = unblockActionBtn[0];
+				if (_ub) _ub.style.display = "flex";
 			} else {
 				messageContainer.style.display = "flex";
-				unblockActionBtn[0].style.display = "none";
+				const _ub = unblockActionBtn[0];
+				if (_ub) _ub.style.display = "none";
 			}
 			scrollChatToBottom();
 		});
@@ -1471,11 +1481,13 @@ try {
 			openChat(true);
 			if (friend.isBlocked) {
 				messageContainer.style.display = "none";
-				unblockActionBtn[0].style.display = "flex";
+				const _ub = unblockActionBtn[0];
+				if (_ub) _ub.style.display = "flex";
 				return;
 			} else {
 				messageContainer.style.display = "flex";
-				unblockActionBtn[0].style.display = "none";
+				const _ub = unblockActionBtn[0];
+				if (_ub) _ub.style.display = "none";
 			}
 			injectMessages(friend.id);
 

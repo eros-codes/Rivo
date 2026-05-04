@@ -272,7 +272,7 @@ export function initSettings(dom, currentUser) {
 		});
 
 		p.picker.querySelectorAll(".settings-picker-option").forEach((opt) => {
-			opt.addEventListener("click", async (e) => {
+			opt.addEventListener("click", async () => {
 				const val = opt.dataset.value;
 				// update UI immediately
 				const text = _format(val);
@@ -285,9 +285,12 @@ export function initSettings(dom, currentUser) {
 						showToast(res.error);
 					} else {
 						if (_currentUser) _currentUser[p.field] = val;
-						const stored = JSON.parse(
-							localStorage.getItem("user") || "{}",
-						);
+						let stored = {};
+						try {
+							stored = JSON.parse(localStorage.getItem("user") || "{}");
+						} catch (e) {
+							stored = {};
+						}
 						localStorage.setItem(
 							"user",
 							JSON.stringify({ ...stored, ...(res || {}) }),
@@ -430,7 +433,13 @@ export function initSettings(dom, currentUser) {
 
 export function openSettings(user) {
 	_currentUser = user || _currentUser;
-	if (!_currentUser) _currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+	if (!_currentUser) {
+		try {
+			_currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+		} catch (e) {
+			_currentUser = {};
+		}
+	}
 
     // populate privacy values
     try {

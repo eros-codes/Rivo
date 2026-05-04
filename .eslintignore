@@ -1,1 +1,7 @@
 public/js/cropper.min.js
+# Ignore markup and styles (ESLint should only lint JS files)
+**/*.html
+**/*.css
+public/**
+src/pages/main/styleSheet/**
+node_modules/**

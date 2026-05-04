@@ -404,9 +404,65 @@ function parseTemplate (htmlString) {
     return s;
   }
 
+  function sanitizeDocNodes (doc) {
+    try {
+      const walker = doc.createTreeWalker(doc.body || doc, NodeFilter.SHOW_ELEMENT, null, false);
+      let node = walker.nextNode();
+      while (node) {
+        try {
+          const tag = node.tagName && node.tagName.toLowerCase();
+          if (tag === 'script' || tag === 'style') {
+            const toRemove = node;
+            node = walker.nextNode();
+            toRemove.remove();
+            continue;
+          }
+          for (const attr of Array.from(node.attributes || [])) {
+            const name = (attr.name || '').toLowerCase();
+            const value = attr.value || '';
+            if (name.startsWith('on')) {
+              node.removeAttribute(attr.name);
+              continue;
+            }
+            if (['src', 'href', 'xlink:href', 'data-src'].includes(name)) {
+              const v = value.trim().toLowerCase();
+              if (v.startsWith('javascript:') || v.startsWith('vbscript:') || v.startsWith('data:text/html')) {
+                node.removeAttribute(attr.name);
+                continue;
+              }
+            }
+            if (name === 'style') {
+              let safeStyle = value.replace(/url\((['\"]?)([^)]+)\1\)/gi, function (_m, _q, inside) {
+                const insideTrim = inside.trim().replace(/^['\"]|['\"]$/g, '');
+                const low = insideTrim.toLowerCase();
+                if (low.startsWith('javascript:') || low.startsWith('vbscript:') || low.startsWith('data:text/html')) return '';
+                if (low.startsWith('data:') && !low.startsWith('data:image/')) return '';
+                return 'url("' + insideTrim + '")';
+              });
+              if (/expression\(/i.test(safeStyle)) safeStyle = '';
+              if (safeStyle) node.setAttribute('style', safeStyle);
+              else node.removeAttribute('style');
+              continue;
+            }
+            if (/javascript:/i.test(value)) {
+              node.removeAttribute(attr.name);
+              continue;
+            }
+          }
+        } catch (e) {
+          // ignore per-node errors
+        }
+        node = walker.nextNode();
+      }
+    } catch (e) {
+      // ignore sanitization failures - fall back to existing basic sanitizer
+    }
+  }
+
   const sanitized = sanitizeHtmlForVendor(htmlString);
   const parser = new DOMParser();
   const doc = parser.parseFromString(sanitized, 'text/html');
+  try { sanitizeDocNodes(doc); } catch (e) { /* ignore */ }
   const template = document.createElement('template');
   // move parsed nodes into template.content
   const nodes = Array.from(doc.body.childNodes);

@@ -135,7 +135,7 @@ export function markMessagesAsSeen(chatEl, indices) {
 
 	if (Array.isArray(indices) && indices.length > 0) {
 		indices.forEach((idx) => {
-			const el = chatEl.querySelector(`.chat-message[data-index=\"${idx}\"] .chat-message-status`);
+			const el = chatEl.querySelector(`.chat-message[data-index="${idx}"] .chat-message-status`);
 			if (el) {
 				el.textContent = '';
 				const _s = parseSvg(seenIcon);

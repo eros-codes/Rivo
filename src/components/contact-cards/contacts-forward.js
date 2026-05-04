@@ -1,5 +1,3 @@
-import { escapeHtml } from "../messages/messages.js";
-
 function safeSrc(url) {
 	if (!url) return "/assets/images/profile.jpeg";
 	const u = String(url).trim();
@@ -20,7 +18,7 @@ export function createForwardedContactCard({ name, profilePics, isOnline, id }) 
 
 	const nameEl = document.createElement("span");
 	nameEl.className = "forwarded-contact-name";
-	nameEl.textContent = escapeHtml(name);
+	nameEl.textContent = name || "";
 
 	card.appendChild(img);
 	card.appendChild(nameEl);

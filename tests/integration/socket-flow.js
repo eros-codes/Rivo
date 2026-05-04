@@ -54,9 +54,16 @@ async function tryEnsureUser(user, pass) {
 
 async function createOrGetConversation(cookie, otherUsername) {
   // Try creating contact
+  // Extract CSRF token from cookie (double-submit cookie pattern)
+  const csrfMatch = String(cookie).match(/csrfToken=([^;\s]+)/);
+  const csrf = csrfMatch ? csrfMatch[1] : null;
   const res = await fetch(`${SERVER}/api/contacts`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: cookie,
+      ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+    },
     body: JSON.stringify({ username: otherUsername }),
   });
 
@@ -124,13 +131,18 @@ function waitForEvent(socket, event, timeout = 5000) {
     const cookieB = await tryEnsureUser(USER_B, PASS_B);
 
     console.log('Logged in and retrieved cookies');
+    console.log('cookieA:', cookieA);
+    console.log('cookieB:', cookieB);
 
     const conversationId = await createOrGetConversation(cookieA, USER_B);
     if (!conversationId) throw new Error('Failed to determine conversationId');
     console.log('Conversation ID:', conversationId);
 
-    const sockA = io(SERVER, { extraHeaders: { Cookie: cookieA }, withCredentials: true, transports: ['websocket'] });
-    const sockB = io(SERVER, { extraHeaders: { Cookie: cookieB }, withCredentials: true, transports: ['websocket'] });
+    const sockA = io(SERVER, { extraHeaders: { Cookie: cookieA }, withCredentials: true });
+    const sockB = io(SERVER, { extraHeaders: { Cookie: cookieB }, withCredentials: true });
+
+    sockA.on('connect_error', (err) => console.error('A connect_error', err && err.message ? err.message : err));
+    sockB.on('connect_error', (err) => console.error('B connect_error', err && err.message ? err.message : err));
 
     await new Promise((resolve) => {
       let connected = 0;

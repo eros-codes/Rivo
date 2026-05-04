@@ -251,8 +251,13 @@ document.addEventListener("DOMContentLoaded", function () {
 				.join("");
 
 			if (code.length < codeDigits.length) {
-				showError(codeDigits[0], "Please enter the full 6-digit code.");
-				codeDigits[0].focus();
+				const target = codeDigits[0] || codeHidden || verifyForm.querySelector('input');
+				if (target) {
+					showError(target, "Please enter the full 6-digit code.");
+					if (typeof target.focus === 'function') target.focus();
+				} else {
+					alert("Please enter the full code.");
+				}
 				return;
 			}
 
@@ -263,12 +268,14 @@ document.addEventListener("DOMContentLoaded", function () {
 				showForm(allForms, passwordForm);
 				if (passwordInput) passwordInput.focus();
 			} else {
-				showError(
-					codeDigits[0],
-					"The code is incorrect. Please try again.",
-				);
-				clearCodeInputs(verifyForm);
-				codeDigits[0].focus();
+				const target = codeDigits[0] || codeHidden || verifyForm.querySelector('input');
+				if (target) {
+					showError(target, "The code is incorrect. Please try again.");
+					clearCodeInputs(verifyForm);
+					if (typeof target.focus === 'function') target.focus();
+				} else {
+					alert("The code is incorrect. Please try again.");
+				}
 			}
 		});
 
@@ -317,18 +324,18 @@ document.addEventListener("DOMContentLoaded", function () {
 			if (!valid) return;
 
 			if (forgotPass) {
-				try {
-					const { ok, data } = await resetPassword(
-						forgotInput.value.trim(),
-						passwordInput.value,
-					);
-					if (!ok) {
-						showError(
-							passwordInput,
-							"Password reset is currently unavailable. Please contact support.",
-						);
-						return;
-					}
+						try {
+							const { ok } = await resetPassword(
+								forgotInput.value.trim(),
+								passwordInput.value,
+							);
+							if (!ok) {
+								showError(
+									passwordInput,
+									"Password reset is currently unavailable. Please contact support.",
+								);
+								return;
+							}
 					showForm(allForms, loginForm);
 					alert("Password reset successfully. Please log in.");
 				} catch {

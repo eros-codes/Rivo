@@ -12,89 +12,125 @@ export function buildHeaders(isJson = true) {
 	return h;
 }
 
+async function safeFetch(url, opts = {}) {
+	const expectJson = opts.expectJson !== false;
+	// clone options so we can pass through without our helper key
+	const localOpts = { ...opts };
+	delete localOpts.expectJson;
+
+	const res = await fetch(url, localOpts);
+	if (!res.ok) {
+		let body = "";
+		try {
+			body = await res.clone().text();
+		} catch (e) { /* ignore */ }
+		const err = new Error(`HTTP ${res.status} ${res.statusText}`);
+		err.status = res.status;
+		err.body = body;
+		throw err;
+	}
+
+	if (!expectJson) return res;
+
+	try {
+		return await res.json();
+	} catch (e) {
+		let body = "";
+		try {
+			body = await res.clone().text();
+		} catch (err2) { /* ignore */ }
+		const err = new Error("Invalid JSON response");
+		err.body = body;
+		throw err;
+	}
+}
+
 // ─── Contacts ─────────────────────────────────────────────────────────────────
 export async function getContacts() {
-	return await fetch("/api/contacts", {
+	return await safeFetch("/api/contacts", {
 		credentials: "include",
 		headers: buildHeaders(),
-	}).then((r) => r.json());
+	});
 }
 
 export async function updateContact(contactId, changes) {
-	return await fetch(`/api/contacts/${contactId}`, {
+	return await safeFetch(`/api/contacts/${contactId}`, {
 		method: "PATCH",
 		credentials: "include",
 		headers: buildHeaders(),
 		body: JSON.stringify(changes),
-	}).then((r) => r.json());
+	});
 }
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
 export async function getMessages(conversationId) {
-	return await fetch(`/api/messages/${conversationId}`, {
+	return await safeFetch(`/api/messages/${conversationId}`, {
 		credentials: "include",
 		headers: buildHeaders(),
-	}).then((r) => r.json());
+	});
 }
 
 export async function sendMessage(conversationId, msg) {
-	return await fetch("/api/messages", {
+	return await safeFetch("/api/messages", {
 		method: "POST",
 		credentials: "include",
 		headers: buildHeaders(),
 		body: JSON.stringify({ conversationId, ...msg }),
-	}).then((r) => r.json());
+	});
 }
 
 export async function deleteMessage(messageId) {
-	await fetch(`/api/messages/${messageId}`, {
+	await safeFetch(`/api/messages/${messageId}`, {
 		method: "DELETE",
 		credentials: "include",
 		headers: buildHeaders(),
+		expectJson: false,
 	});
 }
 
 export async function editMessage(messageId, text) {
-	await fetch(`/api/messages/${messageId}`, {
+	await safeFetch(`/api/messages/${messageId}`, {
 		method: "PATCH",
 		credentials: "include",
 		headers: buildHeaders(),
 		body: JSON.stringify({ text }),
+		expectJson: false,
 	});
 }
 
 export async function pinMessage(messageId) {
-	return await fetch(`/api/messages/${messageId}/pin`, {
+	return await safeFetch(`/api/messages/${messageId}/pin`, {
 		method: "POST",
 		credentials: "include",
 		headers: buildHeaders(),
-	}).then((r) => r.json());
+	});
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 export async function login(identifier, password) {
-	return await fetch("/api/auth/login", {
+	return await safeFetch("/api/auth/login", {
 		method: "POST",
 		credentials: "include",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ identifier, password }),
-	}).then((r) => r.json());
+	});
 }
 
 export async function register(name, email, username, password) {
-	return await fetch("/api/auth/register", {
+	return await safeFetch("/api/auth/register", {
 		credentials: "include",
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ name, email, username, password }),
-	}).then((r) => r.json());
+	});
 }
 
 export async function logout() {
-	await fetch("/api/auth/logout", {
+	await safeFetch("/api/auth/logout", {
 		method: "POST",
 		credentials: "include",
 		headers: buildHeaders(),
+		expectJson: false,
 	});
 	// remove only auth data so site-wide preferences (theme, rememberedUser) persist
 	localStorage.removeItem("user");
@@ -102,79 +138,83 @@ export async function logout() {
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 export async function getMe() {
-	return await fetch("/api/users/me", {
+	return await safeFetch("/api/users/me", {
 		credentials: "include",
 		headers: buildHeaders(),
-	}).then((r) => r.json());
+	});
 }
 
 export async function updateMe(changes) {
-	return await fetch("/api/users/me", {
+	return await safeFetch("/api/users/me", {
 		method: "PATCH",
 		credentials: "include",
 		headers: buildHeaders(),
 		body: JSON.stringify(changes),
-	}).then((r) => r.json());
+	});
 }
 
 export async function deleteContact(contactId) {
-	await fetch(`/api/contacts/${contactId}`, {
+	await safeFetch(`/api/contacts/${contactId}`, {
 		method: "DELETE",
 		credentials: "include",
 		headers: buildHeaders(),
+		expectJson: false,
 	});
 }
 
 export async function deleteChat(conversationId) {
-	await fetch(`/api/conversations/${conversationId}/messages`, {
+	await safeFetch(`/api/conversations/${conversationId}/messages`, {
 		method: "DELETE",
 		credentials: "include",
 		headers: buildHeaders(),
+		expectJson: false,
 	});
 }
 
 export async function uploadAvatar(formData) {
-	return await fetch("/api/users/me/avatar", {
+	return await safeFetch("/api/users/me/avatar", {
 		method: "POST",
 		credentials: "include",
 		// multipart formdata; do not set Content-Type so the browser sets boundary
 		headers: buildHeaders(false),
 		body: formData,
-	}).then((r) => r.json());
+	});
 }
 
 export async function deleteAvatar() {
-	return await fetch("/api/users/me", {
+	return await safeFetch("/api/users/me", {
 		method: "PATCH",
 		credentials: "include",
 		headers: buildHeaders(),
 		body: JSON.stringify({ profilePics: [] }),
-	}).then((r) => r.json());
+	});
 }
 
 export async function updatePrivacy(changes) {
-	return await fetch("/api/users/me", {
+	return await safeFetch("/api/users/me", {
 		method: "PATCH",
 		credentials: "include",
 		headers: buildHeaders(),
 		body: JSON.stringify(changes),
-	}).then((r) => r.json());
+	});
 }
 
 export async function deleteAccount(password) {
-	return await fetch("/api/users/me", {
+	return await safeFetch("/api/users/me", {
 		method: "DELETE",
 		credentials: "include",
 		headers: buildHeaders(),
 		body: JSON.stringify({ password }),
-	}).then((r) => r.json());
+	});
 }
 
 export async function changePassword(currentPassword, newPassword) {
-	return await fetch(`/api/users/me/password`, {
+	return await safeFetch(`/api/users/me/password`, {
 		method: "PATCH",
 		credentials: "include",
 		headers: buildHeaders(),
 		body: JSON.stringify({ currentPassword, newPassword }),
-	}).then((r) => r.json());
+	});
 }
+
+export { safeFetch };

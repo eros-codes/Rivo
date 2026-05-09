@@ -1,0 +1,158 @@
+diff a/server/routes/contacts.js b/server/routes/contacts.js	(rejected hunks)
+@@ -72,12 +77,15 @@ router.get("/", requireAuth, async (req, res) => {
+ });
+ 
+ // ΓöÇΓöÇΓöÇ Add contact ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+-router.post("/", requireAuth, async (req, res) => {
+-	const { username, name } = req.body;
++const addContactLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many contact requests, try again later' } });
++router.post("/", addContactLimiter, requireAuth, async (req, res) => {
++	let { username, name } = req.body;
+ 
+-	if (!username) {
++	if (!username || typeof username !== 'string') {
+ 		return res.status(400).json({ error: "Username is required" });
+ 	}
++	username = username.trim();
++	if (username.length < 3 || username.length > 30) return res.status(400).json({ error: 'Invalid username' });
+ 
+ 	if (name !== undefined && typeof name !== "string") {
+ 		return res.status(400).json({ error: "Name must be a string" });
+@@ -96,62 +104,53 @@ router.post("/", requireAuth, async (req, res) => {
+ 			return res.status(400).json({ error: "You cannot add yourself" });
+ 		}
+ 
+-		const existing = await prisma.contact.findFirst({
+-			where: {
+-				ownerId: req.userId,
+-				contactId: targetUser.id,
+-			},
+-		});
+-
+-		if (existing) {
+-			return res.status(409).json({ error: "Contact already exists" });
+-		}
+-
+-		// conversation ┘à╪┤╪¬╪▒┌⌐ ╪¿╪│╪º╪▓
+-		const conversation = await prisma.conversation.create({
+-			data: {
+-				members: {
+-					create: [{ userId: req.userId }, { userId: targetUser.id }],
+-				},
+-			},
+-		});
++		// Re-check and create inside a transaction to reduce race windows.
++		try {
++			const contact = await prisma.$transaction(async (tx) => {
++				// re-check for an existing contact inside the transaction
++				const exists = await tx.contact.findFirst({ where: { ownerId: req.userId, contactId: targetUser.id } });
++				if (exists) throw new Error('CONTACT_EXISTS');
++
++				// Build a deterministic participants key so we can enforce a unique
++				// conversation per participant set at the DB level. This allows
++				// using upsert to avoid race conditions that would create duplicate
++				// conversations for the same pair.
++				const key = [req.userId, targetUser.id].map(String).sort().join(":");
++
++				const conversation = await tx.conversation.upsert({
++					where: { participantsKey: key },
++					create: { participantsKey: key, members: { create: [{ userId: req.userId }, { userId: targetUser.id }] } },
++					update: {},
++				});
++
++				const conversationId = conversation.id;
++
++				const primary = await tx.contact.create({
++					data: { ownerId: req.userId, contactId: targetUser.id, conversationId, nickname: name || null },
++					include: { contact: { select: { id: true, name: true, username: true, profilePics: true, bio: true, isOnline: true, lastSeen: true, privacyOnline: true, privacyEmail: true, privacyProfile: true } } },
++				});
++
++				// Ensure reciprocal contact exists (create if missing)
++				try {
++					await tx.contact.upsert({
++						where: { ownerId_contactId: { ownerId: targetUser.id, contactId: req.userId } },
++						create: { ownerId: targetUser.id, contactId: req.userId, conversationId },
++						update: {},
++					});
++				} catch (e) {
++					// Some DBs may not support composite unique constraints yet; ignore upsert failure here
++				}
+ 
+-		// contact ╪¿╪▒╪º█î ┘ç╪▒ ╪»┘ê ╪╖╪▒┘ü ╪¿╪│╪º╪▓
+-		const [contact] = await prisma.$transaction([
+-			prisma.contact.create({
+-				data: {
+-					ownerId: req.userId,
+-					contactId: targetUser.id,
+-					conversationId: conversation.id,
+-					nickname: name || null,
+-				},
+-				include: {
+-					contact: {
+-						select: {
+-							id: true,
+-							name: true,
+-							username: true,
+-							profilePics: true,
+-							bio: true,
+-							isOnline: true,
+-							lastSeen: true,
+-							privacyOnline: true,
+-							privacyEmail: true,
+-							privacyProfile: true,
+-						},
+-					},
+-				},
+-			}),
+-			prisma.contact.create({
+-				data: {
+-					ownerId: targetUser.id,
+-					contactId: req.userId,
+-					conversationId: conversation.id,
+-				},
+-			}),
+-		]);
++				return primary;
++			});
+ 
+-		return res.status(201).json(contact);
++			// Invalidate cache for this conversation so sockets pick up the new contact
++			try { invalidateConversationContacts(contact.conversationId); } catch (e) { /* ignore */ }
++			return res.status(201).json(contact);
++		} catch (err) {
++			if (err && err.message === 'CONTACT_EXISTS') return res.status(409).json({ error: 'Contact already exists' });
++			throw err;
++		}
+ 	} catch (err) {
+ 		console.error(err);
+ 		return res.status(500).json({ error: "Server error" });
+@@ -160,10 +159,18 @@ router.post("/", requireAuth, async (req, res) => {
+ 
+ // ΓöÇΓöÇΓöÇ Update contact (pin, mute, block, nickname) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ router.patch("/:id", requireAuth, async (req, res) => {
+-	const contactId = parseInt(req.params.id);
++	const contactId = parseIntSafe(req.params.id);
++	if (!contactId) return res.status(400).json({ error: "Invalid contact id" });
+ 	// Prevent clients from setting server-controlled fields
+ 	const { isPinned, pinOrder, isMuted, isBlocked, nickname } = req.body;
+ 
++	// Validate incoming types
++	if (isPinned !== undefined && typeof isPinned !== 'boolean') return res.status(400).json({ error: 'isPinned must be boolean' });
++	if (isMuted !== undefined && typeof isMuted !== 'boolean') return res.status(400).json({ error: 'isMuted must be boolean' });
++	if (isBlocked !== undefined && typeof isBlocked !== 'boolean') return res.status(400).json({ error: 'isBlocked must be boolean' });
++	if (pinOrder !== undefined && !(typeof pinOrder === 'number' && Number.isInteger(pinOrder))) return res.status(400).json({ error: 'pinOrder must be integer' });
++	if (nickname !== undefined && typeof nickname !== 'string') return res.status(400).json({ error: 'nickname must be string' });
++
+ 	try {
+ 		const contact = await prisma.contact.findFirst({
+ 			where: {
+@@ -196,7 +206,8 @@ router.patch("/:id", requireAuth, async (req, res) => {
+ 
+ // ΓöÇΓöÇΓöÇ Delete contact ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ router.delete("/:id", requireAuth, async (req, res) => {
+-	const contactId = parseInt(req.params.id);
++	const contactId = parseIntSafe(req.params.id);
++	if (!contactId) return res.status(400).json({ error: "Invalid contact id" });
+ 
+ 	try {
+ 		const contact = await prisma.contact.findFirst({

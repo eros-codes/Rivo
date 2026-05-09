@@ -1,4 +1,4 @@
-import { state, messages, contacts } from "./state.js";
+import { state, messages, contacts, findMessageById } from "./state.js";
 import { showEmptyState, hideEmptyState, showToast } from "./ui.js";
 import { createMessage, markMessagesAsSeen } from "../../../components/messages/messages.js";
 import {
@@ -10,7 +10,8 @@ import {
 	updateTotalUnreadCount,
 } from "./chat-logic.js";
 import { emitMessage, emitEditMessage, emitMessageSeen, getSocket } from "./socket.js";
-import { getMessages, getContacts } from "./api.js";
+import { getMessagesPage, getContacts } from "./api.js";
+import { makeMessageSkeleton, createTopMessageSkeleton } from "./skeleton.js";
 import { createContactCard } from "../../../components/contact-cards/contact-card.js";
 import { createActiveChatCard } from "../../../components/active-chats/active-chats.js";
 
@@ -19,11 +20,20 @@ export const basePadding = 4;
 export const lineHeight = 22.4;
 export const maxLines = 7;
 export const maxHeight = lineHeight * maxLines;
+export const DEFAULT_PAGE_LIMIT = 50;
+
+// Returns true when the chat view is near bottom within `offset` pixels.
+export function nearBottom(chatEl, offset = 70) {
+	if (!chatEl) return false;
+	return chatEl.scrollTop + chatEl.clientHeight >= chatEl.scrollHeight - offset;
+}
 
 // Cap messages kept per conversation to avoid unbounded client memory growth
 const MAX_MESSAGES_PER_CONVERSATION = 1000;
 
 let _dom = {};
+// paging state per contact
+const messagePaging = {};
 
 export function initChat(dom) {
 	_dom = dom;
@@ -80,6 +90,7 @@ export async function openChat(fromClick = false) {
 					hour12: false,
 				}),
 				date: new Date(m.createdAt).toISOString().slice(0, 10),
+				createdAt: m.createdAt,
 				isEdited: m.isEdited,
 				isPinned: m.isPinned,
 				isSeen: m.isSeen,
@@ -93,8 +104,17 @@ export async function openChat(fromClick = false) {
 				forwardedFrom: m.forwardedFrom || null,
 				forwardedText: m.forwardedText || null,
 			}));
-		} catch {
+
+			// paging metadata
+			messagePaging[state.contactUserId] = {
+				hasMore: Array.isArray(serverMessages) && serverMessages.length === PAGE_LIMIT,
+				loading: false,
+				pageSize: PAGE_LIMIT,
+			};
+		} catch (err) {
+			console.error('getMessagesPage failed', err);
 			messages[state.contactUserId] = [];
+			messagePaging[state.contactUserId] = { hasMore: false, loading: false };
 		}
 	}
 
@@ -124,9 +144,9 @@ function _currentUserId() {
 export function closeChat() {
 	const isMobile = window.matchMedia("(max-width: 768px)").matches;
 
-	_dom.peoplePart.querySelector(".main-header").style.display = "";
-	_dom.peoplePart.querySelector(".main-header").style.zIndex = "";
-	_dom.peoplePart.style.display = "";
+	_dom.peoplePart.querySelector(".main-header").classList.remove('d-none');
+	_dom.peoplePart.querySelector(".main-header").classList.remove('z-0');
+	_dom.peoplePart.classList.remove('d-none','d-flex','d-block');
 
 	if (isMobile) {
 		_dom.chatPart.classList.remove("slide-in");
@@ -136,13 +156,14 @@ export function closeChat() {
 			"animationend",
 			() => {
 				_dom.chatPart.classList.remove("slide-out");
-				_dom.chatPart.style.display = "none";
+					_dom.chatPart.classList.add('d-none');
 			},
 			{ once: true },
 		);
 	} else {
-		_dom.chatPart.style.display = "none";
-		_dom.mainContent.style.flexDirection = "row-reverse";
+		_dom.chatPart.classList.add('d-none');
+		_dom.mainContent.classList.add('flex-row-reverse');
+		_dom.mainContent.classList.remove('flex-column-reverse');
 	}
 
 	// Inform server we're leaving the active conversation (if any) so presence
@@ -191,11 +212,9 @@ export function updatePinCount(activeIdx) {
 	for (let i = 0; i < total; i++) {
 		const span = document.createElement("span");
 		if (i === activeSpan) {
-			span.style.height = "1.2rem";
-			span.style.opacity = "1";
+			span.classList.add('pinned-dot','active');
 		} else {
-			span.style.height = "0.6rem";
-			span.style.opacity = "0.4";
+			span.classList.add('pinned-dot');
 		}
 		_dom.pinnedMessageCount.appendChild(span);
 	}
@@ -206,15 +225,19 @@ export function updatePinnedMessage() {
 	const userMessages = messages[state.contactUserId];
 	const pinnedMsg = userMessages.findLast((msg) => msg.isPinned);
 	if (pinnedMsg) {
-		_dom.pinnedMessageContainer.style.display = "flex";
+		_dom.pinnedMessageContainer.classList.remove('d-none');
+		_dom.pinnedMessageContainer.classList.add('d-flex');
 		_dom.pinnedMessageText.textContent = pinnedMsg.text;
 		_dom.pinnedMessageText.dataset.index = pinnedMsg.index;
-		_dom.chatHeader.style.borderRadius = "1rem 1rem 0 0";
+		_dom.chatHeader.classList.add('chat-header-radius-top');
+		_dom.chatHeader.classList.remove('chat-header-radius');
 	} else {
-		_dom.pinnedMessageContainer.style.display = "none";
+		_dom.pinnedMessageContainer.classList.add('d-none');
+		_dom.pinnedMessageContainer.classList.remove('d-flex');
 		_dom.pinnedMessageText.textContent = "";
 		_dom.pinnedMessageText.dataset.index = "";
-		_dom.chatHeader.style.borderRadius = "1rem";
+		_dom.chatHeader.classList.remove('chat-header-radius-top');
+		_dom.chatHeader.classList.add('chat-header-radius');
 	}
 	updatePinCount(pinnedMsg ? pinnedMsg.index : null);
 }
@@ -252,9 +275,22 @@ export function injectMessages(userId) {
 		return;
 	}
 
+	// Preserve any attached floating elements (like a message context menu)
+	// that may be children of a message node. Move shared UI elements to a
+	// stable container before clearing to avoid leaving orphaned pointers.
+	try {
+		const menu = _dom.messageMenu;
+		if (menu && menu.parentElement && menu.parentElement !== _dom.chatEl) {
+			// If already attached to a message, move it to chat overlay container
+			const overlay = _dom.chatOverlay || document.querySelector('.chat-overlay');
+			if (overlay) overlay.appendChild(menu);
+		}
+	} catch (e) { /* ignore */ }
 	_dom.chatEl.textContent = "";
-	_dom.pinnedMessageContainer.style.display = "none";
-	_dom.chatHeader.style.borderRadius = "1rem";
+	_dom.pinnedMessageContainer.classList.add('d-none');
+	_dom.pinnedMessageContainer.classList.remove('d-flex');
+	_dom.chatHeader.classList.add('chat-header-radius');
+	_dom.chatHeader.classList.remove('chat-header-radius-top');
 	state.pinnedIndexes = [];
 	let lastDate = null;
 
@@ -300,64 +336,84 @@ export async function receiveMessage(message) {
 	// from the server (handles case where someone added the current user).
 	if (!contact) {
 		try {
-			const serverContacts = await getContacts();
-			if (Array.isArray(serverContacts)) {
-				const raw = serverContacts.find(
-					(c) => c.conversationId === message.conversationId,
-				);
-				if (raw) {
-					const newContact = {
-						...raw,
-						name: raw.nickname || raw.contact?.name || "",
-						username: raw.contact?.username || "",
-						profilePics: raw.contact?.profilePics || [],
-						isOnline: raw.contact?.isOnline || false,
-						lastSeen: raw.contact?.lastSeen || null,
-						bio: raw.contact?.bio || "",
-						email: raw.contact?.email || "",
-						lastMessage: raw.conversation?.messages?.[0]?.text || "",
-						lastMessageTime: raw.conversation?.messages?.[0]
-							? new Date(raw.conversation.messages[0].createdAt).toLocaleTimeString([], {
-								hour: "2-digit",
-								minute: "2-digit",
-								hour12: false,
-							})
-							: null,
-						lastMessageDate: raw.conversation?.messages?.[0]
-							? new Date(raw.conversation.messages[0].createdAt).toISOString().slice(0, 10)
-							: null,
-						unreadCount: raw.unreadCount ?? 0,
-						lastMessageSeen: (() => {
-							const lastMsg = raw.conversation?.messages?.[0];
-							if (!lastMsg) return true;
-							return lastMsg.isSeen === true;
-						})(),
-					};
+			// Serialize concurrent requests to avoid races; use a short in-memory
+			// pending promise map keyed by conversationId so parallel receives
+			// wait on the same fetch rather than issuing duplicate requests.
+			if (!window.__pendingGetContacts__) window.__pendingGetContacts__ = new Map();
+			let pending = window.__pendingGetContacts__.get(message.conversationId);
+			if (!pending) {
+				pending = (async () => {
+					const serverContacts = await getContacts();
+					return serverContacts || [];
+				})();
+				window.__pendingGetContacts__.set(message.conversationId, pending);
+			}
+			try {
+				const serverContacts = await pending;
+				if (Array.isArray(serverContacts)) {
+					const raw = serverContacts.find((c) => c.conversationId === message.conversationId);
+					if (raw) {
+						const newContact = {
+							...raw,
+							name: raw.nickname || raw.contact?.name || "",
+							username: raw.contact?.username || "",
+							profilePics: raw.contact?.profilePics || [],
+							isOnline: raw.contact?.isOnline || false,
+							lastSeen: raw.contact?.lastSeen || null,
+							bio: raw.contact?.bio || "",
+							email: raw.contact?.email || "",
+							lastMessage: raw.conversation?.messages?.[0]?.text || "",
+							lastMessageTime: raw.conversation?.messages?.[0]
+								? new Date(raw.conversation.messages[0].createdAt).toLocaleTimeString([], {
+									hour: "2-digit",
+									minute: "2-digit",
+									hour12: false,
+								})
+								: null,
+							lastMessageDate: raw.conversation?.messages?.[0]
+								? new Date(raw.conversation.messages[0].createdAt).toISOString().slice(0, 10)
+								: null,
+							unreadCount: raw.unreadCount ?? 0,
+							lastMessageSeen: (() => {
+								const lastMsg = raw.conversation?.messages?.[0];
+								if (!lastMsg) return true;
+								return lastMsg.isSeen === true;
+							})(),
+						};
 
-					// Avoid duplicates
-					if (!contacts.find((c) => c.id === newContact.id)) {
-						contacts.push(newContact);
+						// Avoid duplicates using conversation map
+						const existing = findContactByConversationId(newContact.conversationId);
+						if (!existing) {
+							contacts.push(newContact);
+							// add to maps
+							addContactToState(newContact);
 
-						// append DOM card to the appropriate container
-						const contactsContainer = document.querySelector(".contacts-container");
-						const activeChatsContainer = document.querySelector(".active-chats-container");
-						if (contactsContainer && activeChatsContainer) {
-							if (newContact.isPinned || newContact.unreadCount > 0 || newContact.lastMessageSeen === false) {
-								activeChatsContainer.appendChild(createActiveChatCard(newContact));
-							} else {
-								contactsContainer.appendChild(createContactCard({ ...newContact, hasMessages: !!newContact.lastMessage }, null));
+							// append DOM card to the appropriate container
+							const contactsContainer = document.querySelector(".contacts-container");
+							const activeChatsContainer = document.querySelector(".active-chats-container");
+							if (contactsContainer && activeChatsContainer) {
+								if (newContact.isPinned || newContact.unreadCount > 0 || newContact.lastMessageSeen === false) {
+									activeChatsContainer.appendChild(createActiveChatCard(newContact));
+								} else {
+									contactsContainer.appendChild(createContactCard({ ...newContact, hasMessages: !!newContact.lastMessage }, null));
+								}
+								updateTotalUnreadCount();
+								sortActiveChats();
+								sortContacts();
+								// Hide the "No contacts yet" placeholder immediately
+								const emptyEl = document.getElementById("contacts-empty");
+								if (emptyEl) emptyEl.classList.add('d-none');
 							}
-							updateTotalUnreadCount();
-							sortActiveChats();
-							sortContacts();
-							// Hide the "No contacts yet" placeholder immediately
-							const emptyEl = document.getElementById("contacts-empty");
-							if (emptyEl) emptyEl.style.display = "none";
+						} else {
+							// update existing contact with fresh data
+							updateContactInState(newContact);
 						}
-					}
 
-					contact = contacts.find((c) => c.conversationId === message.conversationId);
+						contact = findContactByConversationId(message.conversationId);
+					}
 				}
+			} finally {
+				window.__pendingGetContacts__.delete(message.conversationId);
 			}
 		} catch (e) {
 			console.error("receiveMessage: failed to sync contacts", e);
@@ -430,37 +486,77 @@ export async function receiveMessage(message) {
 export async function sendMessage() {
 	// Edit mode
 	if (state.isEditing) {
-		if (!messages[state.contactUserId] || typeof state.msgIndex === 'undefined' || !messages[state.contactUserId][Number(state.msgIndex)]) return;
-		if (
-			_dom.messageInput.value.trim() === "" ||
-			messages[state.contactUserId][Number(state.msgIndex)].text ===
-				_dom.messageInput.value.trim()
-		)
-			return;
-
+		// locate message object robustly
 		const txt = _dom.messageInput.value;
-		const msg = messages[state.contactUserId][Number(state.msgIndex)];
-
-		try {
-			await emitEditMessage(msg.id, txt);
-			// update local state first
-			if (messages[state.contactUserId] && messages[state.contactUserId][Number(state.msgIndex)]) {
-				messages[state.contactUserId][Number(state.msgIndex)].text = txt;
-				messages[state.contactUserId][Number(state.msgIndex)].isEdited = true;
+		if (!txt || txt.trim() === "") return;
+		let msg = null;
+		if (typeof state.msgIndex !== 'undefined' && messages[state.contactUserId]) {
+			msg = messages[state.contactUserId][Number(state.msgIndex)];
+		}
+		// fallback: try find by messageId present on selected DOM element
+		if (!msg && state.selectedMsg) {
+			const mid = state.selectedMsg.dataset?.messageId;
+			if (mid) {
+				const found = findMessageById(mid);
+				if (found) msg = found.message;
 			}
+		}
+		if (!msg) return;
 
-			state.selectedMsg.querySelector(".chat-message-text").textContent = txt;
-			if (!state.selectedMsg.querySelector(".chat-edited-label")) {
-				const label = document.createElement("span");
-				label.className = "chat-edited-label";
-				label.textContent = "edited";
-				state.selectedMsg
-					.querySelector(".chat-message-meta")
-					.prepend(label);
+		// Breadcrumb: attempted edit
+		try {
+			if (typeof window !== 'undefined' && window.Sentry && window.Sentry.addBreadcrumb) {
+				window.Sentry.addBreadcrumb({ category: 'edit', message: 'submit_edit', data: { messageId: msg?.id, localOnly: !msg.id } });
+			}
+		} catch (e) { void e; }
+		if (msg.text === txt.trim()) {
+			state.isEditing = false;
+			resetInput();
+			return;
+		}
+
+		// If message has no server id (local-only), update locally and mark edited
+		if (!msg.id) {
+			msg.text = txt.trim();
+			msg.isEdited = true;
+			if (state.selectedMsg) {
+				const textEl = state.selectedMsg.querySelector('.chat-message-text');
+				if (textEl) textEl.textContent = msg.text;
+				if (!state.selectedMsg.querySelector('.chat-edited-label')) {
+					const label = document.createElement('span');
+					label.className = 'chat-edited-label';
+					label.textContent = 'edited';
+					state.selectedMsg.querySelector('.chat-message-meta')?.prepend(label);
+				}
+			}
+			// if user was near bottom before editing, keep them scrolled to bottom
+			const nearBottomAfterEdit = nearBottom(_dom.chatEl, (_dom.msgAction?.getBoundingClientRect().height || 0) + 30);
+			if (nearBottomAfterEdit) scrollChatToBottomAfterPadding();
+			state.isEditing = false;
+			resetInput();
+			// local edit applied; no toast for edits
+			return;
+		}
+
+		// Normal path: message has server id ΓÇö send edit request
+		try {
+			await emitEditMessage(msg.id, txt.trim());
+			// update local state
+			msg.text = txt.trim();
+			msg.isEdited = true;
+			if (state.selectedMsg) {
+				const textEl = state.selectedMsg.querySelector('.chat-message-text');
+				if (textEl) textEl.textContent = msg.text;
+				if (!state.selectedMsg.querySelector('.chat-edited-label')) {
+					const label = document.createElement('span');
+					label.className = 'chat-edited-label';
+					label.textContent = 'edited';
+					state.selectedMsg.querySelector('.chat-message-meta')?.prepend(label);
+				}
 			}
 		} catch (e) {
 			console.error('edit failed', e);
-			// optionally show UI error
+			showToast(typeof e === 'string' ? e : (e?.message || 'Edit failed'), '');
 		}
 		state.isEditing = false;
 		resetInput();

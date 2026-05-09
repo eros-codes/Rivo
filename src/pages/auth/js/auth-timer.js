@@ -7,7 +7,14 @@ export function getSentCode() {
 
 export function sendCode() {
 	_sentCode = Math.floor(Math.random() * 900000 + 100000);
-	alert(`Your verification code is: ${_sentCode}`);
+	// Do not use `alert` in production. Dispatch an event so the UI can handle
+	// rendering (email/SMS would be used in real deployments).
+	try {
+		window.dispatchEvent(new CustomEvent('rivo:codeSent', { detail: { code: _sentCode } }));
+	} catch (e) {
+		// ignore if CustomEvent is not supported
+	}
+	return _sentCode;
 }
 
 export function startResendTimer(codeResendTimer) {

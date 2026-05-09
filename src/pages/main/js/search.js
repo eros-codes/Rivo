@@ -21,13 +21,14 @@ export function initSearch(dom) {
 
 export function runSearch(query) {
 	if (!query) {
-		_dom.mainContent.style.display = "";
-		_dom.searchResults.style.display = "none";
+		_dom.mainContent.classList.remove('d-none');
+		_dom.searchResults.classList.add('d-none');
 		return;
 	}
 
-	_dom.mainContent.style.display = "none";
-	_dom.searchResults.style.display = "flex";
+	_dom.mainContent.classList.add('d-none');
+	_dom.searchResults.classList.remove('d-none');
+	_dom.searchResults.classList.add('d-flex');
 
 	_renderContactResults(query);
 	_renderMessageResults(query);
@@ -50,6 +51,7 @@ function _renderContactResults(query) {
 		return;
 	}
 
+	const frag = document.createDocumentFragment();
 	matched.forEach((c) => {
 		const card = createContactCard(
 			{ ...c, hasMessages: !!c.lastMessage },
@@ -75,6 +77,7 @@ function _renderMessageResults(query) {
 	list.textContent = "";
 
 	let found = false;
+	const frag = document.createDocumentFragment();
 
 	contacts.forEach((contact) => {
 		const msgs = messages[contact.id];
@@ -110,7 +113,7 @@ function _renderMessageResults(query) {
 				_onMessageClick(contact, idx);
 			});
 
-			list.appendChild(wrapper);
+			frag.appendChild(wrapper);
 		});
 	});
 
@@ -119,5 +122,7 @@ function _renderMessageResults(query) {
 		p.className = "search-no-results";
 		p.textContent = "No messages found";
 		list.appendChild(p);
+	} else {
+		list.appendChild(frag);
 	}
 }

@@ -124,6 +124,10 @@
 	display: flex;
 	flex-direction: column;
 	border-radius: 0.25rem;
+	cursor: pointer;
+}
+.incoming .chat-reply{
+	background-color: rgba(100, 100, 100, 0.1);
 }
 .chat-reply-sender {
 	font-size: 0.75rem;
@@ -137,6 +141,10 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
+.incoming .chat-reply-sender,
+.incoming .chat-reply-text {
+	color: var(--sub-text-secondary-color);
+}
 
 .highlight-incoming-reply {
 	background-color: var(--glass-bg-input-color);
@@ -149,4 +157,9 @@
 	color: var(--text-secondary-color);
 	font-style: italic;
 	line-height: 0.75rem;
+}
+.message-link {
+    color: var(--chat-time);
+    text-decoration: underline;
+    word-break: break-all;
 }

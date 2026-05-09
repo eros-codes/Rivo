@@ -4,7 +4,13 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { createServer } from "http";
 import { resolve } from "path";
+import { readFileSync, readdirSync, statSync } from "fs";
+import { createHash } from "crypto";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { initSocket } from "./socket/index.js";
+import prisma from "./prisma.js";
+import * as Sentry from "@sentry/node";
 
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/users.js";
@@ -33,6 +39,20 @@ app.use(
 app.use(express.json());
 app.use(cookieParser());
 
+// Basic rate limiting for sensitive endpoints
+const authLimiter = rateLimit({ windowMs: 60 * 1000, max: 6, standardHeaders: true, legacyHeaders: false, message: { error: "Too many requests, try again later" } });
+const messagesLimiter = rateLimit({ windowMs: 10 * 1000, max: 30, standardHeaders: true, legacyHeaders: false, message: { error: "Too many requests" } });
+
+// NOTE: login/register endpoints apply their own rate-limits at the route level
+// (see server/routes/auth.js). Avoid double-applying a global limiter here.
+// Apply message limiter to message API
+app.use('/api/messages', messagesLimiter);
+
+// Attach Sentry request handler early so it can collect request data
+if (process.env.SENTRY_DSN) {
+	app.use(Sentry.Handlers.requestHandler());
+}
+
 // Minimal CSRF protection (double-submit cookie):
 // - Server sets a non-HttpOnly `csrfToken` cookie at login
 // - Client must echo that token in `X-CSRF-Token` header for state-changing requests
@@ -59,8 +79,11 @@ function csrfProtection(req, res, next) {
 app.use(csrfProtection);
 app.use(express.static("public"));
 app.use("/public", express.static("public"));
-app.use("/src", express.static("src"));
-app.use("/node_modules", express.static("node_modules"));
+// Only expose source and node_modules during local development
+if (process.env.NODE_ENV !== "production") {
+	app.use("/src", express.static("src"));
+	app.use("/node_modules", express.static("node_modules"));
+}
 
 // Serve root index.html from project root (useful for local dev)
 app.get("/", (req, res) => {
@@ -71,11 +94,19 @@ app.get("/", (req, res) => {
 if (process.env.NODE_ENV !== "production") {
 	app.get("/__diag", (req, res) => {
 		try {
-			// Only allow local requests for diagnostics
-			const ip = req.ip || req.connection?.remoteAddress || "";
-			const allowed = ["127.0.0.1", "::1", "::ffff:127.0.0.1"];
-			if (!allowed.includes(ip) && !(req.headers["x-forwarded-for"] || "").includes("127.0.0.1")) {
-				return res.status(403).json({ error: "Forbidden" });
+			// If DIAG_TOKEN is set, require it via header
+			const diagToken = process.env.DIAG_TOKEN;
+			if (diagToken) {
+				if (req.headers['x-diag-token'] !== diagToken) {
+					return res.status(403).json({ error: "Forbidden" });
+				}
+			} else {
+				// Only allow local requests for diagnostics when no token configured
+				const ip = req.ip || req.connection?.remoteAddress || "";
+				const allowed = ["127.0.0.1", "::1", "::ffff:127.0.0.1"];
+				if (!allowed.some(a => ip.includes(a)) && !(req.headers["x-forwarded-for"] || "").includes("127.0.0.1")) {
+					return res.status(403).json({ error: "Forbidden" });
+				}
 			}
 			const mem = process.memoryUsage();
 			const cpu = process.cpuUsage();

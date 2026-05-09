@@ -10,6 +10,7 @@ import {
 	highlightMessage,
 	createEmptyStateEl,
 } from "./js/ui.js";
+import { makeContactSkeleton, makeActiveChatSkeleton } from "./js/skeleton.js";
 import {
 	initChat,
 	openChat,
@@ -18,6 +19,9 @@ import {
 	sendMessage,
 	resetInput,
 	scrollChatToBottom,
+	scrollChatToBottomAfterPadding,
+	nearBottom,
+	loadOlderMessages,
 	updatePinCount,
 	basePadding,
 	lineHeight,
@@ -73,9 +77,36 @@ import { initSettings, openSettings } from "./js/settings.js";
 import { initAddContact } from "./js/add-contact.js";
 import { initSocket, emitTypingStart, emitTypingStop, emitMessageSeen, getSocket } from "./js/socket.js";
 import { loadThemeFromStorage } from "../../utils/theme.js";
+import { safeSrc } from "../../utils/dom.js";
 import { parseSvg } from "../../utils/svg.js";
 
 document.addEventListener("DOMContentLoaded", async function () {
+	// Initialize client-side Sentry (loaded from CDN if `window.__SENTRY_DSN__` set)
+	(function initClientSentry() {
+		try {
+			const dsn = window.__SENTRY_DSN__;
+			if (!dsn) return;
+			const s = document.createElement('script');
+			s.src = 'https://browser.sentry-cdn.com/7.66.0/bundle.min.js';
+			s.crossOrigin = 'anonymous';
+			s.addEventListener('load', () => {
+				try {
+					if (window.Sentry) {
+						window.Sentry.init({ dsn, tracesSampleRate: 0.0 });
+						window.Sentry.setTag('app', 'rivo-client');
+					}
+				} catch (e) { void e; }
+			});
+			document.head.appendChild(s);
+
+			window.addEventListener('error', (ev) => {
+				try { if (window.Sentry) window.Sentry.captureException(ev.error || ev); } catch (e) { void e; }
+			});
+			window.addEventListener('unhandledrejection', (ev) => {
+				try { if (window.Sentry) window.Sentry.captureException(ev.reason || ev); } catch (e) { void e; }
+			});
+		} catch (e) { void e; }
+	})();
 	// Rely on HttpOnly cookie for auth; if user info not present, ask server for current user.
 	let currentUser = null;
 	try {
@@ -100,6 +131,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 		}
 	}
 
+	// keep an in-memory authoritative user reference (avoid trusting localStorage alone)
+	setCurrentUser(currentUser);
+
 	const theme = localStorage.getItem("rivo-theme") || "light";
 	if (theme === "dark") document.body.classList.add("dark-mode");
 
@@ -122,25 +156,27 @@ try {
 	if (sock) {
 		sock.on("connect", () => {
 			try {
-				const friend = contacts.find((c) => c.id === state.contactUserId);
+				const friend = findContactById(state.contactUserId);
 				if (friend && friend.conversationId) {
 					sock.emit("conversation:join", { conversationId: friend.conversationId });
 				}
-				} catch (e) {
-					// ignore
-				}
+			} catch (e) {
+				// ignore
+			}
 		});
 	}
 	window.addEventListener("beforeunload", () => {
 		try {
-			const friend = contacts.find((c) => c.id === state.contactUserId);
+			const friend = findContactById(state.contactUserId);
 			if (friend && friend.conversationId) {
 				const s = getSocket();
 				if (s) s.emit("conversation:leave", { conversationId: friend.conversationId });
 			}
 		} catch (e) { /* ignore */ }
 	});
-				} catch (e) { /* ignore */ }
+} catch (e) { /* ignore */ }
+
+	// (reconnect handler is registered after initSocket below)
 	const chatProfilePic = document.querySelector(".chat-profile-picture");
 	const chatName = document.querySelector(".chat-name");
 	const closeChatBtn = document.getElementById("close-chat");
@@ -372,6 +408,25 @@ try {
 		cancelEditBtn,
 	});
 
+	// Robust overlay handlers: immediate close on single tap/click
+	if (chatOverlay) {
+		chatOverlay.addEventListener('click', (e) => {
+			if (state.isMenuOpen) {
+				_suppressNextClick = false;
+				closeContextMenu();
+				if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+			}
+		});
+
+		chatOverlay.addEventListener('touchend', (e) => {
+			if (state.isMenuOpen) {
+				_suppressNextClick = false;
+				closeContextMenu();
+				if (e && e.cancelable) e.preventDefault();
+			}
+		}, { passive: false });
+	}
+
 	initSelection({
 		chatEl,
 		messageContainer,
@@ -413,7 +468,7 @@ try {
 
 	initCardContextMenu(activeChatsContainer, (action, userId) => {
 		state.contactUserId = userId;
-		const friend = contacts.find((c) => c.id === userId);
+		const friend = findContactById(userId);
 		if (!friend) return;
 
 		if (action === "pin") {
@@ -456,9 +511,7 @@ try {
 			runSearch("");
 
 			state.contactUserId = contact.id;
-			chatProfilePic.src =
-				contact.profilePics[0] ||
-				"/assets/images/profile.jpeg";
+			chatProfilePic.src = safeSrc(contact.profilePics[0] || "/assets/images/profile.jpeg");
 			chatName.textContent = contact.nickname || contact.name;
 			openChat(true);
 			if (contact.conversationId) {
@@ -551,42 +604,54 @@ try {
 			addContactSubmit,
 			addFriendsBtn,
 		},
-		(newContact) => {
-			contacts.push({
-				...newContact,
-				contactId: newContact.contact?.id,
-				conversationId: newContact.conversationId,
-				profilePics: newContact.contact?.profilePics || [],
-				name: newContact.nickname || newContact.contact?.name || "",
-				username: newContact.contact?.username || "",
-				isOnline: false,
-				lastSeen: null,
-				bio: newContact.contact?.bio || "",
-				email: newContact.contact?.email || "",
-				lastMessage: "",
-				lastMessageTime: null,
-				lastMessageDate: null,
-				unreadCount: 0,
-				lastMessageSeen: true,
-			});
-			const _sock = getSocket();
-			if (_sock && newContact.conversationId) {
-				_sock.emit("conversation:join", { conversationId: newContact.conversationId });
-			}
+			(newContact) => {
+				const normalized = {
+					...newContact,
+					contactId: newContact.contact?.id,
+					conversationId: newContact.conversationId,
+					profilePics: newContact.contact?.profilePics || [],
+					name: newContact.nickname || newContact.contact?.name || "",
+					username: newContact.contact?.username || "",
+					isOnline: newContact.contact?.isOnline || false,
+					lastSeen: newContact.contact?.lastSeen || null,
+					bio: newContact.contact?.bio || "",
+					email: newContact.contact?.email || "",
+					lastMessage: "",
+					lastMessageTime: null,
+					lastMessageDate: null,
+					unreadCount: 0,
+					lastMessageSeen: true,
+					_previousContainer: 'contacts',
+				};
 
-			updateContactsEmptyState();
-			
-			const card = createContactCard(
-				{ ...newContact, hasMessages: false },
-				_onContactAction,
-			);
-			contactsContainer.appendChild(card);
-			state.contactUserId = newContact.id;
-			openChat(true);
-			if (newContact.conversationId) {
-				emitMessageSeen(newContact.conversationId);
-			}
-		},
+				// keep in-memory list in sync
+				contacts.push(normalized);
+				addContactToState(normalized);
+
+				const _sock = getSocket();
+				if (_sock && normalized.conversationId) {
+					_sock.emit("conversation:join", { conversationId: normalized.conversationId });
+				}
+
+				updateContactsEmptyState();
+
+				// build card from the normalized object so it has profile/name/bio filled
+				const card = createContactCard(
+					{ ...normalized, hasMessages: false },
+					_onContactAction,
+				);
+				contactsContainer.appendChild(card);
+
+				// set chat header immediately so opening the chat shows correct info
+				chatProfilePic.src = safeSrc(normalized.profilePics[0] || "/assets/images/profile.jpeg");
+				chatName.textContent = normalized.nickname || normalized.name;
+
+				state.contactUserId = normalized.id;
+				openChat(true);
+				if (normalized.conversationId) {
+					emitMessageSeen(normalized.conversationId);
+				}
+			},
 
 	);
 
@@ -611,6 +676,14 @@ try {
 			const userMsgs = messages[foundUserId];
 			userMsgs[foundIndex].text = data.text;
 			userMsgs[foundIndex].isEdited = true;
+			// If this edited message is the conversation's last message, update contact preview
+				const friend = findContactById(foundUserId);
+			if (friend && foundIndex === userMsgs.length - 1) {
+				friend.lastMessage = data.text;
+				refreshCard(friend);
+				sortActiveChats();
+				sortContacts();
+			}
 			if (state.contactUserId === foundUserId) {
 				const msgEl = document.querySelector(
 					`.chat-message[data-index="${foundIndex}"]`,
@@ -650,7 +723,7 @@ try {
 			}
 
 			// Update contact card last-message preview
-			const friend = contacts.find((c) => c.id === foundUserId);
+				const friend = findContactById(foundUserId);
 			if (friend) {
 				if (userMsgs.length > 0) {
 					const lastMsg = userMsgs.at(-1);
@@ -671,7 +744,7 @@ try {
 		},
 		// online
 		(userId) => {
-			const contact = contacts.find((c) => c.contactId === userId);
+			const contact = findContactByContactId(userId);
 			if (!contact) return;
 			contact.isOnline = true;
 			if (state.contactUserId === contact.id) {
@@ -681,7 +754,7 @@ try {
 		},
 		// offline
 		(userId, lastSeen) => {
-			const contact = contacts.find((c) => c.contactId === userId);
+			const contact = findContactByContactId(userId);
 			if (!contact) return;
 			contact.isOnline = false;
 			contact.lastSeen = lastSeen;
@@ -700,13 +773,13 @@ try {
 		},
 		// start typing
 		(userId) => {
-			const contact = contacts.find((c) => c.contactId === userId);
+			const contact = findContactByContactId(userId);
 			if (!contact || state.contactUserId !== contact.id) return;
 			chatTypingStatus.textContent = "typing...";
 		},
 		// stop typing
 		(userId) => {
-			const contact = contacts.find((c) => c.contactId === userId);
+			const contact = findContactByContactId(userId);
 			if (!contact || state.contactUserId !== contact.id) return;
 			chatTypingStatus.textContent = "";
 		},
@@ -729,12 +802,18 @@ try {
 	function updateContactsEmptyState() {
 		const empty = document.getElementById("contacts-empty");
 		if (!empty) return;
-		empty.style.display = contacts.length === 0 ? "flex" : "none";
+			if (contacts.length === 0) {
+				empty.classList.remove('d-none');
+				empty.classList.add('d-flex');
+			} else {
+				empty.classList.add('d-none');
+				empty.classList.remove('d-flex');
+			}
 	}
 
 	function _onContactAction(action, userId) {
 		state.contactUserId = userId;
-		const friend = contacts.find((c) => c.id === userId);
+		const friend = findContactById(userId);
 		if (!friend) return;
 		if (action === "pin") {
 			friend.isPinned = !friend.isPinned;
@@ -781,7 +860,7 @@ try {
 		}
 
 		const msgs = messages[state.contactUserId];
-		const friend = contacts.find((c) => c.id === state.contactUserId);
+		const friend = findContactById(state.contactUserId);
 
 		[...state.pinnedIndexes].reverse().forEach((idx) => {
 			const msg = msgs[idx];
@@ -842,17 +921,17 @@ try {
 				lastMessage: c.conversation?.messages?.[0]?.text || "",
 				lastMessageTime: c.conversation?.messages?.[0]
 					? new Date(
-							c.conversation.messages[0].createdAt,
-						).toLocaleTimeString([], {
-							hour: "2-digit",
-							minute: "2-digit",
-							hour12: false,
-						})
+						c.conversation.messages[0].createdAt,
+					).toLocaleTimeString([], {
+						hour: "2-digit",
+						minute: "2-digit",
+						hour12: false,
+					})
 					: null,
 				lastMessageDate: c.conversation?.messages?.[0]
 					? new Date(c.conversation.messages[0].createdAt)
-							.toISOString()
-							.slice(0, 10)
+						.toISOString()
+						.slice(0, 10)
 					: null,
 				unreadCount: c.unreadCount ?? 0,
 				lastMessageSeen: (() => {
@@ -860,20 +939,29 @@ try {
 					if (!lastMsg) return true;
 					return lastMsg.isSeen === true;
 				})(),
-			});
+				_previousContainer: 'contacts',
+			};
+			contacts.push(contactObj);
+			addContactToState(contactObj);
 		});
-	} catch {
-		console.error("Failed to load contacts");
+	} catch (err) {
+		console.error("Failed to load contacts", err);
 	}
+
+	// (skeleton placeholders already removed earlier)
+	// Batch DOM updates into fragments to avoid repeated reflows when
+	// rendering many contact cards.
+	const _activeFrag = document.createDocumentFragment();
+	const _contactsFrag = document.createDocumentFragment();
 	contacts.forEach((contact) => {
 		if (
 			contact.isPinned ||
 			contact.unreadCount > 0 ||
 			contact.lastMessageSeen === false
 		) {
-			activeChatsContainer.appendChild(createActiveChatCard(contact));
+			_activeFrag.appendChild(createActiveChatCard(contact));
 		} else {
-			contactsContainer.appendChild(
+			_contactsFrag.appendChild(
 				createContactCard(
 					{ ...contact, hasMessages: !!contact.lastMessage },
 					_onContactAction,
@@ -881,6 +969,8 @@ try {
 			);
 		}
 	});
+	if (activeChatsContainer) activeChatsContainer.appendChild(_activeFrag);
+	if (contactsContainer) contactsContainer.appendChild(_contactsFrag);
 	updateTotalUnreadCount();
 	sortActiveChats();
 	sortContacts();
@@ -899,13 +989,23 @@ try {
 		});
 	}
 
+	// debounce helper to limit search frequency
+	function debounce(fn, wait = 200) {
+		let t = null;
+		return (...args) => {
+			if (t) clearTimeout(t);
+			t = setTimeout(() => fn(...args), wait);
+		};
+	}
+
 	if (searchInput) {
 		searchbar.addEventListener("click", () => {
 			searchbar.classList.toggle("open");
 			if (searchbar.classList.contains("open")) searchInput.focus();
 		});
+		const debouncedSearch = debounce((v) => runSearch(v), 225);
 		searchInput.addEventListener("input", () => {
-			runSearch(searchInput.value.trim().toLowerCase());
+			debouncedSearch(searchInput.value.trim().toLowerCase());
 		});
 	}
 
@@ -925,8 +1025,8 @@ try {
 	if (closeChatBtn) {
 		closeChatBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
-			chatEl.textContent = "";
-			const friend = contacts.find((c) => c.id === state.contactUserId);
+			while (chatEl.firstChild) chatEl.removeChild(chatEl.firstChild);
+			const friend = findContactById(state.contactUserId);
 			if (friend) {
 				friend.isInChat = false;
 				// local-only: do not persist isInChat from client
@@ -950,9 +1050,7 @@ try {
 			const active = e.target.closest(".active-chat");
 			if (!active) return;
 
-			const prevFriend = contacts.find(
-				(c) => c.id === state.contactUserId,
-			);
+			const prevFriend = findContactById(state.contactUserId);
 			if (prevFriend && prevFriend.id !== Number(active.dataset.userId)) {
 				// leave previous conversation room if any
 				try {
@@ -975,7 +1073,7 @@ try {
 			}
 
 			state.contactUserId = Number(active.dataset.userId);
-			const friend = contacts.find((c) => c.id === state.contactUserId);
+			const friend = findContactById(state.contactUserId);
 			if (!friend) return;
 
 			// join the new conversation room so server considers us present
@@ -993,12 +1091,13 @@ try {
 			const unreadEl = active.querySelector(
 				".active-chat-unread-messages",
 			);
-			if (unreadEl) unreadEl.style.opacity = "0";
+			if (unreadEl) {
+				unreadEl.classList.add('opacity-0');
+				unreadEl.classList.remove('opacity-1');
+			}
 			updateTotalUnreadCount();
 
-			chatProfilePic.src =
-				friend.profilePics[0] ||
-				"/assets/images/profile.jpeg";
+			chatProfilePic.src = safeSrc(friend.profilePics[0] || "/assets/images/profile.jpeg");
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 			if (friend.conversationId) {
@@ -1006,15 +1105,19 @@ try {
 			}
 			scrollChatToBottom();
 
-			if (friend.isBlocked) {
-				messageContainer.style.display = "none";
-				const _ub = unblockActionBtn[0];
-				if (_ub) _ub.style.display = "flex";
-			} else {
-				messageContainer.style.display = "flex";
-				const _ub = unblockActionBtn[0];
-				if (_ub) _ub.style.display = "none";
-			}
+				if (friend.isBlocked) {
+					messageContainer.classList.add('d-none');
+					if (unblockActionBtn[0]) {
+						unblockActionBtn[0].classList.remove('d-none');
+						unblockActionBtn[0].classList.add('d-flex');
+					}
+				} else {
+					messageContainer.classList.remove('d-none');
+					if (unblockActionBtn[0]) {
+						unblockActionBtn[0].classList.add('d-none');
+						unblockActionBtn[0].classList.remove('d-flex');
+					}
+				}
 
 			const existingCard = activeChatsContainer.querySelector(
 				`[data-user-id="${friend.id}"]`,
@@ -1034,9 +1137,7 @@ try {
 			const card = e.target.closest(".contacts-card");
 			if (!card) return;
 
-			const prevFriend = contacts.find(
-				(c) => c.id === state.contactUserId,
-			);
+			const prevFriend = findContactById(state.contactUserId);
 			if (prevFriend && prevFriend.id !== Number(card.dataset.userId)) {
 					// leave previous conversation room if any
 					try {
@@ -1059,7 +1160,7 @@ try {
 			}
 
 			state.contactUserId = Number(card.dataset.userId);
-			const friend = contacts.find((c) => c.id === state.contactUserId);
+			const friend = findContactById(state.contactUserId);
 			if (!friend) return;
 
 			// join the new conversation room so server considers us present
@@ -1076,25 +1177,29 @@ try {
 			// local-only: do not persist isInChat from client
 			updateTotalUnreadCount();
 
+			// remember where this card came from so undo/delete logic can restore correctly
+			friend._previousContainer = 'contacts';
 			card.remove();
 			activeChatsContainer.appendChild(createActiveChatCard(friend));
 
-			chatProfilePic.src =
-				friend.profilePics[0] ||
-				"/assets/images/profile.jpeg";
+			chatProfilePic.src = safeSrc(friend.profilePics[0] || "/assets/images/profile.jpeg");
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 			if (friend.conversationId) {
 				emitMessageSeen(friend.conversationId);
 			}
 			if (friend.isBlocked) {
-				messageContainer.style.display = "none";
-				const _ub = unblockActionBtn[0];
-				if (_ub) _ub.style.display = "flex";
+				messageContainer.classList.add('d-none');
+				if (unblockActionBtn[0]) {
+					unblockActionBtn[0].classList.remove('d-none');
+					unblockActionBtn[0].classList.add('d-flex');
+				}
 			} else {
-				messageContainer.style.display = "flex";
-				const _ub = unblockActionBtn[0];
-				if (_ub) _ub.style.display = "none";
+				messageContainer.classList.remove('d-none');
+				if (unblockActionBtn[0]) {
+					unblockActionBtn[0].classList.add('d-none');
+					unblockActionBtn[0].classList.remove('d-flex');
+				}
 			}
 			scrollChatToBottom();
 		});
@@ -1115,11 +1220,11 @@ try {
 					: "ltr";
 
 			if (messageInput.value.trim().length > 0) {
-				sendMessageBtn.style.display = "block";
-				if (cancelEditBtn.style.display === "block")
-					cancelEditBtn.style.display = "none";
+				sendMessageBtn.classList.remove('d-none');
+				if (cancelEditBtn && !cancelEditBtn.classList.contains('d-none'))
+					cancelEditBtn.classList.add('d-none');
 			} else {
-				sendMessageBtn.style.display = "none";
+				sendMessageBtn.classList.add('d-none');
 			}
 
 			messageInput.style.height = "auto";
@@ -1150,8 +1255,13 @@ try {
 					"rem";
 			}
 
+			// If the user was near the bottom before input changed, keep the
+			// view pinned after padding updates. Wait for the padding
+			// transition to finish so scrollHeight reflects the final value.
+			if (wasNearBottom) scrollChatToBottomAfterPadding();
+
 			// typing emit
-			const _contact = contacts.find((c) => c.id === state.contactUserId);
+			const _contact = findContactById(state.contactUserId);
 			if (_contact?.conversationId) {
 				emitTypingStart(_contact.conversationId);
 				clearTimeout(_typingTimeout);
@@ -1211,6 +1321,7 @@ try {
 			state.touchTimeout = setTimeout(() => {
 				if (!msg || didSwipe) return;
 				openContextMenu(msg, e);
+				_suppressNextClick = true;
 			}, 500);
 		});
 
@@ -1237,10 +1348,17 @@ try {
 				const progress = Math.min(dx / SWIPE_THRESHOLD, 1);
 				const translate = Math.min(dx * 0.4, SWIPE_THRESHOLD * 0.4);
 
-				swipeMsg.style.translate = `${translate}px 0`;
+				// Use transform class to avoid inline style where possible
+				swipeMsg.style.transform = `translateX(${translate}px)`;
 
 				if (swipeIcon) {
-					swipeIcon.style.opacity = progress;
+					if (progress > 0) {
+						swipeIcon.classList.add('opacity-1');
+						swipeIcon.classList.remove('opacity-0');
+					} else {
+						swipeIcon.classList.add('opacity-0');
+						swipeIcon.classList.remove('opacity-1');
+					}
 					// trigger bounce while swiping when threshold is reached
 					if (progress >= 1 && !swipeBounced) {
 						swipeBounced = true;
@@ -1278,7 +1396,7 @@ try {
 			if (swipeMsg) {
 				const dx = e.changedTouches[0].clientX - swipeStartX;
 
-				swipeMsg.style.translate = "";
+				swipeMsg.style.transform = '';
 
 				if (dx >= SWIPE_THRESHOLD && didSwipe) {
 					// trigger reply immediately; do not add bounce on touchend
@@ -1311,6 +1429,10 @@ try {
 		});
 
 		chatEl.addEventListener("click", (e) => {
+			if (_suppressNextClick) {
+				_suppressNextClick = false;
+				return;
+			}
 			if (state.isSelecting) {
 				const msg = e.target.closest(".chat-message");
 				if (!msg) return;
@@ -1345,6 +1467,10 @@ try {
 
 		chatEl.addEventListener("scroll", () => {
 			if (state.isProgrammaticScroll) return;
+			// load older messages when user scrolls to top area
+			if (chatEl.scrollTop <= 60) {
+				loadOlderMessages();
+			}
 			const distanceFromBottom =
 				chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight;
 			scrollToBottomBtn.classList.toggle(
@@ -1414,11 +1540,8 @@ try {
 					if (!msgs) return;
 					pinnedMessageText.textContent = msgs.text;
 					pinnedMessageText.dataset.index = prevIdx;
-					pinnedMessageContainer.style.animation = "highlightPin 0.5s";
-					setTimeout(
-						() => (pinnedMessageContainer.style.animation = ""),
-						500,
-					);
+					pinnedMessageContainer.classList.add('highlight-pin');
+					setTimeout(() => pinnedMessageContainer.classList.remove('highlight-pin'), 500);
 					updatePinCount(prevIdx);
 				}, 800);
 			}
@@ -1454,44 +1577,40 @@ try {
 			const card = e.target.closest(".forwarded-contact-card");
 			if (!card) return;
 
-			const friend = contacts.find(
-				(c) => c.id === Number(card.dataset.userId),
-			);
+			const friend = findContactById(Number(card.dataset.userId));
 			if (!friend) return;
 
 			if (state.isSelectionForwarding) {
-				const sourceName =
-					contacts.find((c) => c.id === state.contactUserId)?.name ??
-					"Unknown";
+				const sourceName = findContactById(state.contactUserId)?.name ?? "Unknown";
 				executeBulkForward(friend, sourceName);
 				return;
 			}
 
 			// Single message forward
-			const senderName = messages[state.contactUserId][
-				Number(state.msgIndex)
-			].user
+			const senderName = messages[state.contactUserId][Number(state.msgIndex)].user
 				? "You"
-				: contacts.find((c) => c.id === state.contactUserId)?.name;
+				: findContactById(state.contactUserId)?.name;
 
-			chatProfilePic.src =
-				friend.profilePics[0] ||
-				"/assets/images/profile.jpeg";
+			chatProfilePic.src = safeSrc(friend.profilePics[0] || "/assets/images/profile.jpeg");
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 			if (friend.isBlocked) {
-				messageContainer.style.display = "none";
-				const _ub = unblockActionBtn[0];
-				if (_ub) _ub.style.display = "flex";
-				return;
-			} else {
-				messageContainer.style.display = "flex";
-				const _ub = unblockActionBtn[0];
-				if (_ub) _ub.style.display = "none";
-			}
+					messageContainer.classList.add('d-none');
+					if (unblockActionBtn[0]) {
+						unblockActionBtn[0].classList.remove('d-none');
+						unblockActionBtn[0].classList.add('d-flex');
+					}
+					return;
+				} else {
+					messageContainer.classList.remove('d-none');
+					if (unblockActionBtn[0]) {
+						unblockActionBtn[0].classList.add('d-none');
+						unblockActionBtn[0].classList.remove('d-flex');
+					}
+				}
 			injectMessages(friend.id);
 
-			msgAction.style.display = "flex";
+			msgAction.classList.remove('d-none');
 			state.actionPreviewHeight =
 				msgAction.getBoundingClientRect().height / 14;
 			chatEl.style.paddingBottom =
@@ -1501,8 +1620,8 @@ try {
 				messages[state.contactUserId][Number(state.msgIndex)];
 			if (!msgs) return;
 			msgActionmsg.textContent = msgs.text;
-			messageInput.style.borderRadius = "0 0 2rem 2rem";
-			sendMessageBtn.style.display = "block";
+			messageInput.classList.add('input-rounded-bottom');
+			sendMessageBtn.classList.remove('d-none');
 			scrollChatToBottom();
 
 			state.isForwarding = true;
@@ -1527,7 +1646,7 @@ try {
 				state.currentUndoAction();
 				state.currentUndoAction = null;
 			}
-			toaster.style.opacity = 0;
+				if (toaster) toaster.classList.add('opacity-0');
 		});
 	}
 
@@ -1551,7 +1670,7 @@ try {
 		deleteMsg[0].addEventListener("click", () => {
 			closeContextMenu();
 
-			const friend = contacts.find((c) => c.id === state.contactUserId);
+			const friend = findContactById(state.contactUserId);
 			const prevLastMessage = friend?.lastMessage;
 			const prevLastMessageTime = friend?.lastMessageTime;
 			const prevLastMessageSeen = friend?.lastMessageSeen;
@@ -1703,8 +1822,8 @@ try {
 	if (emojiBtn && emojiPicker && sendMessageBtn) {
 		emojiBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
-			const isOpen = emojiPicker.style.display === "block";
-			emojiPicker.style.display = isOpen ? "none" : "block";
+			const isOpen = !emojiPicker.classList.contains('d-none');
+			emojiPicker.classList.toggle('d-none', isOpen);
 		});
 
 		emojiPicker.addEventListener("emoji-click", (e) => {
@@ -1719,11 +1838,11 @@ try {
 			messageInput.selectionStart = messageInput.selectionEnd =
 				savedSelectionStart;
 			messageInput.dispatchEvent(new Event("input"));
-			emojiPicker.style.display = "none";
+			emojiPicker.classList.add('d-none');
 			messageInput.focus();
 
 			if (messageInput.value.trim().length > 0) {
-				sendMessageBtn.style.display = "block";
+				sendMessageBtn.classList.remove('d-none');
 			}
 		});
 	}

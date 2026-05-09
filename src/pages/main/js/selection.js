@@ -15,6 +15,7 @@ import {
 	moveToContacts,
 } from "./chat-logic.js";
 import { emitMessageSeen } from "./socket.js";
+import { safeSrc } from "../../../utils/dom.js";
 
 let _dom = {};
 
@@ -36,8 +37,9 @@ export function enterSelectionMode(idx) {
 	state.isSelecting = true;
 	state.selectedMessages = [idx];
 	_dom.chatEl.classList.add("selection-mode");
-	_dom.messageContainer.style.display = "none";
-	_dom.selectionToolbar.style.display = "flex";
+	_dom.messageContainer.classList.add('d-none');
+	_dom.selectionToolbar.classList.remove('d-none');
+	_dom.selectionToolbar.classList.add('d-flex');
 
 	const msgEl = _dom.chatEl.querySelector(`[data-index="${idx}"]`);
 	if (msgEl) msgEl.classList.add("selected");
@@ -53,8 +55,8 @@ export function cancelSelection() {
 		.querySelectorAll(".selected")
 		.forEach((m) => m.classList.remove("selected"));
 
-	_dom.messageContainer.style.display = "flex";
-	_dom.selectionToolbar.style.display = "none";
+	_dom.messageContainer.classList.remove('d-none');
+	_dom.selectionToolbar.classList.add('d-none');
 }
 
 export function updateSelectionCount() {
@@ -106,15 +108,16 @@ export function handleBulkDelete() {
 	state.currentUndoAction = () => {
 		state.deletingTimeouts.forEach((t) => clearTimeout(t));
 		state.deletingTimeouts = [];
-		_dom.chatEl.querySelectorAll(".chat-message").forEach((m) => {
-			if (parseFloat(m.style.opacity) < 1) {
-				m.style.transition = "opacity 0.15s ease";
-				m.style.opacity = 1;
-				setTimeout(() => {
-					m.style.transition = "";
-				}, 150);
-			}
-		});
+			_dom.chatEl.querySelectorAll(".chat-message").forEach((m) => {
+				if (parseFloat(getComputedStyle(m).opacity) < 1) {
+					m.classList.add('fading');
+					m.classList.remove('opacity-0');
+					m.classList.add('opacity-1');
+					setTimeout(() => {
+						m.classList.remove('fading');
+					}, 150);
+				}
+			});
 		// restore deleted messages in state
 		if (friend) {
 			friend.lastMessage = prevLastMessage;
@@ -172,8 +175,7 @@ export function executeBulkForward(friend, sourceName) {
 	cancelSelection();
 	_dom.forwardDialog.close();
 
-	_dom.chatProfilePic.src =
-		friend.profilePics[0] || "/assets/images/profile.jpeg";
+	_dom.chatProfilePic.src = safeSrc(friend.profilePics[0] || "/assets/images/profile.jpeg");
 	_dom.chatName.textContent = friend.nickname || friend.name;
 	openChat(true);
 	injectMessages(friend.id);
@@ -181,15 +183,17 @@ export function executeBulkForward(friend, sourceName) {
 	const convId = friend.conversationId ?? contacts.find((c) => c.id === friend.id)?.conversationId;
 	if (convId) emitMessageSeen(convId);
 
-	_dom.msgAction.style.display = "flex";
+	_dom.msgAction.classList.remove('d-none');
+	_dom.msgAction.classList.add('d-flex');
 	state.actionPreviewHeight =
 		_dom.msgAction.getBoundingClientRect().height / 14;
 	_dom.chatEl.style.paddingBottom =
 		basePadding + state.actionPreviewHeight + "rem";
 	_dom.msgActionText.textContent = "Forwarding from: " + sourceName;
 	_dom.msgActionmsg.textContent = `${forwardingMsgs.length} messages`;
-	_dom.messageInput.style.borderRadius = "0 0 2rem 2rem";
-	_dom.sendMessageBtn.style.display = "block";
+	_dom.messageInput.classList.add('input-rounded-bottom');
+	_dom.sendMessageBtn.classList.remove('d-none');
+	_dom.sendMessageBtn.classList.add('d-block');
 
 	state.isForwarding = true;
 	state.forwardingMsgs = forwardingMsgs;

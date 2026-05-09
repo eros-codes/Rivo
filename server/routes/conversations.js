@@ -35,6 +35,8 @@ router.get("/", requireAuth, async (req, res) => {
 				},
 			},
 			orderBy: { lastMessageAt: "desc" },
+			take: limit,
+			skip,
 		});
 
 		return res.json(conversations);
@@ -60,8 +62,10 @@ router.get("/:id", requireAuth, async (req, res) => {
 			return res.status(403).json({ error: "Forbidden" });
 		}
 
+		const limit = Math.min(200, parseIntSafe(req.query.limit) || 100);
+
 		const conversation = await prisma.conversation.findUnique({
-			where: { id: conversationId },
+			where: { id: convId },
 			include: {
 				members: {
 					include: {
@@ -79,7 +83,8 @@ router.get("/:id", requireAuth, async (req, res) => {
 				},
 				messages: {
 					where: { isDeleted: false },
-					orderBy: { createdAt: "asc" },
+					orderBy: { createdAt: "desc" },
+					take: limit,
 					include: {
 						sender: {
 							select: {
@@ -93,6 +98,10 @@ router.get("/:id", requireAuth, async (req, res) => {
 				},
 			},
 		});
+
+		if (conversation && Array.isArray(conversation.messages)) {
+			conversation.messages = conversation.messages.reverse();
+		}
 
 		return res.json(conversation);
 	} catch (err) {

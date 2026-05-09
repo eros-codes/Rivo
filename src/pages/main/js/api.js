@@ -1,3 +1,5 @@
+import { safeFetch } from "../../../utils/fetch.js";
+
 // Use credentials (cookies) for auth; no Authorization header from localStorage.
 export function getCsrfToken() {
 	const m = document.cookie.match(/(?:^|; )csrfToken=([^;]+)/);
@@ -142,6 +144,13 @@ export async function getMe() {
 		credentials: "include",
 		headers: buildHeaders(),
 	});
+}
+
+export async function searchUsers(q) {
+    return await safeFetch(`/api/users/search?q=${encodeURIComponent(q)}`, {
+        credentials: "include",
+        headers: buildHeaders(),
+    });
 }
 
 export async function updateMe(changes) {

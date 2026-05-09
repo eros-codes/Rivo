@@ -1,0 +1,39 @@
+diff a/src/pages/main/js/state.js b/src/pages/main/js/state.js	(rejected hunks)
+@@ -26,6 +26,37 @@ export const state = {
+ // ΓöÇΓöÇΓöÇ Contacts ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ export const contacts = [];
+ 
++// Maps for faster lookups. Keep these in sync via helpers below.
++export const contactsById = new Map();
++export const contactsByConversation = new Map();
++export const contactsByContactId = new Map();
++
++export function addContactToState(contact) {
++	if (!contact) return;
++	if (contact && typeof contact.id !== 'undefined') contactsById.set(contact.id, contact);
++	if (contact && typeof contact.contactId !== 'undefined') contactsByContactId.set(contact.contactId, contact);
++	if (contact && typeof contact.conversationId !== 'undefined' && contact.conversationId !== null) contactsByConversation.set(contact.conversationId, contact);
++}
++
++export function updateContactInState(contact) {
++	if (!contact) return;
++	if (typeof contact.id !== 'undefined') contactsById.set(contact.id, contact);
++	if (typeof contact.contactId !== 'undefined') contactsByContactId.set(contact.contactId, contact);
++	if (typeof contact.conversationId !== 'undefined' && contact.conversationId !== null) contactsByConversation.set(contact.conversationId, contact);
++}
++
++export function findContactByConversationId(conversationId) {
++	return contactsByConversation.get(conversationId) || null;
++}
++
++export function findContactById(id) {
++	return contactsById.get(id) || null;
++}
++
++export function findContactByContactId(contactId) {
++	return contactsByContactId.get(contactId) || null;
++}
++
+ // ΓöÇΓöÇΓöÇ Messages ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ export const messages = {};
+ 

@@ -1,12 +1,6 @@
-function safeSrc(url) {
-	if (!url) return "/assets/images/profile.jpeg";
-	const u = String(url).trim();
-	if (u.startsWith("http://") || u.startsWith("https://") || u.startsWith("/")) return u;
-	if (u.startsWith("data:image/")) return u;
-	return "/assets/images/profile.jpeg";
-}
+import { safeSrc } from "../../utils/dom.js";
 
-export function createForwardedContactCard({ name, profilePics, isOnline, id }) {
+export function createForwardedContactCard({ name, nickname, profilePics, isOnline, id }) {
 	const card = document.createElement("span");
 	card.className = "forwarded-contact-card";
 	card.dataset.userId = id;
@@ -18,7 +12,7 @@ export function createForwardedContactCard({ name, profilePics, isOnline, id }) 
 
 	const nameEl = document.createElement("span");
 	nameEl.className = "forwarded-contact-name";
-	nameEl.textContent = name || "";
+	nameEl.textContent = nickname || name || "";
 
 	card.appendChild(img);
 	card.appendChild(nameEl);

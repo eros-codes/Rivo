@@ -1,0 +1,10 @@
+diff a/src/pages/main/js/ui.js b/src/pages/main/js/ui.js	(rejected hunks)
+@@ -2,6 +2,8 @@ import { parseSvg } from "../../../utils/svg.js";
+ 
+ // ΓöÇΓöÇΓöÇ Toast ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ let _t = {};
++let _toastHideTimer = null;
++let _toastDisplayTimer = null;
+ 
+ /**
+ 

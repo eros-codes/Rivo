@@ -39,7 +39,7 @@
     border: 1px solid var(--glass-input-border-color);
     border-radius: 0.6rem;
     padding: 0.6rem 0.8rem;
-	color: var(--text-secondary-color);
+	color: var(--text-main-color);
     font-size: 0.9rem;
     outline: none;
     transition: border-color 0.2s;

@@ -44,10 +44,15 @@ model Contact {
   unreadCount    Int          @default(0)
   conversation   Conversation @relation(fields: [conversationId], references: [id])
   conversationId Int
+  @@index([conversationId])
+  @@index([ownerId])
 }
 
 model Conversation {
   id            Int                  @id @default(autoincrement())
+  // Deterministic participants key (sorted user ids) to enforce a unique
+  // conversation per participant set. Add a migration after this change.
+  participantsKey String?            @unique
   createdAt     DateTime             @default(now())
   lastMessageAt DateTime?
   members       ConversationMember[]
@@ -61,6 +66,7 @@ model ConversationMember {
   userId         Int
   conversation   Conversation @relation(fields: [conversationId], references: [id])
   conversationId Int
+  @@index([conversationId])
 }
 
 model Message {
@@ -80,4 +86,5 @@ model Message {
   forwardedFrom  String?
   forwardedText  String?
   createdAt      DateTime     @default(now())
+  @@index([conversationId])
 }

@@ -30,6 +30,8 @@ export function moveToContacts(friend) {
 	);
 	const wrapper = activeCard?.closest(".active-chat-wrapper") ?? activeCard;
 	if (wrapper) {
+		// record that this friend was in active chats before moving
+		friend._previousContainer = 'active';
 		wrapper.remove();
 		_dom.contactsContainer.appendChild(
 			createContactCard(
@@ -46,6 +48,8 @@ export function moveToActiveChats(friend) {
 		`[data-user-id="${friend.id}"]`,
 	);
 	if (contactCard) {
+		// record that this friend was in contacts before moving
+		friend._previousContainer = 'contacts';
 		contactCard.remove();
 		_dom.activeChatsContainer.appendChild(createActiveChatCard(friend));
 	} else {

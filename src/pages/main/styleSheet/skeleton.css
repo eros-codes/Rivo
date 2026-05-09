@@ -1,0 +1,90 @@
+/* ─── Skeleton variables ─────────────────────────────────────────────────── */
+:root {
+    --skel-base: rgba(0, 0, 0, 0.07);
+    --skel-shine: rgba(255, 255, 255, 0.65);
+}
+
+body.dark-mode {
+    --skel-base: rgba(255, 255, 255, 0.07);
+    --skel-shine: rgba(255, 255, 255, 0.13);
+}
+
+/* ─── Animation ──────────────────────────────────────────────────────────── */
+@keyframes shimmer {
+    0%   { background-position: -200% center; }
+    100% { background-position:  200% center; }
+}
+
+/* ─── Base shimmer mixin ─────────────────────────────────────────────────── */
+.skel-avatar,
+.skel-line,
+.skel-message {
+    background: linear-gradient(
+        105deg,
+        var(--skel-base) 40%,
+        var(--skel-shine) 50%,
+        var(--skel-base) 60%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* ─── Shapes ─────────────────────────────────────────────────────────────── */
+.skel-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.skel-line {
+    height: 10px;
+    border-radius: 6px;
+    display: block;
+}
+
+.skel-message {
+    height: 36px;
+    border-radius: 1rem;
+    max-width: 65%;
+}
+
+/* ─── Layout helpers ─────────────────────────────────────────────────────── */
+.skel-card {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 14px;
+}
+
+.skel-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex: 1;
+    flex-direction: column;
+}
+
+.skel-incoming { align-self: flex-start; }
+.skel-outgoing { align-self: flex-end; }
+
+.skeleton-placeholder { pointer-events: none; }
+
+/* ─── Stagger delays for natural feel ───────────────────────────────────── */
+.skeleton-placeholder:nth-child(2) .skel-avatar,
+.skeleton-placeholder:nth-child(2) .skel-line,
+.skeleton-placeholder:nth-child(2) .skel-message {
+    animation-delay: 0.15s;
+}
+
+.skeleton-placeholder:nth-child(3) .skel-avatar,
+.skeleton-placeholder:nth-child(3) .skel-line,
+.skeleton-placeholder:nth-child(3) .skel-message {
+    animation-delay: 0.3s;
+}
+
+.skeleton-placeholder:nth-child(4) .skel-avatar,
+.skeleton-placeholder:nth-child(4) .skel-line,
+.skeleton-placeholder:nth-child(4) .skel-message {
+    animation-delay: 0.45s;
+}

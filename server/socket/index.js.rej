@@ -1,0 +1,38 @@
+diff a/server/socket/index.js b/server/socket/index.js	(rejected hunks)
+@@ -23,8 +54,8 @@ export function initSocket(httpServer) {
+ 
+ 	// Simple per-socket rate limiter: Map<socketId, Array<timestamp>>
+ 	const sendRate = new Map();
+-	const RATE_LIMIT_WINDOW_MS = parseInt(process.env.SOCKET_RATE_WINDOW_MS || "10000"); // 10s
+-	const RATE_LIMIT_MAX = parseInt(process.env.SOCKET_RATE_MAX || "20"); // max messages per window
++	const RATE_LIMIT_WINDOW_MS = parseInt(process.env.SOCKET_RATE_WINDOW_MS || "10000", 10); // 10s
++	const RATE_LIMIT_MAX = parseInt(process.env.SOCKET_RATE_MAX || "20", 10); // max messages per window
+ 
+ 	// ΓöÇΓöÇΓöÇ Auth middleware ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ 	io.use(async (socket, next) => {
+@@ -306,8 +358,10 @@ export function initSocket(httpServer) {
+ 		// ΓöÇΓöÇΓöÇ Pin/Unpin message ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ 		socket.on("message:pin", async ({ messageId }, callback) => {
+ 			try {
++				const mid = parseIntSafe(messageId);
++				if (!mid) return callback?.({ error: "Invalid data" });
+ 				const message = await prisma.message.findUnique({
+-					where: { id: messageId },
++					where: { id: mid },
+ 				});
+ 				if (!message) return callback?.({ error: "Not found" });
+ 
+@@ -516,9 +570,12 @@ export function initSocket(httpServer) {
+ 		// ΓöÇΓöÇΓöÇ Message seen ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ 		socket.on("message:seen", async ({ conversationId }, callback) => {
+ 			try {
++			const cid = parseIntSafe(conversationId);
++			if (!cid) return callback?.({ success: true, marked: [] });
++
+ 				const member = await prisma.conversationMember.findFirst({
+ 					where: {
+-						conversationId,
++						conversationId: cid,
+ 						userId: socket.userId,
+ 					},
+ 				});

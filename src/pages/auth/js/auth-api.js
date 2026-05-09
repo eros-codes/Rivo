@@ -10,7 +10,10 @@ export async function loginUser(identifier, password) {
 		});
 		return { ok: true, data };
 	} catch (err) {
-		return { ok: false, data: err.body || { error: err.message } };
+		const message = (err && err.body)
+			? (typeof err.body === 'object' ? (err.body.error || JSON.stringify(err.body)) : String(err.body))
+			: (err.message || 'Unknown error');
+		return { ok: false, data: { error: message } };
 	}
 }
 
@@ -24,7 +27,10 @@ export async function registerUser(name, email, username, password) {
 		});
 		return { ok: true, data };
 	} catch (err) {
-		return { ok: false, data: err.body || { error: err.message } };
+		const message = (err && err.body)
+			? (typeof err.body === 'object' ? (err.body.error || JSON.stringify(err.body)) : String(err.body))
+			: (err.message || 'Unknown error');
+		return { ok: false, data: { error: message } };
 	}
 }
 
@@ -38,6 +44,9 @@ export async function resetPassword(identifier, newPassword) {
 		});
 		return { ok: true, data };
 	} catch (err) {
-		return { ok: false, data: err.body || { error: err.message } };
+		const message = (err && err.body)
+			? (typeof err.body === 'object' ? (err.body.error || JSON.stringify(err.body)) : String(err.body))
+			: (err.message || 'Unknown error');
+		return { ok: false, data: { error: message } };
 	}
 }

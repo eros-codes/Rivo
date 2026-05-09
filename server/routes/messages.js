@@ -18,16 +18,39 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
 			},
 		});
 
-		if (!member) {
-			return res.status(403).json({ error: "Forbidden" });
+		if (!member) return res.status(403).json({ error: "Forbidden" });
+
+		let where = {
+			conversationId,
+			isDeleted: false,
+		};
+
+		if (before && beforeId) {
+			where = {
+				...where,
+				AND: [
+					{
+						OR: [
+							{ createdAt: { lt: before } },
+							{
+								AND: [
+									{ createdAt: before },
+									{ id: { lt: beforeId } },
+								],
+							},
+						],
+					},
+				],
+			};
+		} else if (before) {
+			where = { ...where, createdAt: { lt: before } };
 		}
 
-		const messages = await prisma.message.findMany({
-			where: {
-				conversationId,
-				isDeleted: false,
-			},
-			orderBy: { createdAt: "asc" },
+		// fetch newest messages first then reverse so client receives ascending order
+		const msgs = await prisma.message.findMany({
+			where,
+			orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+			take: limit,
 			include: {
 				sender: {
 					select: {
@@ -40,7 +63,7 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
 			},
 		});
 
-		return res.json(messages);
+		return res.json(msgs.reverse());
 	} catch (err) {
 		console.error(err);
 		return res.status(500).json({ error: "Server error" });
@@ -61,29 +84,41 @@ router.post("/", requireAuth, async (req, res) => {
 
 	const convId = parseIntSafe(conversationId);
 	if (!convId || !isNonEmptyString(text, MAX_MESSAGE_LENGTH)) {
-		return res
-			.status(400)
-			.json({ error: "conversationId and text are required or invalid" });
+		return res.status(400).json({ error: "conversationId and text are required or invalid" });
+	}
+
+	// validate optional fields: names and forwarded text lengths
+	if (replyToName && (typeof replyToName !== "string" || replyToName.trim().length === 0 || replyToName.trim().length > MAX_NAME_LENGTH)) {
+		return res.status(400).json({ error: "Invalid replyToName" });
+	}
+	if (replyToText && (typeof replyToText !== "string" || replyToText.trim().length > MAX_MESSAGE_LENGTH)) {
+		return res.status(400).json({ error: "Invalid replyToText" });
+	}
+	if (forwardedFrom && (typeof forwardedFrom !== "string" || forwardedFrom.trim().length === 0 || forwardedFrom.trim().length > MAX_NAME_LENGTH)) {
+		return res.status(400).json({ error: "Invalid forwardedFrom" });
+	}
+	if (forwardedText && (typeof forwardedText !== "string" || forwardedText.trim().length > MAX_MESSAGE_LENGTH)) {
+		return res.status(400).json({ error: "Invalid forwardedText" });
 	}
 
 	try {
 		const member = await prisma.conversationMember.findFirst({
 			where: {
-				conversationId,
+				conversationId: convId,
 				userId: req.userId,
 			},
 		});
 
-		if (!member) {
-			return res.status(403).json({ error: "Forbidden" });
-		}
+		if (!member) return res.status(403).json({ error: "Forbidden" });
 
-		const message = await prisma.message.create({
+				// parse replyToId safely (if provided) to avoid string IDs
+				const rId = parseIntSafe(replyToId);
+				const message = await prisma.message.create({
 			data: {
-				conversationId,
+				conversationId: convId,
 				senderId: req.userId,
 				text: text.trim(),
-				...(replyToId && { replyToId }),
+				...(rId && { replyToId: rId }),
 				...(replyToName && { replyToName }),
 				...(replyToText && { replyToText }),
 				...(forwardedFrom && { forwardedFrom }),
@@ -124,24 +159,14 @@ router.patch("/:id", requireAuth, async (req, res) => {
 	}
 
 	try {
-		const message = await prisma.message.findUnique({
-			where: { id: messageId },
-		});
+		const message = await prisma.message.findUnique({ where: { id: messageId } });
 
-		if (!message) {
-			return res.status(404).json({ error: "Message not found" });
-		}
-
-		if (message.senderId !== req.userId) {
-			return res.status(403).json({ error: "Forbidden" });
-		}
+		if (!message) return res.status(404).json({ error: "Message not found" });
+		if (message.senderId !== req.userId) return res.status(403).json({ error: "Forbidden" });
 
 		const updated = await prisma.message.update({
 			where: { id: messageId },
-			data: {
-				text: text.trim(),
-				isEdited: true,
-			},
+			data: { text: text.trim(), isEdited: true },
 		});
 
 		return res.json(updated);

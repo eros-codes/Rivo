@@ -1,0 +1,183 @@
+diff a/server/index.js b/server/index.js	(rejected hunks)
+@@ -14,10 +20,142 @@ import messageRoutes from "./routes/messages.js";
+ 
+ dotenv.config();
+ 
++// Basic environment sanity checks
++if (!process.env.JWT_SECRET) {
++	console.warn('Warning: JWT_SECRET is not set. Authentication may fail.');
++}
++if (!process.env.DATABASE_URL) {
++	console.warn('Warning: DATABASE_URL is not set. Prisma may not connect.');
++}
++
++// Initialize Sentry if DSN is provided
++if (process.env.SENTRY_DSN) {
++	try {
++		Sentry.init({ dsn: process.env.SENTRY_DSN });
++	} catch (e) { console.warn('Sentry init failed', e); }
++}
++
+ const app = express();
+ const httpServer = createServer(app);
+ 
+ // ΓöÇΓöÇΓöÇ Middleware ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++// Security headers
++app.use(helmet());
++
++// Build CSP directives dynamically by hashing inline <script> and <style>
++// content found in HTML files we serve (index and src pages). This allows
++// blocking 'unsafe-inline' while permitting the existing inline blocks.
++function computeHashesFromHtml(filePath, scriptSet, styleSet) {
++	try {
++		const html = readFileSync(filePath, "utf8");
++		let m;
++		const scriptRe = /<script(?![^>]*src)[^>]*>([\s\S]*?)<\/script>/gi;
++		while ((m = scriptRe.exec(html)) !== null) {
++			const raw = m[1] || "";
++			if (raw.length === 0) continue;
++			// compute hashes for a few common normalizations to avoid mismatches
++			const variants = new Set();
++			variants.add(raw);
++			variants.add(raw.trim());
++			variants.add(raw.replace(/\r\n/g, "\n"));
++			variants.add(raw.replace(/\r\n/g, "\n").trim());
++			variants.add(raw.replace(/\n/g, "\r\n"));
++			variants.add(raw.replace(/\n/g, "\r\n").trim());
++			for (const v of variants) {
++				if (!v) continue;
++				const digest = createHash("sha256").update(v, "utf8").digest("base64");
++				scriptSet.add(`'sha256-${digest}'`);
++			}
++		}
++		const styleRe = /<style[^>]*>([\s\S]*?)<\/style>/gi;
++		while ((m = styleRe.exec(html)) !== null) {
++			const raw = m[1] || "";
++			if (raw.length === 0) continue;
++			const variants = new Set();
++			variants.add(raw);
++			variants.add(raw.trim());
++			variants.add(raw.replace(/\r\n/g, "\n"));
++			variants.add(raw.replace(/\r\n/g, "\n").trim());
++			variants.add(raw.replace(/\n/g, "\r\n"));
++			variants.add(raw.replace(/\n/g, "\r\n").trim());
++			for (const v of variants) {
++				if (!v) continue;
++				const digest = createHash("sha256").update(v, "utf8").digest("base64");
++				styleSet.add(`'sha256-${digest}'`);
++			}
++		}
++	} catch (e) {
++		// ignore missing files or parse errors
++	}
++}
++
++const scriptHashes = new Set();
++const styleHashes = new Set();
++// hash root index.html
++const isDev = process.env.NODE_ENV !== 'production';
++// In development, don't compute per-file hashes; allow inline styles/scripts
++// so runtime DOM libraries can use element.style and inline blocks without
++// being blocked by CSP. In production we compute hashes and keep CSP strict.
++if (!isDev) {
++	// hash root index.html
++	computeHashesFromHtml(resolve("index.html"), scriptHashes, styleHashes);
++	// hash any html files under src/pages (if present)
++	try {
++		const pagesDir = resolve("src", "pages");
++		(function walk(dir) {
++			let entries = [];
++			try { entries = readdirSync(dir); } catch (e) { return; }
++			for (const e of entries) {
++				const p = resolve(dir, e);
++				let s;
++				try { s = statSync(p); } catch (err) { continue; }
++				if (s.isDirectory()) walk(p);
++				else if (e.endsWith('.html')) computeHashesFromHtml(p, scriptHashes, styleHashes);
++			}
++		})(pagesDir);
++	} catch (e) { /* ignore */ }
++}
++
++// Build directive arrays
++const scriptSrc = ["'self'"];
++const styleSrc = ["'self'"];
++if (isDev) {
++	scriptSrc.push("'unsafe-inline'");
++	styleSrc.push("'unsafe-inline'");
++} else {
++	scriptSrc.push(...Array.from(scriptHashes));
++	styleSrc.push(...Array.from(styleHashes));
++}
++const connectSrc = ["'self'", 'wss:', 'ws:'];
++const imgSrc = ["'self'", 'data:'];
++const fontSrc = ["'self'"];
++
++// Allow Sentry or other third-party connections if configured
++if (process.env.SENTRY_DSN) {
++	try {
++		const origin = new URL(process.env.SENTRY_DSN).origin;
++		if (origin) connectSrc.push(origin);
++	} catch (e) { /* ignore invalid DSN */ }
++}
++
++const cspReportOnly = process.env.CSP_REPORT_ONLY === 'true';
++app.use(helmet.contentSecurityPolicy({
++	directives: {
++		defaultSrc: ["'self'"],
++		scriptSrc,
++		styleSrc,
++		connectSrc,
++		imgSrc,
++		fontSrc,
++		objectSrc: ["'none'"],
++		baseUri: ["'self'"],
++		frameAncestors: ["'none'"],
++		formAction: ["'self'"],
++		manifestSrc: ["'self'"],
++		workerSrc: ["'self'", 'blob:'],
++	},
++	reportOnly: cspReportOnly,
++}));
+ const allowedOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"]);
+ app.use(
+ 	cors({
+@@ -104,9 +267,38 @@ app.use("/api/contacts", contactRoutes);
+ app.use("/api/conversations", conversationRoutes);
+ app.use("/api/messages", messageRoutes);
+ 
++// Sentry error handler (capture unhandled errors)
++if (process.env.SENTRY_DSN) {
++	app.use(Sentry.Handlers.errorHandler());
++}
++
+ // ΓöÇΓöÇΓöÇ Socket.io ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ initSocket(httpServer);
+ 
++// Graceful shutdown: close HTTP server and disconnect Prisma
++process.on('SIGINT', async () => {
++	console.log('Received SIGINT, shutting down');
++	try {
++		httpServer.close(() => console.log('HTTP server closed'));
++	} catch (e) { console.error('Error closing HTTP server', e); }
++	try {
++		await prisma.$disconnect();
++		console.log('Prisma disconnected');
++	} catch (e) { console.error('Error disconnecting Prisma', e); }
++	process.exit(0);
++});
++process.on('SIGTERM', async () => {
++	console.log('Received SIGTERM, shutting down');
++	try {
++		httpServer.close(() => console.log('HTTP server closed'));
++	} catch (e) { console.error('Error closing HTTP server', e); }
++	try {
++		await prisma.$disconnect();
++		console.log('Prisma disconnected');
++	} catch (e) { console.error('Error disconnecting Prisma', e); }
++	process.exit(0);
++});
++
+ // ΓöÇΓöÇΓöÇ Start ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ const PORT = process.env.PORT || 3000;
+ httpServer.listen(PORT, "0.0.0.0", () => {

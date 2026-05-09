@@ -1,9 +1,11 @@
 import { state, messages, contacts, getMessageByIndex } from "./state.js";
 import { showEmptyState } from "./ui.js";
 import {
-	scrollChatToBottom,
+	// Scroll helper that waits for padding transition
+	scrollChatToBottomAfterPadding,
 	updatePinnedMessage,
 	basePadding,
+	nearBottom,
 } from "./chat.js";
 import {
 	refreshCard,
@@ -44,9 +46,14 @@ export function openContextMenu(msg, e) {
 	state.msgIndex = msg.dataset.index;
 	state.selectedMsg = msg;
 
-	_dom.messageMenu.style.display = "block";
-	_dom.chatOverlay.style.display = "block";
-	msg.style.zIndex = 500;
+	// Attach the shared menu element to the clicked message so we can
+	// position it via CSS and avoid inline top/left style writes.
+	if (_dom.messageMenu.parentElement !== msg) {
+		msg.appendChild(_dom.messageMenu);
+	}
+	_dom.messageMenu.classList.add('visible');
+	_dom.chatOverlay.classList.add('visible');
+	msg.classList.add('menu-open');
 
 	// Pin/Unpin label & icon
 	const pinLabels = document.querySelectorAll(".pin-message p");
@@ -59,41 +66,39 @@ export function openContextMenu(msg, e) {
 		if (_i) pinIconEl.appendChild(_i.cloneNode(true));
 	}
 
-	// Forwarded messages can't be edited
-	const forwardedFrom = getMessageByIndex(state.contactUserId, state.msgIndex)?.forwardedFrom;
+	// Determine message object and ownership; forwarded messages can't be edited
+	const messageObj = getMessageByIndex(state.contactUserId, state.msgIndex);
+	const forwardedFrom = messageObj?.forwardedFrom;
+	const isOwner = messageObj ? !!messageObj.user : msg.classList.contains("outgoing");
 	const editMsg0 = _dom.editMsg?.[0];
 	if (editMsg0) {
-		editMsg0.style.display =
-			forwardedFrom === undefined ? "flex" : "none";
+		if (!forwardedFrom && isOwner) editMsg0.classList.remove('d-none');
+		else editMsg0.classList.add('d-none');
 	}
 
 	// Position menu
+	// Decide whether to show menu above the message (if viewport space below is limited)
 	const rect = msg.getBoundingClientRect();
 	const menuHeight = _dom.messageMenu.getBoundingClientRect().height;
-	let translateAmount = 0;
-
 	if (window.innerHeight - rect.bottom < menuHeight) {
-		translateAmount = menuHeight + rect.bottom - window.innerHeight + 24;
-		msg.style.transform = `translateY(-${translateAmount}px)`;
+		_dom.messageMenu.classList.add('above');
+	} else {
+		_dom.messageMenu.classList.remove('above');
 	}
 
-	_dom.messageMenu.style.top =
-		rect.top + rect.height - translateAmount + basePadding + "px";
-
+	// Align menu left/right depending on message side
 	if (msg.classList.contains("outgoing")) {
-		_dom.messageMenu.style.right = window.innerWidth - rect.right + "px";
-		_dom.messageMenu.style.left = "";
+		_dom.messageMenu.classList.add('align-right');
+		_dom.messageMenu.classList.remove('align-left');
 	} else {
-		const editMsg0b = _dom.editMsg?.[0];
-		if (editMsg0b) editMsg0b.style.display = "none";
-		_dom.messageMenu.style.left = rect.left + "px";
-		_dom.messageMenu.style.right = "";
+		_dom.messageMenu.classList.add('align-left');
+		_dom.messageMenu.classList.remove('align-right');
 	}
 
 	state.isMenuOpen = true;
 	setTimeout(() => {
-		_dom.messageMenu.style.opacity = 1;
-		_dom.chatOverlay.style.opacity = 1;
+		// CSS transitions handle opacity; class is already set.
+		_dom.chatOverlay.classList.add('visible');
 	}, 100);
 
 	if (e && typeof e.stopPropagation === "function") e.stopPropagation();
@@ -123,8 +128,10 @@ export function deleteMessage(msg, index) {
 	const deletedMsg = arr[idx];
 	const messageId = deletedMsg?.id;
 
-	msg.style.transition = "opacity 3s ease";
-	msg.style.opacity = 0;
+	// restore inline transition for delete animation (undo window)
+	msg.style.transition = "opacity 3s, transform 3s";
+	msg.classList.add('fading');
+	msg.classList.add('opacity-0');
 	const timeout = setTimeout(() => {
 		// after undo window, attempt server deletion and then finalize local removal on success
 		(async () => {
@@ -191,10 +198,10 @@ export function deleteMessage(msg, index) {
 			} catch (e) {
 				// server delete failed; restore message opacity and notify
 				console.error('deleteMessage failed', e);
-				msg.style.transition = "opacity 0.15s ease";
-				msg.style.opacity = 1;
+				msg.classList.remove('opacity-0');
+				msg.classList.add('opacity-1');
 				setTimeout(() => {
-					msg.style.transition = "";
+					msg.classList.remove('fading');
 				}, 150);
 				// optionally show toast via UI; keep message in state
 			}
@@ -206,10 +213,12 @@ export function deleteMessage(msg, index) {
 
 export function undoDeleteMessage(msg) {
 	clearTimeout(state.deleting);
-	msg.style.transition = "opacity 0.15s ease";
-	msg.style.opacity = 1;
+	msg.classList.remove('opacity-0');
+	msg.classList.add('opacity-1');
+	// remove inline transition after undo restore
+	msg.style.transition = "";
 	setTimeout(() => {
-		msg.style.transition = "";
+		msg.classList.remove('fading');
 	}, 150);
 }
 
@@ -308,7 +317,8 @@ export function replyMessage() {
 	const msg = getMessageByIndex(state.contactUserId, Number(state.msgIndex));
 	if (!msg) return;
 	const senderName = msg.user ? "You" : contacts.find((c) => c.id === state.contactUserId)?.name;
-	_dom.msgAction.style.display = "flex";
+	_dom.msgAction.classList.remove('d-none');
+	_dom.msgAction.classList.add('d-flex');
 	state.actionPreviewHeight = _dom.msgAction.getBoundingClientRect().height / 14;
 	_dom.chatEl.style.paddingBottom = basePadding + state.actionPreviewHeight + "rem";
 	_dom.msgActionText.textContent = "Replying to " + senderName;
@@ -316,7 +326,7 @@ export function replyMessage() {
 	const msgInputEl2 = _dom.messageInput || document.querySelector('.message-input');
 	if (msgInputEl2 && typeof msgInputEl2.focus === 'function') {
 		msgInputEl2.focus();
-		if (msgInputEl2.style) msgInputEl2.style.borderRadius = "0 0 2rem 2rem";
+			if (msgInputEl2) msgInputEl2.classList.add('input-rounded-bottom');
 	}
 
 	state.replyTo = {
@@ -327,6 +337,5 @@ export function replyMessage() {
 	};
 	closeContextMenu();
 
-	const nearBottom = _dom.chatEl.scrollTop + _dom.chatEl.clientHeight >= _dom.chatEl.scrollHeight - _dom.msgAction.getBoundingClientRect().height - 20;
-	if (nearBottom) setTimeout(scrollChatToBottom, 200);
+	if (nearBottom(_dom.chatEl, (_dom.msgAction?.getBoundingClientRect().height || 0) + 20)) scrollChatToBottomAfterPadding();
 }

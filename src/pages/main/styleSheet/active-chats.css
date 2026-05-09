@@ -108,14 +108,14 @@
 	font-size: 0.875rem;
 	color: var(--text-secondary-color);
 	max-width: 100%;
+	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+	overflow: hidden;
 	display: inline-flex;
 	align-items: center;
 	gap: 0.4rem;
-	direction: rtl;
-	flex: 1 1 auto;
 }
 .active-chat-status {
 	display: inline-flex;

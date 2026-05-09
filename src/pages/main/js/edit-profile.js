@@ -1,5 +1,6 @@
 /* global Cropper */
 import { updateMe, uploadAvatar, deleteAvatar } from "./api.js";
+import { safeSrc } from "../../../utils/dom.js";
 let _dom = {};
 let _currentUser = null;
 let _cropper = null;
@@ -68,7 +69,7 @@ export function initEditProfile(dom) {
 				formData.append("avatar", blob, "avatar.jpg");
 				const res = await uploadAvatar(formData);
 				if (res.url) {
-					_dom.editProfileAvatar.src = res.url + "?t=" + Date.now();
+					_dom.editProfileAvatar.src = safeSrc(res.url + "?t=" + Date.now());
 					if (_currentUser) _currentUser.profilePics = [res.url];
 					let stored = {};
 					try {
@@ -97,7 +98,7 @@ export function initEditProfile(dom) {
 
 	_dom.deleteAvatarBtn.addEventListener("click", async () => {
 		await deleteAvatar();
-		_dom.editProfileAvatar.src = "";
+		_dom.editProfileAvatar.src = safeSrc("");
 		if (_currentUser) _currentUser.profilePics = [];
 		let stored = {};
 		try {
@@ -118,16 +119,15 @@ export function openEditProfile(user) {
 	_dom.editUsernameInput.value = user.username || "";
 	_dom.editBioInput.value = user.bio || "";
 	if (_dom.editProfileAvatar) {
-		_dom.editProfileAvatar.src =
-			user.profilePics?.[0] ||
-			"/assets/images/profile.jpeg";
+		_dom.editProfileAvatar.src = safeSrc(user.profilePics?.[0] || "/assets/images/profile.jpeg");
 	}
 
 	if (window.innerWidth > 700) {
 		_dom.editProfileDialog.appendChild(_dom.editProfilePanel);
 		_dom.editProfileDialog.showModal();
 	} else {
-		_dom.editProfilePanel.style.display = "flex";
+		_dom.editProfilePanel.classList.remove('d-none');
+		_dom.editProfilePanel.classList.add('d-flex');
 		_dom.editProfilePanel.classList.remove("slide-out");
 		_dom.editProfilePanel.classList.add("slide-in");
 		_dom.editProfilePanel.addEventListener(
@@ -151,7 +151,7 @@ export function closeEditProfile() {
 			"animationend",
 			() => {
 				_dom.editProfilePanel.classList.remove("slide-out");
-				_dom.editProfilePanel.style.display = "none";
+				_dom.editProfilePanel.classList.add('d-none');
 			},
 			{ once: true },
 		);

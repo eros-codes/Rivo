@@ -63,7 +63,7 @@ async function _handleSubmit() {
             closeAddContact();
             _onContactAdded?.(data);
         } catch (err) {
-            const body = err.body || {};
+            const body = err && err.body && typeof err.body === "object" ? err.body : { error: String(err?.body ?? err?.message ?? "Something went wrong") };
             _dom.addContactError.textContent = body.error || err.message || "Something went wrong";
             _dom.addContactSubmit.disabled = false;
             return;

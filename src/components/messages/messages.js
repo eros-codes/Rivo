@@ -29,11 +29,13 @@ export function createMessage({
 }) {
 	const message = document.createElement("div");
 
-	// Prepare reply attributes (support both id and index-based refs)
+	// Prepare reply attributes
 	let _replyAttr = "";
 	let _replySender = "";
 	if (replyTo) {
-		_replyAttr = replyTo.id ?? (typeof replyTo.index !== "undefined" ? replyTo.index : "");
+		_replyAttr =
+			replyTo.id ??
+			(typeof replyTo.index !== "undefined" ? replyTo.index : "");
 		_replySender = replyTo.sender ?? replyTo.name ?? "";
 	}
 
@@ -70,7 +72,25 @@ export function createMessage({
 
 	const p = document.createElement("p");
 	p.className = "chat-message-text";
-	p.textContent = text || "";
+
+	const fullUrlRegex =
+		/(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9-]+\.(?:com|net|org|io|app|dev|ir|co|me|info|xyz|ai|gg)(?:\/[^\s]*)?)/i;
+
+	(text || "").split(/(\s+)/).forEach((word) => {
+		if (fullUrlRegex.test(word)) {
+			const a = document.createElement("a");
+			const href = word.startsWith("http") ? word : `https://${word}`;
+			a.href = href;
+			a.textContent = word;
+			a.target = "_blank";
+			a.rel = "noopener noreferrer";
+			a.className = "message-link";
+			p.appendChild(a);
+		} else {
+			p.appendChild(document.createTextNode(word));
+		}
+	});
+
 	message.appendChild(p);
 
 	const meta = document.createElement("span");
@@ -135,9 +155,11 @@ export function markMessagesAsSeen(chatEl, indices) {
 
 	if (Array.isArray(indices) && indices.length > 0) {
 		indices.forEach((idx) => {
-			const el = chatEl.querySelector(`.chat-message[data-index="${idx}"] .chat-message-status`);
+			const el = chatEl.querySelector(
+				`.chat-message[data-index="${idx}"] .chat-message-status`,
+			);
 			if (el) {
-				el.textContent = '';
+				el.textContent = "";
 				const _s = parseSvg(seenIcon);
 				if (_s) el.appendChild(_s.cloneNode(true));
 			}
@@ -148,7 +170,7 @@ export function markMessagesAsSeen(chatEl, indices) {
 	chatEl
 		.querySelectorAll(".chat-message.outgoing .chat-message-status")
 		.forEach((el) => {
-			el.textContent = '';
+			el.textContent = "";
 			const _s = parseSvg(seenIcon);
 			if (_s) el.appendChild(_s.cloneNode(true));
 		});

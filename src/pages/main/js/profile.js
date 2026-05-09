@@ -5,9 +5,12 @@ import {
 	updateTotalUnreadCount,
 	refreshCard,
 	sortContacts,
+	sortActiveChats,
 } from "./chat-logic.js";
 import { createContactCard } from "../../../components/contact-cards/contact-card.js";
-import { updateContact, deleteContact as apiDeleteContact, deleteChat as apiDeleteChat } from "./api.js";
+import { createActiveChatCard } from "../../../components/active-chats/active-chats.js";
+import { updateContact, deleteContact as apiDeleteContact, deleteChat as apiDeleteChat, searchUsers } from "./api.js";
+import { safeSrc } from "../../../utils/dom.js";
 
 let _dom = {};
 
@@ -66,27 +69,60 @@ export function openProfile(friend) {
 	);
 	_dom.detailEmails.forEach((el) => (el.textContent = friend.email || ""));
 
+	// If bio is missing, try to resolve via username lookup
+	if ((!friend.bio || friend.bio === "") && friend.username) {
+		try {
+			const users = await searchUsers(friend.username);
+			if (Array.isArray(users) && users.length > 0) {
+				const found = users.find((u) => String(u.username).toLowerCase() === String(friend.username).toLowerCase());
+				if (found) {
+					friend.bio = found.bio || "";
+					_dom.detailBios.forEach((el) => (el.textContent = friend.bio || ""));
+					// also refresh picture/name if they were missing
+					if ((!friend.profilePics || friend.profilePics.length === 0) && found.profilePics) {
+						friend.profilePics = found.profilePics;
+						_dom.detailPictures.forEach((el) => (el.src = safeSrc(friend.profilePics[0] || "/assets/images/profile.jpeg")));
+					}
+					if (!friend.name && found.name) {
+						friend.name = found.name;
+						_dom.detailNames.forEach((el) => (el.textContent = friend.nickname || friend.name));
+					}
+				}
+			}
+		} catch (e) {
+			/* ignore lookup errors */
+		}
+	}
+
 	_dom.detailUsernames.forEach((el) => {
-		el.style.cursor = "pointer";
-		el.onclick = () => {
+		el.classList.add('cursor-pointer');
+		const _handler = () => {
 			navigator.clipboard.writeText(`@${friend.username}`);
+			const prev = el.textContent;
 			el.textContent = "Copied!";
 			setTimeout(() => {
-				el.textContent = "@" + friend.username;
+				el.textContent = prev || "@" + friend.username;
 			}, 1500);
 		};
+		if (el._rivoClickInstalled) el.removeEventListener("click", el._rivoClickInstalled);
+		el._rivoClickInstalled = _handler;
+		el.addEventListener("click", _handler);
 	});
 
 	_dom.detailEmails.forEach((el) => {
 		if (!friend.email) return;
-		el.style.cursor = "pointer";
-		el.onclick = () => {
+		el.classList.add('cursor-pointer');
+		const _handlerEmail = () => {
 			navigator.clipboard.writeText(friend.email);
+			const prev = el.textContent;
 			el.textContent = "Copied!";
 			setTimeout(() => {
-				el.textContent = friend.email;
+				el.textContent = prev || friend.email;
 			}, 1500);
 		};
+		if (el._rivoEmailClickInstalled) el.removeEventListener("click", el._rivoEmailClickInstalled);
+		el._rivoEmailClickInstalled = _handlerEmail;
+		el.addEventListener("click", _handlerEmail);
 	});
 
 	if (window.innerWidth > 700) {
@@ -95,7 +131,8 @@ export function openProfile(friend) {
 			_dom.profileDialog.showModal();
 		}
 	} else {
-		_dom.contactProfileDetails.style.display = "flex";
+		_dom.contactProfileDetails.classList.remove('d-none');
+		_dom.contactProfileDetails.classList.add('d-flex');
 		_dom.contactProfileDetails.classList.remove("slide-out");
 		_dom.contactProfileDetails.classList.add("slide-in");
 		_dom.contactProfileDetails.addEventListener(
@@ -124,12 +161,12 @@ export function closeProfile() {
 	// Reset any open nickname edit
 	_dom.detailNames.forEach((el) => {
 		el.setAttribute("contenteditable", "false");
-		el.style.border = "none";
+		el.classList.add('no-border');
 	});
 	const editNameDoneBtn0 = _dom.editNameDoneBtn?.[0];
-	if (editNameDoneBtn0) editNameDoneBtn0.style.display = "none";
+	if (editNameDoneBtn0) editNameDoneBtn0.classList.add('d-none');
 	const cancelEditNameBtn0 = _dom.cancelEditNameBtn?.[0];
-	if (cancelEditNameBtn0) cancelEditNameBtn0.style.display = "none";
+	if (cancelEditNameBtn0) cancelEditNameBtn0.classList.add('d-none');
 	if (state.contactUserId !== null && window.innerWidth >= 700) {
 		_dom.profileDialog.close();
 		_dom.profileDialog.textContent = "";
@@ -140,9 +177,10 @@ export function closeProfile() {
 			"animationend",
 			() => {
 				_dom.contactProfileDetails.classList.remove("slide-out");
-				_dom.contactProfileDetails.style.display = "none";
+				_dom.contactProfileDetails.classList.add('d-none');
 				if (!state.skipShowChatOnProfileClose) {
-					_dom.chatPart.style.display = "flex";
+					_dom.chatPart.classList.remove('d-none');
+					_dom.chatPart.classList.add('d-flex');
 				} else {
 					state.skipShowChatOnProfileClose = false;
 				}
@@ -188,16 +226,17 @@ export function handleDeleteChat() {
 		matches.forEach((el) => {
 			const wrapper = el.closest(".active-chat-wrapper") ?? el;
 			if (!wrapper) return;
-			if (!fadedNodes.includes(wrapper)) {
-				wrapper.style.transition = "opacity 3s ease";
-				wrapper.style.opacity = "0";
-				wrapper.style.pointerEvents = "none";
-				fadedNodes.push(wrapper);
-			}
+				if (!fadedNodes.includes(wrapper)) {
+					wrapper.classList.add('fading-slow','opacity-0','pointer-none');
+					fadedNodes.push(wrapper);
+				}
 		});
 	} catch (e) { /* ignore */ }
 
 	showToast("Chat deleted", _dom.deleteIcon, true);
+
+	// record original desired container so undo can restore correctly
+	const originalContainer = (contact && contact._previousContainer) ? contact._previousContainer : (_dom.activeChatsContainer?.querySelector(`[data-user-id="${deletingContactId}"]`) ? 'active' : 'contacts');
 
 	const timer = setTimeout(() => {
 		messages[deletingContactId] = [];
@@ -220,7 +259,7 @@ export function handleDeleteChat() {
 		} catch (e) { /* ignore */ }
 
 		const contact = contacts.find((c) => c.id === deletingContactId);
-		
+
 		if (contact) {
 			if (contact.conversationId) {
 				apiDeleteChat(contact.conversationId);
@@ -233,6 +272,7 @@ export function handleDeleteChat() {
 			contact.isPinned = false;
 			contact.isInChat = false;
 
+			// Final state after delete should be a plain contact card
 			_dom.contactsContainer.appendChild(
 				createContactCard(
 					{ ...contact, hasMessages: false },
@@ -247,13 +287,49 @@ export function handleDeleteChat() {
 
 	state.currentUndoAction = () => {
 		clearTimeout(timer);
-		// Restore any faded nodes
 		try {
-			fadedNodes.forEach((n) => {
-				n.style.transition = "opacity 0.2s ease";
-				n.style.opacity = "1";
-				n.style.pointerEvents = "";
-			});
+			const contactObj = contacts.find((c) => c.id === deletingContactId);
+			if (!contactObj) return;
+			const existingActive = _dom.activeChatsContainer?.querySelector(`[data-user-id="${contactObj.id}"]`);
+			const existingContact = _dom.contactsContainer?.querySelector(`[data-user-id="${contactObj.id}"]`);
+
+			if (originalContainer === 'contacts') {
+				// ensure not duplicated in active list
+				if (existingActive) {
+					const wrapper = existingActive.closest('.active-chat-wrapper') ?? existingActive;
+					if (wrapper) wrapper.remove();
+				}
+				if (!existingContact) {
+					_dom.contactsContainer.appendChild(
+						createContactCard({ ...contactObj, hasMessages: !!contactObj.lastMessage }, _dom.onContactAction),
+					);
+				} else {
+						existingContact.classList.add('fading');
+						existingContact.classList.remove('opacity-0');
+						existingContact.classList.add('opacity-1');
+						existingContact.classList.remove('pointer-none');
+						existingContact.classList.add('pointer-auto');
+				}
+				} else {
+					// restore to active chats
+					if (existingContact) existingContact.remove();
+					if (!existingActive) {
+						_dom.activeChatsContainer.appendChild(createActiveChatCard(contactObj));
+					} else {
+						const wrapper = existingActive.closest('.active-chat-wrapper') ?? existingActive;
+						if (wrapper) {
+							wrapper.classList.add('fading');
+							wrapper.classList.remove('opacity-0');
+							wrapper.classList.add('opacity-1');
+							wrapper.classList.remove('pointer-none');
+							wrapper.classList.add('pointer-auto');
+						}
+					}
+			}
+
+			updateTotalUnreadCount();
+			sortActiveChats();
+			sortContacts();
 		} catch (e) { /* ignore */ }
 	};
 }
@@ -262,7 +338,7 @@ export function handleDeleteChat() {
 export function handleEditNickname() {
 	_dom.detailNames.forEach((el) => {
 		el.setAttribute("contenteditable", "true");
-		el.style.border = "1px solid var(--chat-time)";
+		el.classList.add('border-chat-time');
 		el.focus();
 		const range = document.createRange();
 		const sel = window.getSelection();
@@ -272,9 +348,9 @@ export function handleEditNickname() {
 		sel.addRange(range);
 	});
 	const editNameDoneBtn1 = _dom.editNameDoneBtn?.[0];
-	if (editNameDoneBtn1) editNameDoneBtn1.style.display = "block";
+	if (editNameDoneBtn1) editNameDoneBtn1.classList.remove('d-none');
 	const cancelEditNameBtn1 = _dom.cancelEditNameBtn?.[0];
-	if (cancelEditNameBtn1) cancelEditNameBtn1.style.display = "block";
+	if (cancelEditNameBtn1) cancelEditNameBtn1.classList.remove('d-none');
 }
 
 export function handleEditNicknameDone() {
@@ -294,10 +370,10 @@ export function handleEditNicknameDone() {
 
 	_dom.detailNames.forEach((el) => {
 		el.setAttribute("contenteditable", "false");
-		el.style.border = "none";
+		el.classList.add('no-border');
 	});
-	_dom.editNameDoneBtn.forEach((el) => (el.style.display = "none"));
-	_dom.cancelEditNameBtn.forEach((el) => (el.style.display = "none"));
+	_dom.editNameDoneBtn.forEach((el) => el.classList.add('d-none'));
+	_dom.cancelEditNameBtn.forEach((el) => el.classList.add('d-none'));
 }
 
 export function handleEditNicknameCancel() {
@@ -327,16 +403,20 @@ export function handleBlockContact() {
 		document
 			.querySelectorAll("#block-contact-btn")
 			.forEach((btn) => (btn.textContent = "Unblock contact"));
-		messageContainer.style.display = "none";
-		const _ub = unblockActionBtn[0];
-		if (_ub) _ub.style.display = "flex";
+	messageContainer.classList.add('d-none');
+	const _ub = unblockActionBtn[0];
+	if (_ub) {
+		_ub.classList.remove('d-none');
+		_ub.classList.add('d-flex');
+	}
 	} else {
 		document
 			.querySelectorAll("#block-contact-btn")
 			.forEach((btn) => (btn.textContent = "Block contact"));
-		messageContainer.style.display = "flex";
-		const _ub = unblockActionBtn[0];
-		if (_ub) _ub.style.display = "none";
+	messageContainer.classList.remove('d-none');
+	messageContainer.classList.add('d-flex');
+	const _ub = unblockActionBtn[0];
+	if (_ub) _ub.classList.add('d-none');
 	}
 }
 
@@ -356,11 +436,15 @@ export function handleDeleteContact() {
 
 	const deletingContactId = state.contactUserId;
 
+	// Determine where this contact originated so undo can restore correctly
+	const contactObj = contacts.find((c) => c.id === deletingContactId);
+	const originalContainer = contactObj && contactObj._previousContainer
+		? contactObj._previousContainer
+		: (_dom.activeChatsContainer?.querySelector(`[data-user-id="${deletingContactId}"]`) ? 'active' : 'contacts');
+
 	// Hide it first
 	if (card) {
-		card.style.transition = "opacity 3s ease";
-		card.style.opacity = "0";
-		card.style.pointerEvents = "none";
+		card.classList.add('fading-slow','opacity-0','pointer-none');
 	}
 
 	closeProfile();
@@ -377,10 +461,46 @@ export function handleDeleteContact() {
 
 	state.currentUndoAction = () => {
 		clearTimeout(timer);
-		if (card) {
-			card.style.transition = "opacity 0.2s ease";
-			card.style.opacity = "1";
-			card.style.pointerEvents = "";
-		}
+		try {
+			// restore the visual card in the original container
+			const existingActive = _dom.activeChatsContainer?.querySelector(`[data-user-id="${deletingContactId}"]`);
+			const existingContact = _dom.contactsContainer?.querySelector(`[data-user-id="${deletingContactId}"]`);
+
+			if (originalContainer === 'contacts') {
+				if (existingActive) {
+					const w = existingActive.closest('.active-chat-wrapper') ?? existingActive;
+					if (w) w.remove();
+				}
+				if (!existingContact) {
+					_dom.contactsContainer.appendChild(
+						createContactCard({ ...contactObj, hasMessages: !!contactObj.lastMessage }, _dom.onContactAction),
+					);
+				} else {
+					existingContact.classList.add('fading');
+					existingContact.classList.remove('opacity-0');
+					existingContact.classList.add('opacity-1');
+					existingContact.classList.remove('pointer-none');
+					existingContact.classList.add('pointer-auto');
+				}
+			} else {
+				if (existingContact) existingContact.remove();
+				if (!existingActive) {
+					_dom.activeChatsContainer.appendChild(createActiveChatCard(contactObj));
+				} else {
+					const wrapper = existingActive.closest('.active-chat-wrapper') ?? existingActive;
+					if (wrapper) {
+						wrapper.classList.add('fading');
+						wrapper.classList.remove('opacity-0');
+						wrapper.classList.add('opacity-1');
+						wrapper.classList.remove('pointer-none');
+						wrapper.classList.add('pointer-auto');
+					}
+				}
+			}
+
+			updateTotalUnreadCount();
+			sortActiveChats();
+			sortContacts();
+		} catch (e) { /* ignore */ }
 	};
 }

@@ -169,3 +169,58 @@ body {
   height: 100%;
   transition: background-color 0.3s ease, color 0.3s ease;
 }
+
+/* Utility classes to avoid runtime inline style assignments */
+.d-none{display:none !important}
+.d-block{display:block !important}
+.d-flex{display:flex !important}
+.opacity-0{opacity:0 !important;pointer-events:none}
+.opacity-1{opacity:1 !important;pointer-events:auto}
+.pointer-none{pointer-events:none}
+.pointer-auto{pointer-events:auto}
+
+/* Overlay visibility */
+.chat-overlay.visible{display:block;opacity:1}
+
+/* Message menu helpers */
+.message-menu.visible{display:block;opacity:1;pointer-events:auto;transform:translateY(0) scale(1)}
+.message-menu.above{top:auto;bottom:calc(100% + 0.5rem)}
+.message-menu.align-right{left:auto;right:0}
+.menu-open{z-index:800 !important}
+.message-menu.align-left{left:0;right:auto}
+.fading{transition:opacity 0.3s ease !important}
+
+/* Animation reset helper for elements that had inline transform/transition */
+.anim-reset{transition:all 0.25s ease !important;transform:translateX(0) !important}
+
+/* Input helpers */
+.input-rounded-bottom{border-radius:0 0 2rem 2rem !important}
+
+/* Layout helpers */
+.flex-column-reverse{flex-direction:column-reverse !important}
+.flex-row-reverse{flex-direction:row-reverse !important}
+.z-0{z-index:0 !important}
+.rounded-2rem{border-radius:2rem !important}
+
+/* Pinned message dots */
+.pinned-dot{display:inline-block;height:0.6rem;width:0.6rem;border-radius:999px;background:var(--accent);opacity:0.4;margin:0 .25rem;transition:height 0.18s ease,opacity 0.18s ease}
+.pinned-dot.active{height:1.2rem;opacity:1}
+
+/* Chat header radius helpers */
+.chat-header-radius-top{border-radius:1rem 1rem 0 0 !important}
+.chat-header-radius{border-radius:1rem !important}
+
+/* Small utilities used in JS refactors */
+.cursor-pointer{cursor:pointer}
+.no-border{border:none !important}
+.border-chat-time{border:1px solid var(--chat-time) !important}
+.fading-slow{transition:opacity 3s ease !important}
+
+/* Accent value small swatch */
+.accent-value{width:16px;height:16px;border-radius:50% !important;display:inline-block}
+
+/* Card swipe helpers */
+.card-transition{transition:all 0.25s ease !important}
+.translate-left{transform:translateX(-140px) !important}
+.translate-right{transform:translateX(70px) !important}
+.translate-none{transform:translateX(0) !important}

@@ -1,6 +1,9 @@
 import { Router } from "express";
 import prisma from "../prisma.js";
 import { requireAuth } from "../middleware/auth.js";
+import rateLimit from "express-rate-limit";
+import { parseIntSafe } from "../utils/validators.js";
+import { invalidateConversationContacts } from "../socket/index.js";
 
 const router = Router();
 
@@ -55,6 +58,8 @@ router.get("/", requireAuth, async (req, res) => {
 				}
 				if (p.privacyProfile === "nobody") {
 					cc.contact.profilePics = [];
+					// also hide bio when profile is private
+					cc.contact.bio = null;
 				}
 				// strip privacy fields from response
 				delete cc.contact.privacyOnline;
@@ -187,6 +192,9 @@ router.patch("/:id", requireAuth, async (req, res) => {
 			},
 		});
 
+		// Invalidate cache for this conversation to reflect updated contact
+		try { invalidateConversationContacts(updated.conversationId); } catch (e) { /* ignore */ }
+
 		return res.json(updated);
 	} catch (err) {
 		console.error(err);
@@ -210,7 +218,11 @@ router.delete("/:id", requireAuth, async (req, res) => {
 			return res.status(404).json({ error: "Contact not found" });
 		}
 
+
 		await prisma.contact.delete({ where: { id: contactId } });
+
+		// Invalidate cache for this conversation so sockets don't use stale contact lists
+		try { invalidateConversationContacts(contact.conversationId); } catch (e) { /* ignore */ }
 
 		return res.json({ success: true });
 	} catch (err) {

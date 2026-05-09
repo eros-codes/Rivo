@@ -1,0 +1,95 @@
+diff a/src/pages/main/js/context-menu.js b/src/pages/main/js/context-menu.js	(rejected hunks)
+@@ -101,15 +106,12 @@ export function openContextMenu(msg, e) {
+ 
+ // ΓöÇΓöÇΓöÇ Close ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ export function closeContextMenu() {
+-	_dom.messageMenu.style.opacity = 0;
+-	_dom.chatOverlay.style.opacity = 0;
++	_dom.messageMenu.classList.remove('visible', 'above', 'align-right', 'align-left');
++	_dom.chatOverlay.classList.remove('visible');
+ 	const editMsg0c = _dom.editMsg?.[0];
+-	if (editMsg0c) editMsg0c.style.display = "flex";
+-	_dom.messageMenu.style.display = "none";
+-	_dom.chatOverlay.style.display = "none";
++	if (editMsg0c) editMsg0c.classList.remove('d-none');
+ 	if (state.selectedMsg) {
+-		state.selectedMsg.style.zIndex = "";
+-		state.selectedMsg.style.transform = "translateY(0px)";
++		state.selectedMsg.classList.remove('menu-open');
+ 	}
+ 	state.isMenuOpen = false;
+ }
+@@ -282,25 +288,63 @@ export function editMessage() {
+ 	const msg = getMessageByIndex(state.contactUserId, Number(state.msgIndex));
+ 	if (!msg) return;
+ 
++	// Determine if user was near bottom before we change layout (used to keep view pinned)
++	const wasNearBottomBefore = nearBottom(_dom.chatEl, 20);
++
+ 	state.isEditing = true;
++
++	// Breadcrumb for monitoring (optional, if Sentry loaded)
++	try {
++		if (typeof window !== 'undefined' && window.Sentry && window.Sentry.addBreadcrumb) {
++			window.Sentry.addBreadcrumb({ category: 'edit', message: 'enter_edit', data: { messageId: msg?.id } });
++		}
++	} catch (e) { void e; }
++
++	// Show action preview first so padding calculation has the correct height
++	if (_dom.msgAction) {
++		_dom.msgAction.classList.remove('d-none');
++		_dom.msgAction.classList.add('d-flex');
++		state.actionPreviewHeight = _dom.msgAction.getBoundingClientRect().height / 14;
++		_dom.msgActionText.textContent = "Edit";
++		_dom.msgActionmsg.textContent = msg.text;
++	}
++
+ 	const msgInputEl = _dom.messageInput || document.querySelector('.message-input');
+ 	if (msgInputEl) {
+ 		msgInputEl.value = msg.text;
+ 		if (typeof msgInputEl.focus === 'function') msgInputEl.focus();
++		try {
++			msgInputEl.selectionStart = msgInputEl.selectionEnd = msgInputEl.value.length;
++		} catch (e) {
++			void e;
++		}
++
++		// Dispatch the input event on next RAF to avoid layout race between
++		// showing the action preview and autosize calculation.
++		requestAnimationFrame(() => {
++			try {
++				msgInputEl.dispatchEvent(new Event('input', { bubbles: true }));
++			} catch (e) {
++				void e;
++			}
++			// Ensure the textarea height is explicitly set after autosize
++			try {
++				msgInputEl.style.height = msgInputEl.scrollHeight + 'px';
++			} catch (e) { void e; }
++			// Do not scroll here; main input handler will handle scroll-after-padding.
++		});
+ 	}
+-	if (_dom.msgAction) {
+-		_dom.msgAction.style.display = "flex";
+-		state.actionPreviewHeight = _dom.msgAction.getBoundingClientRect().height / 14;
+-	}
++
++	// ensure chat padding uses action-preview height (input handler may override)
+ 	_dom.chatEl.style.paddingBottom = basePadding + state.actionPreviewHeight + "rem";
+-	_dom.msgActionText.textContent = "Edit";
+-	_dom.msgActionmsg.textContent = msg.text;
+ 	closeContextMenu();
+ 
+-	_dom.messageInput.style.borderRadius = "0 0 2rem 2rem";
+-	_dom.sendMessageBtn.style.display = "block";
+-	const nearBottom = _dom.chatEl.scrollTop + _dom.chatEl.clientHeight >= _dom.chatEl.scrollHeight - _dom.msgAction.getBoundingClientRect().height - 30;
+-	if (nearBottom) scrollChatToBottom();
++	_dom.messageInput.classList.add('input-rounded-bottom');
++	_dom.sendMessageBtn.classList.remove('d-none');
++	_dom.sendMessageBtn.classList.add('d-block');
++	// If user was near bottom before editing, wait for the padding transition
++	// to finish and then scroll to bottom.
++	if (wasNearBottomBefore) scrollChatToBottomAfterPadding();
+ }
+ 
+ // ΓöÇΓöÇΓöÇ Reply ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ

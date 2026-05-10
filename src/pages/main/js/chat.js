@@ -557,6 +557,13 @@ export async function receiveMessage(message) {
 	if (state.contactUserId === contact.id) {
 		hideEmptyState(_dom.chatEl, _dom.emptyStateEl);
 		normalized.index = messages[contact.id].length - 1;
+		// If this incoming message falls on a different day than the previous
+		// message, insert a date separator before appending it so the UI
+		// updates live without requiring a refresh.
+		const prevMsg = messages[contact.id][normalized.index - 1] || null;
+		if (!prevMsg || prevMsg.date !== normalized.date) {
+			_dom.chatEl.appendChild(createDateSeparator(normalized.date));
+		}
 		_dom.chatEl.appendChild(createMessage(normalized));
 		scrollChatToBottom();
 		emitMessageSeen(contact.conversationId);
@@ -678,6 +685,11 @@ export async function sendMessage() {
 				const normalized = _normalizeOutgoing(sent);
 				normalized.index = messages[state.contactUserId].length;
 				messages[state.contactUserId].push(normalized);
+				// Insert date separator if this message starts a new day
+				const prev = messages[state.contactUserId][normalized.index - 1] || null;
+				if (!prev || prev.date !== normalized.date) {
+					_dom.chatEl.appendChild(createDateSeparator(normalized.date));
+				}
 				_dom.chatEl.appendChild(createMessage(normalized));
 			} catch {
 				showToast("Failed to forward message", "");
@@ -740,6 +752,11 @@ export async function sendMessage() {
 	if (!messages[state.contactUserId]) messages[state.contactUserId] = [];
 	optimistic.index = messages[state.contactUserId].length;
 	messages[state.contactUserId].push(optimistic);
+	// If this optimistic outgoing message starts a new day, insert a date separator
+	const prevOpt = messages[state.contactUserId][optimistic.index - 1] || null;
+	if (!prevOpt || prevOpt.date !== optimistic.date) {
+		_dom.chatEl.appendChild(createDateSeparator(optimistic.date));
+	}
 	_dom.chatEl.appendChild(createMessage(optimistic));
 	// tag the DOM node with the localId so we can find & remove it reliably
 	const appendedEl = _dom.chatEl.querySelector(

@@ -146,31 +146,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 		".active-chats-container",
 	);
 
-// Rejoin active conversation after socket reconnect and emit leave on unload
-try {
-	const sock = getSocket();
-	if (sock) {
-		sock.on("connect", () => {
-			try {
-				const friend = contacts.find((c) => c.id === state.contactUserId);
-				if (friend && friend.conversationId) {
-					sock.emit("conversation:join", { conversationId: friend.conversationId });
-				}
-				} catch (e) {
-					// ignore
-				}
-		});
-	}
-	window.addEventListener("beforeunload", () => {
-		try {
-			const friend = contacts.find((c) => c.id === state.contactUserId);
-			if (friend && friend.conversationId) {
-				const s = getSocket();
-				if (s) s.emit("conversation:leave", { conversationId: friend.conversationId });
-			}
-		} catch (e) { /* ignore */ }
-	});
-				} catch (e) { /* ignore */ }
+
+
 	const chatProfilePic = document.querySelector(".chat-profile-picture");
 	const chatName = document.querySelector(".chat-name");
 	const closeChatBtn = document.getElementById("close-chat");
@@ -794,6 +771,32 @@ try {
 			}
 		}
 	);
+
+	// Rejoin active conversation after socket reconnect and emit leave on unload
+	try {
+		const sock = getSocket();
+		if (sock) {
+			sock.on("connect", () => {
+				try {
+					const friend = contacts.find((c) => c.id === state.contactUserId);
+					if (friend && friend.conversationId) {
+						sock.emit("conversation:join", { conversationId: friend.conversationId });
+					}
+				} catch (e) {
+					// ignore
+				}
+			});
+		}
+		window.addEventListener("beforeunload", () => {
+			try {
+				const friend = contacts.find((c) => c.id === state.contactUserId);
+				if (friend && friend.conversationId) {
+					const s = getSocket();
+					if (s) s.emit("conversation:leave", { conversationId: friend.conversationId });
+				}
+			} catch (e) { /* ignore */ }
+		});
+	} catch (e) { /* ignore */ }
 
 	function updateContactsEmptyState() {
 		const empty = document.getElementById("contacts-empty");

@@ -138,7 +138,7 @@
 }
 .active-chat-message-time {
 	font-size: 0.75rem;
-	color: var(--text-main-color);
+	color: var(--text-secondary-color);
 }
 .active-chat-unread-messages {
 	background-color: var(--header-color);

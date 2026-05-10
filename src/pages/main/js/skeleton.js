@@ -83,10 +83,7 @@ export function makeActiveChatSkeleton(count = 4) {
 
     wrapper.appendChild(leftActions);
     wrapper.appendChild(active);
-    // placeholder for right-side actions (make the element explicit for clarity)
-    const rightActions = document.createElement('div');
-    rightActions.className = 'card-actions card-actions--right';
-    wrapper.appendChild(rightActions);
+    wrapper.appendChild(document.createElement('div'));
 
     frag.appendChild(wrapper);
   }

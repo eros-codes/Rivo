@@ -1,5 +1,3 @@
-import { safeFetch } from "../../../utils/fetch.js";
-
 // Use credentials (cookies) for auth; no Authorization header from localStorage.
 export function getCsrfToken() {
 	const m = document.cookie.match(/(?:^|; )csrfToken=([^;]+)/);
@@ -22,13 +20,20 @@ async function safeFetch(url, opts = {}) {
 
 	const res = await fetch(url, localOpts);
 	if (!res.ok) {
-		let body = "";
+		let bodyText = "";
 		try {
-			body = await res.clone().text();
+			bodyText = await res.clone().text();
 		} catch (e) { /* ignore */ }
-		const err = new Error(`HTTP ${res.status} ${res.statusText}`);
+		let parsedBody = null;
+		try {
+			parsedBody = JSON.parse(bodyText);
+		} catch (e) {
+			parsedBody = null;
+		}
+		const errMessage = (parsedBody && parsedBody.error) ? parsedBody.error : `HTTP ${res.status} ${res.statusText}`;
+		const err = new Error(errMessage);
 		err.status = res.status;
-		err.body = body;
+		err.body = parsedBody ?? bodyText;
 		throw err;
 	}
 
@@ -66,8 +71,21 @@ export async function updateContact(contactId, changes) {
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
 export async function getMessages(conversationId) {
-	return await safeFetch(`/api/messages/${conversationId}`, {
+	// default to last page (server will return up to `limit` latest messages)
+	const q = typeof conversationId === 'undefined' ? '' : String(conversationId);
+	return await safeFetch(`/api/messages/${q}`, {
 		credentials: "include",
+		headers: buildHeaders(),
+	});
+}
+
+export async function getMessagesPage(conversationId, { limit = 50, before = null, beforeId = null } = {}) {
+	const q = new URLSearchParams();
+	if (limit) q.set('limit', String(limit));
+	if (before) q.set('before', String(before));
+	if (beforeId) q.set('beforeId', String(beforeId));
+	return await safeFetch(`/api/messages/${conversationId}?${q.toString()}`, {
+		credentials: 'include',
 		headers: buildHeaders(),
 	});
 }

@@ -77,26 +77,25 @@ import { initSettings, openSettings } from "./js/settings.js";
 import { initAddContact } from "./js/add-contact.js";
 import { initSocket, emitTypingStart, emitTypingStop, emitMessageSeen, getSocket } from "./js/socket.js";
 import { loadThemeFromStorage } from "../../utils/theme.js";
-import { safeSrc } from "../../utils/dom.js";
 import { parseSvg } from "../../utils/svg.js";
 
 document.addEventListener("DOMContentLoaded", async function () {
 	// Initialize client-side Sentry (loaded from CDN if `window.__SENTRY_DSN__` set)
 	(function initClientSentry() {
 		try {
-			const dsn = window.__SENTRY_DSN__;
+			const dsn = window.__SENTRY_DSN__ || localStorage.getItem('sentryDsn');
 			if (!dsn) return;
 			const s = document.createElement('script');
 			s.src = 'https://browser.sentry-cdn.com/7.66.0/bundle.min.js';
 			s.crossOrigin = 'anonymous';
-			s.addEventListener('load', () => {
+			s.onload = () => {
 				try {
 					if (window.Sentry) {
 						window.Sentry.init({ dsn, tracesSampleRate: 0.0 });
 						window.Sentry.setTag('app', 'rivo-client');
 					}
 				} catch (e) { void e; }
-			});
+			};
 			document.head.appendChild(s);
 
 			window.addEventListener('error', (ev) => {
@@ -131,9 +130,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 		}
 	}
 
-	// keep an in-memory authoritative user reference (avoid trusting localStorage alone)
-	setCurrentUser(currentUser);
-
 	const theme = localStorage.getItem("rivo-theme") || "light";
 	if (theme === "dark") document.body.classList.add("dark-mode");
 
@@ -156,27 +152,25 @@ try {
 	if (sock) {
 		sock.on("connect", () => {
 			try {
-				const friend = findContactById(state.contactUserId);
+				const friend = contacts.find((c) => c.id === state.contactUserId);
 				if (friend && friend.conversationId) {
 					sock.emit("conversation:join", { conversationId: friend.conversationId });
 				}
-			} catch (e) {
-				// ignore
-			}
+				} catch (e) {
+					// ignore
+				}
 		});
 	}
 	window.addEventListener("beforeunload", () => {
 		try {
-			const friend = findContactById(state.contactUserId);
+			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (friend && friend.conversationId) {
 				const s = getSocket();
 				if (s) s.emit("conversation:leave", { conversationId: friend.conversationId });
 			}
 		} catch (e) { /* ignore */ }
 	});
-} catch (e) { /* ignore */ }
-
-	// (reconnect handler is registered after initSocket below)
+				} catch (e) { /* ignore */ }
 	const chatProfilePic = document.querySelector(".chat-profile-picture");
 	const chatName = document.querySelector(".chat-name");
 	const closeChatBtn = document.getElementById("close-chat");
@@ -363,8 +357,9 @@ try {
 	let swipeBounced = false;
 	const SWIPE_THRESHOLD = 100;
 
-	// ─── Typing indicator ─────────────────────────────────────────────────────
+	// ─── other variables ─────────────────────────────────────────────────────
 	let _typingTimeout = null;
+	let _suppressNextClick = false; 
 
 	// ─── Init all modules ─────────────────────────────────────────────────────
 	initToast({ toaster, messageContainer, toastMessage, toastIcon, undoBtn });
@@ -468,7 +463,7 @@ try {
 
 	initCardContextMenu(activeChatsContainer, (action, userId) => {
 		state.contactUserId = userId;
-		const friend = findContactById(userId);
+		const friend = contacts.find((c) => c.id === userId);
 		if (!friend) return;
 
 		if (action === "pin") {
@@ -511,7 +506,9 @@ try {
 			runSearch("");
 
 			state.contactUserId = contact.id;
-			chatProfilePic.src = safeSrc(contact.profilePics[0] || "/assets/images/profile.jpeg");
+			chatProfilePic.src =
+				contact.profilePics[0] ||
+				"/assets/images/profile.jpeg";
 			chatName.textContent = contact.nickname || contact.name;
 			openChat(true);
 			if (contact.conversationId) {
@@ -626,7 +623,6 @@ try {
 
 				// keep in-memory list in sync
 				contacts.push(normalized);
-				addContactToState(normalized);
 
 				const _sock = getSocket();
 				if (_sock && normalized.conversationId) {
@@ -643,7 +639,7 @@ try {
 				contactsContainer.appendChild(card);
 
 				// set chat header immediately so opening the chat shows correct info
-				chatProfilePic.src = safeSrc(normalized.profilePics[0] || "/assets/images/profile.jpeg");
+				chatProfilePic.src = normalized.profilePics[0] || "/assets/images/profile.jpeg";
 				chatName.textContent = normalized.nickname || normalized.name;
 
 				state.contactUserId = normalized.id;
@@ -677,7 +673,7 @@ try {
 			userMsgs[foundIndex].text = data.text;
 			userMsgs[foundIndex].isEdited = true;
 			// If this edited message is the conversation's last message, update contact preview
-				const friend = findContactById(foundUserId);
+			const friend = contacts.find((c) => c.id === foundUserId);
 			if (friend && foundIndex === userMsgs.length - 1) {
 				friend.lastMessage = data.text;
 				refreshCard(friend);
@@ -723,7 +719,7 @@ try {
 			}
 
 			// Update contact card last-message preview
-				const friend = findContactById(foundUserId);
+			const friend = contacts.find((c) => c.id === foundUserId);
 			if (friend) {
 				if (userMsgs.length > 0) {
 					const lastMsg = userMsgs.at(-1);
@@ -744,7 +740,7 @@ try {
 		},
 		// online
 		(userId) => {
-			const contact = findContactByContactId(userId);
+			const contact = contacts.find((c) => c.contactId === userId);
 			if (!contact) return;
 			contact.isOnline = true;
 			if (state.contactUserId === contact.id) {
@@ -754,7 +750,7 @@ try {
 		},
 		// offline
 		(userId, lastSeen) => {
-			const contact = findContactByContactId(userId);
+			const contact = contacts.find((c) => c.contactId === userId);
 			if (!contact) return;
 			contact.isOnline = false;
 			contact.lastSeen = lastSeen;
@@ -773,13 +769,13 @@ try {
 		},
 		// start typing
 		(userId) => {
-			const contact = findContactByContactId(userId);
+			const contact = contacts.find((c) => c.contactId === userId);
 			if (!contact || state.contactUserId !== contact.id) return;
 			chatTypingStatus.textContent = "typing...";
 		},
 		// stop typing
 		(userId) => {
-			const contact = findContactByContactId(userId);
+			const contact = contacts.find((c) => c.contactId === userId);
 			if (!contact || state.contactUserId !== contact.id) return;
 			chatTypingStatus.textContent = "";
 		},
@@ -802,18 +798,12 @@ try {
 	function updateContactsEmptyState() {
 		const empty = document.getElementById("contacts-empty");
 		if (!empty) return;
-			if (contacts.length === 0) {
-				empty.classList.remove('d-none');
-				empty.classList.add('d-flex');
-			} else {
-				empty.classList.add('d-none');
-				empty.classList.remove('d-flex');
-			}
+		empty.style.display = contacts.length === 0 ? "flex" : "none";
 	}
 
 	function _onContactAction(action, userId) {
 		state.contactUserId = userId;
-		const friend = findContactById(userId);
+		const friend = contacts.find((c) => c.id === userId);
 		if (!friend) return;
 		if (action === "pin") {
 			friend.isPinned = !friend.isPinned;
@@ -860,7 +850,7 @@ try {
 		}
 
 		const msgs = messages[state.contactUserId];
-		const friend = findContactById(state.contactUserId);
+		const friend = contacts.find((c) => c.id === state.contactUserId);
 
 		[...state.pinnedIndexes].reverse().forEach((idx) => {
 			const msg = msgs[idx];
@@ -905,8 +895,20 @@ try {
 		pinnedViewDialog.showModal();
 	}
 
-	// ─── Inject initial cards ─────────────────────────────────────────────────
+	// ─── Inject initial cards (show skeletons while loading) ────────────────
 	try {
+		// show skeleton placeholders
+		if (contactsContainer) {
+			contactsContainer.querySelectorAll('.skeleton-placeholder').forEach((n) => n.remove());
+			contactsContainer.appendChild(makeContactSkeleton(6));
+			contactsContainer.setAttribute('aria-busy', 'true');
+		}
+		if (activeChatsContainer) {
+			activeChatsContainer.querySelectorAll('.skeleton-placeholder').forEach((n) => n.remove());
+			activeChatsContainer.appendChild(makeActiveChatSkeleton(4));
+			activeChatsContainer.setAttribute('aria-busy', 'true');
+		}
+
 		const serverContacts = await getContacts();
 		serverContacts.forEach((c) => {
 			contacts.push({
@@ -921,17 +923,17 @@ try {
 				lastMessage: c.conversation?.messages?.[0]?.text || "",
 				lastMessageTime: c.conversation?.messages?.[0]
 					? new Date(
-						c.conversation.messages[0].createdAt,
-					).toLocaleTimeString([], {
-						hour: "2-digit",
-						minute: "2-digit",
-						hour12: false,
-					})
+							c.conversation.messages[0].createdAt,
+						).toLocaleTimeString([], {
+							hour: "2-digit",
+							minute: "2-digit",
+							hour12: false,
+						})
 					: null,
 				lastMessageDate: c.conversation?.messages?.[0]
 					? new Date(c.conversation.messages[0].createdAt)
-						.toISOString()
-						.slice(0, 10)
+							.toISOString()
+							.slice(0, 10)
 					: null,
 				unreadCount: c.unreadCount ?? 0,
 				lastMessageSeen: (() => {
@@ -940,28 +942,30 @@ try {
 					return lastMsg.isSeen === true;
 				})(),
 				_previousContainer: 'contacts',
-			};
-			contacts.push(contactObj);
-			addContactToState(contactObj);
+			});
 		});
 	} catch (err) {
 		console.error("Failed to load contacts", err);
 	}
 
-	// (skeleton placeholders already removed earlier)
-	// Batch DOM updates into fragments to avoid repeated reflows when
-	// rendering many contact cards.
-	const _activeFrag = document.createDocumentFragment();
-	const _contactsFrag = document.createDocumentFragment();
+	// remove skeleton placeholders before rendering real cards
+	if (contactsContainer) {
+		contactsContainer.querySelectorAll('.skeleton-placeholder').forEach((n) => n.remove());
+		contactsContainer.removeAttribute('aria-busy');
+	}
+	if (activeChatsContainer) {
+		activeChatsContainer.querySelectorAll('.skeleton-placeholder').forEach((n) => n.remove());
+		activeChatsContainer.removeAttribute('aria-busy');
+	}
 	contacts.forEach((contact) => {
 		if (
 			contact.isPinned ||
 			contact.unreadCount > 0 ||
 			contact.lastMessageSeen === false
 		) {
-			_activeFrag.appendChild(createActiveChatCard(contact));
+			activeChatsContainer.appendChild(createActiveChatCard(contact));
 		} else {
-			_contactsFrag.appendChild(
+			contactsContainer.appendChild(
 				createContactCard(
 					{ ...contact, hasMessages: !!contact.lastMessage },
 					_onContactAction,
@@ -969,8 +973,6 @@ try {
 			);
 		}
 	});
-	if (activeChatsContainer) activeChatsContainer.appendChild(_activeFrag);
-	if (contactsContainer) contactsContainer.appendChild(_contactsFrag);
 	updateTotalUnreadCount();
 	sortActiveChats();
 	sortContacts();
@@ -989,23 +991,13 @@ try {
 		});
 	}
 
-	// debounce helper to limit search frequency
-	function debounce(fn, wait = 200) {
-		let t = null;
-		return (...args) => {
-			if (t) clearTimeout(t);
-			t = setTimeout(() => fn(...args), wait);
-		};
-	}
-
 	if (searchInput) {
 		searchbar.addEventListener("click", () => {
 			searchbar.classList.toggle("open");
 			if (searchbar.classList.contains("open")) searchInput.focus();
 		});
-		const debouncedSearch = debounce((v) => runSearch(v), 225);
 		searchInput.addEventListener("input", () => {
-			debouncedSearch(searchInput.value.trim().toLowerCase());
+			runSearch(searchInput.value.trim().toLowerCase());
 		});
 	}
 
@@ -1025,11 +1017,10 @@ try {
 	if (closeChatBtn) {
 		closeChatBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
-			while (chatEl.firstChild) chatEl.removeChild(chatEl.firstChild);
-			const friend = findContactById(state.contactUserId);
+			chatEl.textContent = "";
+			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (friend) {
-				friend.isInChat = false;
-				// local-only: do not persist isInChat from client
+				// local-only field `isInChat` removed from model; no-op
 				if (
 					!friend.isPinned &&
 					friend.unreadCount === 0 &&
@@ -1050,7 +1041,9 @@ try {
 			const active = e.target.closest(".active-chat");
 			if (!active) return;
 
-			const prevFriend = findContactById(state.contactUserId);
+			const prevFriend = contacts.find(
+				(c) => c.id === state.contactUserId,
+			);
 			if (prevFriend && prevFriend.id !== Number(active.dataset.userId)) {
 				// leave previous conversation room if any
 				try {
@@ -1059,8 +1052,7 @@ try {
 						sock.emit("conversation:leave", { conversationId: prevFriend.conversationId });
 					}
 				} catch (e) { /* ignore */ }
-				prevFriend.isInChat = false;
-				// local-only: do not persist isInChat from client
+				// local-only `isInChat` removed; nothing to persist
 				if (
 					!prevFriend.isPinned &&
 					prevFriend.unreadCount === 0 &&
@@ -1073,7 +1065,7 @@ try {
 			}
 
 			state.contactUserId = Number(active.dataset.userId);
-			const friend = findContactById(state.contactUserId);
+			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (!friend) return;
 
 			// join the new conversation room so server considers us present
@@ -1086,18 +1078,16 @@ try {
 				friend.lastMessageSeen = true;
 			}
 			friend.unreadCount = 0;
-			friend.isInChat = true;
-			// local-only: do not persist isInChat from client
+			// local-only `isInChat` removed; no state to set here
 			const unreadEl = active.querySelector(
 				".active-chat-unread-messages",
 			);
-			if (unreadEl) {
-				unreadEl.classList.add('opacity-0');
-				unreadEl.classList.remove('opacity-1');
-			}
+			if (unreadEl) unreadEl.style.opacity = "0";
 			updateTotalUnreadCount();
 
-			chatProfilePic.src = safeSrc(friend.profilePics[0] || "/assets/images/profile.jpeg");
+			chatProfilePic.src =
+				friend.profilePics[0] ||
+				"/assets/images/profile.jpeg";
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 			if (friend.conversationId) {
@@ -1105,19 +1095,15 @@ try {
 			}
 			scrollChatToBottom();
 
-				if (friend.isBlocked) {
-					messageContainer.classList.add('d-none');
-					if (unblockActionBtn[0]) {
-						unblockActionBtn[0].classList.remove('d-none');
-						unblockActionBtn[0].classList.add('d-flex');
-					}
-				} else {
-					messageContainer.classList.remove('d-none');
-					if (unblockActionBtn[0]) {
-						unblockActionBtn[0].classList.add('d-none');
-						unblockActionBtn[0].classList.remove('d-flex');
-					}
-				}
+			if (friend.isBlocked) {
+				messageContainer.style.display = "none";
+				const _ub = unblockActionBtn[0];
+				if (_ub) _ub.style.display = "flex";
+			} else {
+				messageContainer.style.display = "flex";
+				const _ub = unblockActionBtn[0];
+				if (_ub) _ub.style.display = "none";
+			}
 
 			const existingCard = activeChatsContainer.querySelector(
 				`[data-user-id="${friend.id}"]`,
@@ -1137,7 +1123,9 @@ try {
 			const card = e.target.closest(".contacts-card");
 			if (!card) return;
 
-			const prevFriend = findContactById(state.contactUserId);
+			const prevFriend = contacts.find(
+				(c) => c.id === state.contactUserId,
+			);
 			if (prevFriend && prevFriend.id !== Number(card.dataset.userId)) {
 					// leave previous conversation room if any
 					try {
@@ -1146,8 +1134,7 @@ try {
 							sock.emit("conversation:leave", { conversationId: prevFriend.conversationId });
 						}
 					} catch (e) { /* ignore */ }
-					prevFriend.isInChat = false;
-				// local-only: do not persist isInChat from client
+					// local-only `isInChat` removed
 				if (
 					!prevFriend.isPinned &&
 					prevFriend.unreadCount === 0 &&
@@ -1160,7 +1147,7 @@ try {
 			}
 
 			state.contactUserId = Number(card.dataset.userId);
-			const friend = findContactById(state.contactUserId);
+			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (!friend) return;
 
 			// join the new conversation room so server considers us present
@@ -1173,8 +1160,7 @@ try {
 				friend.lastMessageSeen = true;
 			}
 			friend.unreadCount = 0;
-			friend.isInChat = true;
-			// local-only: do not persist isInChat from client
+			// local-only `isInChat` removed; no-op
 			updateTotalUnreadCount();
 
 			// remember where this card came from so undo/delete logic can restore correctly
@@ -1182,24 +1168,22 @@ try {
 			card.remove();
 			activeChatsContainer.appendChild(createActiveChatCard(friend));
 
-			chatProfilePic.src = safeSrc(friend.profilePics[0] || "/assets/images/profile.jpeg");
+			chatProfilePic.src =
+				friend.profilePics[0] ||
+				"/assets/images/profile.jpeg";
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 			if (friend.conversationId) {
 				emitMessageSeen(friend.conversationId);
 			}
 			if (friend.isBlocked) {
-				messageContainer.classList.add('d-none');
-				if (unblockActionBtn[0]) {
-					unblockActionBtn[0].classList.remove('d-none');
-					unblockActionBtn[0].classList.add('d-flex');
-				}
+				messageContainer.style.display = "none";
+				const _ub = unblockActionBtn[0];
+				if (_ub) _ub.style.display = "flex";
 			} else {
-				messageContainer.classList.remove('d-none');
-				if (unblockActionBtn[0]) {
-					unblockActionBtn[0].classList.add('d-none');
-					unblockActionBtn[0].classList.remove('d-flex');
-				}
+				messageContainer.style.display = "flex";
+				const _ub = unblockActionBtn[0];
+				if (_ub) _ub.style.display = "none";
 			}
 			scrollChatToBottom();
 		});
@@ -1208,10 +1192,7 @@ try {
 	// ─── Message input ────────────────────────────────────────────────────────
 	if (messageInput && sendMessageBtn && chatEl && messageContainer) {
 		messageInput.addEventListener("input", () => {
-			const nearBottom =
-				chatEl.scrollTop + chatEl.clientHeight >=
-				chatEl.scrollHeight - 20;
-			if (nearBottom) scrollChatToBottom();
+			const wasNearBottom = nearBottom(chatEl);
 
 			const firstChar = messageInput.value.trim()[0];
 			if (firstChar)
@@ -1220,11 +1201,11 @@ try {
 					: "ltr";
 
 			if (messageInput.value.trim().length > 0) {
-				sendMessageBtn.classList.remove('d-none');
-				if (cancelEditBtn && !cancelEditBtn.classList.contains('d-none'))
-					cancelEditBtn.classList.add('d-none');
+				sendMessageBtn.style.display = "block";
+				if (cancelEditBtn.style.display === "block")
+					cancelEditBtn.style.display = "none";
 			} else {
-				sendMessageBtn.classList.add('d-none');
+				sendMessageBtn.style.display = "none";
 			}
 
 			messageInput.style.height = "auto";
@@ -1261,7 +1242,7 @@ try {
 			if (wasNearBottom) scrollChatToBottomAfterPadding();
 
 			// typing emit
-			const _contact = findContactById(state.contactUserId);
+			const _contact = contacts.find((c) => c.id === state.contactUserId);
 			if (_contact?.conversationId) {
 				emitTypingStart(_contact.conversationId);
 				clearTimeout(_typingTimeout);
@@ -1348,17 +1329,10 @@ try {
 				const progress = Math.min(dx / SWIPE_THRESHOLD, 1);
 				const translate = Math.min(dx * 0.4, SWIPE_THRESHOLD * 0.4);
 
-				// Use transform class to avoid inline style where possible
-				swipeMsg.style.transform = `translateX(${translate}px)`;
+				swipeMsg.style.translate = `${translate}px 0`;
 
 				if (swipeIcon) {
-					if (progress > 0) {
-						swipeIcon.classList.add('opacity-1');
-						swipeIcon.classList.remove('opacity-0');
-					} else {
-						swipeIcon.classList.add('opacity-0');
-						swipeIcon.classList.remove('opacity-1');
-					}
+					swipeIcon.style.opacity = progress;
 					// trigger bounce while swiping when threshold is reached
 					if (progress >= 1 && !swipeBounced) {
 						swipeBounced = true;
@@ -1396,7 +1370,7 @@ try {
 			if (swipeMsg) {
 				const dx = e.changedTouches[0].clientX - swipeStartX;
 
-				swipeMsg.style.transform = '';
+				swipeMsg.style.translate = "";
 
 				if (dx >= SWIPE_THRESHOLD && didSwipe) {
 					// trigger reply immediately; do not add bounce on touchend
@@ -1540,8 +1514,11 @@ try {
 					if (!msgs) return;
 					pinnedMessageText.textContent = msgs.text;
 					pinnedMessageText.dataset.index = prevIdx;
-					pinnedMessageContainer.classList.add('highlight-pin');
-					setTimeout(() => pinnedMessageContainer.classList.remove('highlight-pin'), 500);
+					pinnedMessageContainer.style.animation = "highlightPin 0.5s";
+					setTimeout(
+						() => (pinnedMessageContainer.style.animation = ""),
+						500,
+					);
 					updatePinCount(prevIdx);
 				}, 800);
 			}
@@ -1577,40 +1554,44 @@ try {
 			const card = e.target.closest(".forwarded-contact-card");
 			if (!card) return;
 
-			const friend = findContactById(Number(card.dataset.userId));
+			const friend = contacts.find(
+				(c) => c.id === Number(card.dataset.userId),
+			);
 			if (!friend) return;
 
 			if (state.isSelectionForwarding) {
-				const sourceName = findContactById(state.contactUserId)?.name ?? "Unknown";
+				const sourceName =
+					contacts.find((c) => c.id === state.contactUserId)?.name ??
+					"Unknown";
 				executeBulkForward(friend, sourceName);
 				return;
 			}
 
 			// Single message forward
-			const senderName = messages[state.contactUserId][Number(state.msgIndex)].user
+			const senderName = messages[state.contactUserId][
+				Number(state.msgIndex)
+			].user
 				? "You"
-				: findContactById(state.contactUserId)?.name;
+				: contacts.find((c) => c.id === state.contactUserId)?.name;
 
-			chatProfilePic.src = safeSrc(friend.profilePics[0] || "/assets/images/profile.jpeg");
+			chatProfilePic.src =
+				friend.profilePics[0] ||
+				"/assets/images/profile.jpeg";
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 			if (friend.isBlocked) {
-					messageContainer.classList.add('d-none');
-					if (unblockActionBtn[0]) {
-						unblockActionBtn[0].classList.remove('d-none');
-						unblockActionBtn[0].classList.add('d-flex');
-					}
-					return;
-				} else {
-					messageContainer.classList.remove('d-none');
-					if (unblockActionBtn[0]) {
-						unblockActionBtn[0].classList.add('d-none');
-						unblockActionBtn[0].classList.remove('d-flex');
-					}
-				}
+				messageContainer.style.display = "none";
+				const _ub = unblockActionBtn[0];
+				if (_ub) _ub.style.display = "flex";
+				return;
+			} else {
+				messageContainer.style.display = "flex";
+				const _ub = unblockActionBtn[0];
+				if (_ub) _ub.style.display = "none";
+			}
 			injectMessages(friend.id);
 
-			msgAction.classList.remove('d-none');
+			msgAction.style.display = "flex";
 			state.actionPreviewHeight =
 				msgAction.getBoundingClientRect().height / 14;
 			chatEl.style.paddingBottom =
@@ -1620,8 +1601,8 @@ try {
 				messages[state.contactUserId][Number(state.msgIndex)];
 			if (!msgs) return;
 			msgActionmsg.textContent = msgs.text;
-			messageInput.classList.add('input-rounded-bottom');
-			sendMessageBtn.classList.remove('d-none');
+			messageInput.style.borderRadius = "0 0 2rem 2rem";
+			sendMessageBtn.style.display = "block";
 			scrollChatToBottom();
 
 			state.isForwarding = true;
@@ -1646,7 +1627,7 @@ try {
 				state.currentUndoAction();
 				state.currentUndoAction = null;
 			}
-				if (toaster) toaster.classList.add('opacity-0');
+			toaster.style.opacity = 0;
 		});
 	}
 
@@ -1670,7 +1651,7 @@ try {
 		deleteMsg[0].addEventListener("click", () => {
 			closeContextMenu();
 
-			const friend = findContactById(state.contactUserId);
+			const friend = contacts.find((c) => c.id === state.contactUserId);
 			const prevLastMessage = friend?.lastMessage;
 			const prevLastMessageTime = friend?.lastMessageTime;
 			const prevLastMessageSeen = friend?.lastMessageSeen;
@@ -1822,8 +1803,8 @@ try {
 	if (emojiBtn && emojiPicker && sendMessageBtn) {
 		emojiBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
-			const isOpen = !emojiPicker.classList.contains('d-none');
-			emojiPicker.classList.toggle('d-none', isOpen);
+			const isOpen = emojiPicker.style.display === "block";
+			emojiPicker.style.display = isOpen ? "none" : "block";
 		});
 
 		emojiPicker.addEventListener("emoji-click", (e) => {
@@ -1838,11 +1819,11 @@ try {
 			messageInput.selectionStart = messageInput.selectionEnd =
 				savedSelectionStart;
 			messageInput.dispatchEvent(new Event("input"));
-			emojiPicker.classList.add('d-none');
+			emojiPicker.style.display = "none";
 			messageInput.focus();
 
 			if (messageInput.value.trim().length > 0) {
-				sendMessageBtn.classList.remove('d-none');
+				sendMessageBtn.style.display = "block";
 			}
 		});
 	}
@@ -1884,6 +1865,17 @@ try {
 			messageMenu.style.display === "block" &&
 			!messageMenu.contains(e.target)
 		) {
+			// If the user tapped the overlay, close immediately even if we are
+			// suppressing the next click (this happens after long-press).
+			if (chatOverlay && (e.target === chatOverlay || chatOverlay.contains(e.target))) {
+				_suppressNextClick = false;
+				closeContextMenu();
+				return;
+			}
+			if (_suppressNextClick) {
+				_suppressNextClick = false;
+				return;
+			}
 			closeContextMenu();
 		}
 		if (

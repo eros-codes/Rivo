@@ -1,4 +1,5 @@
 const MAX_MESSAGE_LENGTH = parseInt(process.env.MAX_MESSAGE_LENGTH || "2000", 10);
+const MAX_NAME_LENGTH = parseInt(process.env.MAX_NAME_LENGTH || "255", 10);
 
 export function isNonEmptyString(v, maxLen = MAX_MESSAGE_LENGTH) {
   return typeof v === "string" && v.trim().length > 0 && v.trim().length <= maxLen;
@@ -14,4 +15,4 @@ export function isPositiveInt(v) {
   return Number.isInteger(n) && n > 0;
 }
 
-export { MAX_MESSAGE_LENGTH };
+export { MAX_MESSAGE_LENGTH, MAX_NAME_LENGTH };

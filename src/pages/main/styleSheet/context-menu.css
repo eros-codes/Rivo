@@ -1,9 +1,7 @@
 .message-menu {
   display: none;
   width: 13rem;
-  position: absolute;
-  top: calc(100% + 0.5rem);
-  left: 0;
+  position: fixed;
   z-index: 1000;
 
   border-radius: 1.5rem;
@@ -30,7 +28,6 @@
     inset -1px -1px 0 rgba(0, 0, 0, 0.22);
 
   opacity: 0;
-  pointer-events: none;
   transition:
     opacity 0.12s ease-in,
     transform 0.18s ease,
@@ -117,5 +114,3 @@
 	background-color: var(--glass-bg-input-color);
   }
 }
-
-/* Visible modifier handled via .message-menu.visible in global.css */

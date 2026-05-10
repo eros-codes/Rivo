@@ -120,7 +120,7 @@ export function createActiveChatCard({
 		unreadEl.classList.add('opacity-1');
 	}
 	const unreadInner = document.createElement("p");
-	unreadInner.textContent = countNum > 0 ? String(countNum) : "";
+	unreadInner.textContent = String(unreadCount ?? 0);
 	unreadEl.appendChild(unreadInner);
 	meta.appendChild(timeEl);
 	meta.appendChild(unreadEl);

@@ -1,9 +1,6 @@
 import { Router } from "express";
 import prisma from "../prisma.js";
 import { requireAuth } from "../middleware/auth.js";
-import rateLimit from "express-rate-limit";
-import { parseIntSafe } from "../utils/validators.js";
-import { invalidateConversationContacts } from "../socket/index.js";
 
 const router = Router();
 
@@ -58,8 +55,6 @@ router.get("/", requireAuth, async (req, res) => {
 				}
 				if (p.privacyProfile === "nobody") {
 					cc.contact.profilePics = [];
-					// also hide bio when profile is private
-					cc.contact.bio = null;
 				}
 				// strip privacy fields from response
 				delete cc.contact.privacyOnline;
@@ -112,18 +107,19 @@ router.post("/", requireAuth, async (req, res) => {
 			return res.status(409).json({ error: "Contact already exists" });
 		}
 
-		// conversation مشترک بساز
-		const conversation = await prisma.conversation.create({
-			data: {
-				members: {
-					create: [{ userId: req.userId }, { userId: targetUser.id }],
+		// Create conversation and contacts inside a single transaction so
+		// we don't leave an orphaned conversation if one of the contact
+		// creations fails.
+		const [contact] = await prisma.$transaction(async (tx) => {
+			const conversation = await tx.conversation.create({
+				data: {
+					members: {
+						create: [{ userId: req.userId }, { userId: targetUser.id }],
+					},
 				},
-			},
-		});
+			});
 
-		// contact برای هر دو طرف بساز
-		const [contact] = await prisma.$transaction([
-			prisma.contact.create({
+			const c1 = await tx.contact.create({
 				data: {
 					ownerId: req.userId,
 					contactId: targetUser.id,
@@ -146,15 +142,18 @@ router.post("/", requireAuth, async (req, res) => {
 						},
 					},
 				},
-			}),
-			prisma.contact.create({
+			});
+
+			await tx.contact.create({
 				data: {
 					ownerId: targetUser.id,
 					contactId: req.userId,
 					conversationId: conversation.id,
 				},
-			}),
-		]);
+			});
+
+			return [c1];
+		});
 
 		return res.status(201).json(contact);
 	} catch (err) {
@@ -192,9 +191,6 @@ router.patch("/:id", requireAuth, async (req, res) => {
 			},
 		});
 
-		// Invalidate cache for this conversation to reflect updated contact
-		try { invalidateConversationContacts(updated.conversationId); } catch (e) { /* ignore */ }
-
 		return res.json(updated);
 	} catch (err) {
 		console.error(err);
@@ -218,11 +214,7 @@ router.delete("/:id", requireAuth, async (req, res) => {
 			return res.status(404).json({ error: "Contact not found" });
 		}
 
-
 		await prisma.contact.delete({ where: { id: contactId } });
-
-		// Invalidate cache for this conversation so sockets don't use stale contact lists
-		try { invalidateConversationContacts(contact.conversationId); } catch (e) { /* ignore */ }
 
 		return res.json({ success: true });
 	} catch (err) {

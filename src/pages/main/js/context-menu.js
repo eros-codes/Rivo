@@ -46,14 +46,9 @@ export function openContextMenu(msg, e) {
 	state.msgIndex = msg.dataset.index;
 	state.selectedMsg = msg;
 
-	// Attach the shared menu element to the clicked message so we can
-	// position it via CSS and avoid inline top/left style writes.
-	if (_dom.messageMenu.parentElement !== msg) {
-		msg.appendChild(_dom.messageMenu);
-	}
-	_dom.messageMenu.classList.add('visible');
-	_dom.chatOverlay.classList.add('visible');
-	msg.classList.add('menu-open');
+	_dom.messageMenu.style.display = "block";
+	_dom.chatOverlay.style.display = "block";
+	msg.style.zIndex = 500;
 
 	// Pin/Unpin label & icon
 	const pinLabels = document.querySelectorAll(".pin-message p");
@@ -61,7 +56,7 @@ export function openContextMenu(msg, e) {
 	const isPinned = state.pinnedIndexes.includes(Number(msg.dataset.index));
 	if (pinLabels[0]) pinLabels[0].textContent = isPinned ? "Unpin" : "Pin";
 	if (pinIconEl) {
-		pinIconEl.textContent = '';
+		pinIconEl.textContent = "";
 		const _i = parseSvg(isPinned ? unpinIcon : pinIconForMenu);
 		if (_i) pinIconEl.appendChild(_i.cloneNode(true));
 	}
@@ -69,36 +64,39 @@ export function openContextMenu(msg, e) {
 	// Determine message object and ownership; forwarded messages can't be edited
 	const messageObj = getMessageByIndex(state.contactUserId, state.msgIndex);
 	const forwardedFrom = messageObj?.forwardedFrom;
-	const isOwner = messageObj ? !!messageObj.user : msg.classList.contains("outgoing");
+	const isOwner = messageObj
+		? !!messageObj.user
+		: msg.classList.contains("outgoing");
 	const editMsg0 = _dom.editMsg?.[0];
 	if (editMsg0) {
-		if (!forwardedFrom && isOwner) editMsg0.classList.remove('d-none');
-		else editMsg0.classList.add('d-none');
+		editMsg0.style.display = !forwardedFrom && isOwner ? "flex" : "none";
 	}
 
 	// Position menu
-	// Decide whether to show menu above the message (if viewport space below is limited)
 	const rect = msg.getBoundingClientRect();
 	const menuHeight = _dom.messageMenu.getBoundingClientRect().height;
+	let translateAmount = 0;
+
 	if (window.innerHeight - rect.bottom < menuHeight) {
-		_dom.messageMenu.classList.add('above');
-	} else {
-		_dom.messageMenu.classList.remove('above');
+		translateAmount = menuHeight + rect.bottom - window.innerHeight + 24;
+		msg.style.transform = `translateY(-${translateAmount}px)`;
 	}
 
-	// Align menu left/right depending on message side
+	_dom.messageMenu.style.top =
+		rect.top + rect.height - translateAmount + basePadding + "px";
+
 	if (msg.classList.contains("outgoing")) {
-		_dom.messageMenu.classList.add('align-right');
-		_dom.messageMenu.classList.remove('align-left');
+		_dom.messageMenu.style.right = window.innerWidth - rect.right + "px";
+		_dom.messageMenu.style.left = "";
 	} else {
-		_dom.messageMenu.classList.add('align-left');
-		_dom.messageMenu.classList.remove('align-right');
+		_dom.messageMenu.style.left = rect.left + "px";
+		_dom.messageMenu.style.right = "";
 	}
 
 	state.isMenuOpen = true;
 	setTimeout(() => {
-		// CSS transitions handle opacity; class is already set.
-		_dom.chatOverlay.classList.add('visible');
+		_dom.messageMenu.style.opacity = 1;
+		_dom.chatOverlay.style.opacity = 1;
 	}, 100);
 
 	if (e && typeof e.stopPropagation === "function") e.stopPropagation();
@@ -128,10 +126,8 @@ export function deleteMessage(msg, index) {
 	const deletedMsg = arr[idx];
 	const messageId = deletedMsg?.id;
 
-	// restore inline transition for delete animation (undo window)
-	msg.style.transition = "opacity 3s, transform 3s";
-	msg.classList.add('fading');
-	msg.classList.add('opacity-0');
+	msg.style.transition = "opacity 3s ease";
+	msg.style.opacity = 0;
 	const timeout = setTimeout(() => {
 		// after undo window, attempt server deletion and then finalize local removal on success
 		(async () => {
@@ -141,9 +137,12 @@ export function deleteMessage(msg, index) {
 				// Remove message by id if possible, otherwise by localId, otherwise by index
 				const currentArr = messages[state.contactUserId] || [];
 				let removeIdx = -1;
-				if (messageId) removeIdx = currentArr.findIndex((m) => m.id === messageId);
+				if (messageId)
+					removeIdx = currentArr.findIndex((m) => m.id === messageId);
 				if (removeIdx === -1 && deletedMsg && deletedMsg._localId)
-					removeIdx = currentArr.findIndex((m) => m._localId === deletedMsg._localId);
+					removeIdx = currentArr.findIndex(
+						(m) => m._localId === deletedMsg._localId,
+					);
 				if (removeIdx === -1) removeIdx = idx;
 
 				// Remove element from DOM and data structures
@@ -154,9 +153,11 @@ export function deleteMessage(msg, index) {
 				currentArr.forEach((m, i) => (m.index = i));
 
 				// Re-index DOM elements
-				document.querySelectorAll(".chat-message").forEach((msgEl, i) => {
-					msgEl.dataset.index = i;
-				});
+				document
+					.querySelectorAll(".chat-message")
+					.forEach((msgEl, i) => {
+						msgEl.dataset.index = i;
+					});
 
 				state.pinnedIndexes = currentArr
 					.map((m, i) => (m.isPinned ? i : -1))
@@ -164,7 +165,9 @@ export function deleteMessage(msg, index) {
 
 				const remaining = currentArr;
 
-				const friend = contacts.find((c) => c.id === state.contactUserId);
+				const friend = contacts.find(
+					(c) => c.id === state.contactUserId,
+				);
 				if (friend) {
 					if (remaining.length > 0) {
 						const lastMsg = remaining.at(-1);
@@ -197,11 +200,11 @@ export function deleteMessage(msg, index) {
 				}
 			} catch (e) {
 				// server delete failed; restore message opacity and notify
-				console.error('deleteMessage failed', e);
-				msg.classList.remove('opacity-0');
-				msg.classList.add('opacity-1');
+				console.error("deleteMessage failed", e);
+				msg.style.transition = "opacity 0.15s ease";
+				msg.style.opacity = 1;
 				setTimeout(() => {
-					msg.classList.remove('fading');
+					msg.style.transition = "";
 				}, 150);
 				// optionally show toast via UI; keep message in state
 			}
@@ -213,12 +216,10 @@ export function deleteMessage(msg, index) {
 
 export function undoDeleteMessage(msg) {
 	clearTimeout(state.deleting);
-	msg.classList.remove('opacity-0');
-	msg.classList.add('opacity-1');
-	// remove inline transition after undo restore
-	msg.style.transition = "";
+	msg.style.transition = "opacity 0.15s ease";
+	msg.style.opacity = 1;
 	setTimeout(() => {
-		msg.classList.remove('fading');
+		msg.style.transition = "";
 	}, 150);
 }
 
@@ -269,7 +270,7 @@ export function pinMessage(pinIconSvg) {
 		if (!existingIcon) {
 			const pinSpan = document.createElement("span");
 			pinSpan.className = "chat-pinned-icon";
-			pinSpan.textContent = '';
+			pinSpan.textContent = "";
 			const _p = parseSvg(pinIconSvg);
 			if (_p) pinSpan.appendChild(_p.cloneNode(true));
 			msg.user ? meta.prepend(pinSpan) : meta.appendChild(pinSpan);
@@ -291,42 +292,98 @@ export function editMessage() {
 	const msg = getMessageByIndex(state.contactUserId, Number(state.msgIndex));
 	if (!msg) return;
 
+	// Determine if user was near bottom before we change layout (used to keep view pinned)
+	const wasNearBottomBefore = nearBottom(_dom.chatEl, 20);
+
 	state.isEditing = true;
-	const msgInputEl = _dom.messageInput || document.querySelector('.message-input');
-	if (msgInputEl) {
-		msgInputEl.value = msg.text;
-		if (typeof msgInputEl.focus === 'function') msgInputEl.focus();
+
+	// Breadcrumb for monitoring (optional, if Sentry loaded)
+	try {
+		if (
+			typeof window !== "undefined" &&
+			window.Sentry &&
+			window.Sentry.addBreadcrumb
+		) {
+			window.Sentry.addBreadcrumb({
+				category: "edit",
+				message: "enter_edit",
+				data: { messageId: msg?.id },
+			});
+		}
+	} catch (e) {
+		void e;
 	}
+
+	// Show action preview first so padding calculation has the correct height
 	if (_dom.msgAction) {
 		_dom.msgAction.style.display = "flex";
-		state.actionPreviewHeight = _dom.msgAction.getBoundingClientRect().height / 14;
+		state.actionPreviewHeight =
+			_dom.msgAction.getBoundingClientRect().height / 14;
+		_dom.msgActionText.textContent = "Edit";
+		_dom.msgActionmsg.textContent = msg.text;
 	}
-	_dom.chatEl.style.paddingBottom = basePadding + state.actionPreviewHeight + "rem";
-	_dom.msgActionText.textContent = "Edit";
-	_dom.msgActionmsg.textContent = msg.text;
+
+	const msgInputEl =
+		_dom.messageInput || document.querySelector(".message-input");
+	if (msgInputEl) {
+		msgInputEl.value = msg.text;
+		if (typeof msgInputEl.focus === "function") msgInputEl.focus();
+		try {
+			msgInputEl.selectionStart = msgInputEl.selectionEnd =
+				msgInputEl.value.length;
+		} catch (e) {
+			void e;
+		}
+
+		// Dispatch the input event on next RAF to avoid layout race between
+		// showing the action preview and autosize calculation.
+		requestAnimationFrame(() => {
+			try {
+				msgInputEl.dispatchEvent(new Event("input", { bubbles: true }));
+			} catch (e) {
+				void e;
+			}
+			// Ensure the textarea height is explicitly set after autosize
+			try {
+				msgInputEl.style.height = msgInputEl.scrollHeight + "px";
+			} catch (e) {
+				void e;
+			}
+			// Do not scroll here; main input handler will handle scroll-after-padding.
+		});
+	}
+
+	// ensure chat padding uses action-preview height (input handler may override)
+	_dom.chatEl.style.paddingBottom =
+		basePadding + state.actionPreviewHeight + "rem";
 	closeContextMenu();
 
 	_dom.messageInput.style.borderRadius = "0 0 2rem 2rem";
 	_dom.sendMessageBtn.style.display = "block";
-	const nearBottom = _dom.chatEl.scrollTop + _dom.chatEl.clientHeight >= _dom.chatEl.scrollHeight - _dom.msgAction.getBoundingClientRect().height - 30;
-	if (nearBottom) scrollChatToBottom();
+	// If user was near bottom before editing, wait for the padding transition
+	// to finish and then scroll to bottom.
+	if (wasNearBottomBefore) scrollChatToBottomAfterPadding();
 }
 
 // ─── Reply ────────────────────────────────────────────────────────────────────
 export function replyMessage() {
 	const msg = getMessageByIndex(state.contactUserId, Number(state.msgIndex));
 	if (!msg) return;
-	const senderName = msg.user ? "You" : contacts.find((c) => c.id === state.contactUserId)?.name;
-	_dom.msgAction.classList.remove('d-none');
-	_dom.msgAction.classList.add('d-flex');
-	state.actionPreviewHeight = _dom.msgAction.getBoundingClientRect().height / 14;
-	_dom.chatEl.style.paddingBottom = basePadding + state.actionPreviewHeight + "rem";
+	const senderName = msg.user
+		? "You"
+		: contacts.find((c) => c.id === state.contactUserId)?.name;
+	_dom.msgAction.style.display = "flex";
+	state.actionPreviewHeight =
+		_dom.msgAction.getBoundingClientRect().height / 14;
+	_dom.chatEl.style.paddingBottom =
+		basePadding + state.actionPreviewHeight + "rem";
 	_dom.msgActionText.textContent = "Replying to " + senderName;
 	_dom.msgActionmsg.textContent = msg.text;
-	const msgInputEl2 = _dom.messageInput || document.querySelector('.message-input');
-	if (msgInputEl2 && typeof msgInputEl2.focus === 'function') {
+	const msgInputEl2 =
+		_dom.messageInput || document.querySelector(".message-input");
+	if (msgInputEl2 && typeof msgInputEl2.focus === "function") {
 		msgInputEl2.focus();
-			if (msgInputEl2) msgInputEl2.classList.add('input-rounded-bottom');
+		if (msgInputEl2.style) msgInputEl2.style.borderRadius = "0 0 2rem 2rem";
 	}
 
 	state.replyTo = {
@@ -337,5 +394,11 @@ export function replyMessage() {
 	};
 	closeContextMenu();
 
-	if (nearBottom(_dom.chatEl, (_dom.msgAction?.getBoundingClientRect().height || 0) + 20)) scrollChatToBottomAfterPadding();
+	if (
+		nearBottom(
+			_dom.chatEl,
+			(_dom.msgAction?.getBoundingClientRect().height || 0) + 20,
+		)
+	)
+		scrollChatToBottomAfterPadding();
 }

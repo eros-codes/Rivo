@@ -10,7 +10,6 @@ import {
 import { createContactCard } from "../../../components/contact-cards/contact-card.js";
 import { createActiveChatCard } from "../../../components/active-chats/active-chats.js";
 import { updateContact, deleteContact as apiDeleteContact, deleteChat as apiDeleteChat, searchUsers } from "./api.js";
-import { safeSrc } from "../../../utils/dom.js";
 
 let _dom = {};
 
@@ -45,7 +44,7 @@ function formatLastSeen(isoString) {
 }
 
 // ─── Open profile ─────────────────────────────────────────────────────────────
-export function openProfile(friend) {
+export async function openProfile(friend) {
 	_dom.detailPictures.forEach(
 		(el) =>
 			(el.src =
@@ -81,7 +80,7 @@ export function openProfile(friend) {
 					// also refresh picture/name if they were missing
 					if ((!friend.profilePics || friend.profilePics.length === 0) && found.profilePics) {
 						friend.profilePics = found.profilePics;
-						_dom.detailPictures.forEach((el) => (el.src = safeSrc(friend.profilePics[0] || "/assets/images/profile.jpeg")));
+						_dom.detailPictures.forEach((el) => (el.src = friend.profilePics[0] || "/assets/images/profile.jpeg"));
 					}
 					if (!friend.name && found.name) {
 						friend.name = found.name;
@@ -95,34 +94,26 @@ export function openProfile(friend) {
 	}
 
 	_dom.detailUsernames.forEach((el) => {
-		el.classList.add('cursor-pointer');
-		const _handler = () => {
+		el.style.cursor = "pointer";
+		el.onclick = () => {
 			navigator.clipboard.writeText(`@${friend.username}`);
-			const prev = el.textContent;
 			el.textContent = "Copied!";
 			setTimeout(() => {
-				el.textContent = prev || "@" + friend.username;
+				el.textContent = "@" + friend.username;
 			}, 1500);
 		};
-		if (el._rivoClickInstalled) el.removeEventListener("click", el._rivoClickInstalled);
-		el._rivoClickInstalled = _handler;
-		el.addEventListener("click", _handler);
 	});
 
 	_dom.detailEmails.forEach((el) => {
 		if (!friend.email) return;
-		el.classList.add('cursor-pointer');
-		const _handlerEmail = () => {
+		el.style.cursor = "pointer";
+		el.onclick = () => {
 			navigator.clipboard.writeText(friend.email);
-			const prev = el.textContent;
 			el.textContent = "Copied!";
 			setTimeout(() => {
-				el.textContent = prev || friend.email;
+				el.textContent = friend.email;
 			}, 1500);
 		};
-		if (el._rivoEmailClickInstalled) el.removeEventListener("click", el._rivoEmailClickInstalled);
-		el._rivoEmailClickInstalled = _handlerEmail;
-		el.addEventListener("click", _handlerEmail);
 	});
 
 	if (window.innerWidth > 700) {
@@ -131,8 +122,7 @@ export function openProfile(friend) {
 			_dom.profileDialog.showModal();
 		}
 	} else {
-		_dom.contactProfileDetails.classList.remove('d-none');
-		_dom.contactProfileDetails.classList.add('d-flex');
+		_dom.contactProfileDetails.style.display = "flex";
 		_dom.contactProfileDetails.classList.remove("slide-out");
 		_dom.contactProfileDetails.classList.add("slide-in");
 		_dom.contactProfileDetails.addEventListener(
@@ -161,12 +151,12 @@ export function closeProfile() {
 	// Reset any open nickname edit
 	_dom.detailNames.forEach((el) => {
 		el.setAttribute("contenteditable", "false");
-		el.classList.add('no-border');
+		el.style.border = "none";
 	});
 	const editNameDoneBtn0 = _dom.editNameDoneBtn?.[0];
-	if (editNameDoneBtn0) editNameDoneBtn0.classList.add('d-none');
+	if (editNameDoneBtn0) editNameDoneBtn0.style.display = "none";
 	const cancelEditNameBtn0 = _dom.cancelEditNameBtn?.[0];
-	if (cancelEditNameBtn0) cancelEditNameBtn0.classList.add('d-none');
+	if (cancelEditNameBtn0) cancelEditNameBtn0.style.display = "none";
 	if (state.contactUserId !== null && window.innerWidth >= 700) {
 		_dom.profileDialog.close();
 		_dom.profileDialog.textContent = "";
@@ -177,10 +167,9 @@ export function closeProfile() {
 			"animationend",
 			() => {
 				_dom.contactProfileDetails.classList.remove("slide-out");
-				_dom.contactProfileDetails.classList.add('d-none');
+				_dom.contactProfileDetails.style.display = "none";
 				if (!state.skipShowChatOnProfileClose) {
-					_dom.chatPart.classList.remove('d-none');
-					_dom.chatPart.classList.add('d-flex');
+					_dom.chatPart.style.display = "flex";
 				} else {
 					state.skipShowChatOnProfileClose = false;
 				}
@@ -226,10 +215,12 @@ export function handleDeleteChat() {
 		matches.forEach((el) => {
 			const wrapper = el.closest(".active-chat-wrapper") ?? el;
 			if (!wrapper) return;
-				if (!fadedNodes.includes(wrapper)) {
-					wrapper.classList.add('fading-slow','opacity-0','pointer-none');
-					fadedNodes.push(wrapper);
-				}
+			if (!fadedNodes.includes(wrapper)) {
+				wrapper.style.transition = "opacity 3s ease";
+				wrapper.style.opacity = "0";
+				wrapper.style.pointerEvents = "none";
+				fadedNodes.push(wrapper);
+			}
 		});
 	} catch (e) { /* ignore */ }
 
@@ -270,7 +261,7 @@ export function handleDeleteChat() {
 			contact.lastMessageSeen = true;
 			contact.unreadCount = 0;
 			contact.isPinned = false;
-			contact.isInChat = false;
+			// contact.isInChat removed from model; no local flag to set
 
 			// Final state after delete should be a plain contact card
 			_dom.contactsContainer.appendChild(
@@ -304,27 +295,23 @@ export function handleDeleteChat() {
 						createContactCard({ ...contactObj, hasMessages: !!contactObj.lastMessage }, _dom.onContactAction),
 					);
 				} else {
-						existingContact.classList.add('fading');
-						existingContact.classList.remove('opacity-0');
-						existingContact.classList.add('opacity-1');
-						existingContact.classList.remove('pointer-none');
-						existingContact.classList.add('pointer-auto');
+					existingContact.style.transition = "opacity 0.2s ease";
+					existingContact.style.opacity = "1";
+					existingContact.style.pointerEvents = "";
 				}
+			} else {
+				// restore to active chats
+				if (existingContact) existingContact.remove();
+				if (!existingActive) {
+					_dom.activeChatsContainer.appendChild(createActiveChatCard(contactObj));
 				} else {
-					// restore to active chats
-					if (existingContact) existingContact.remove();
-					if (!existingActive) {
-						_dom.activeChatsContainer.appendChild(createActiveChatCard(contactObj));
-					} else {
-						const wrapper = existingActive.closest('.active-chat-wrapper') ?? existingActive;
-						if (wrapper) {
-							wrapper.classList.add('fading');
-							wrapper.classList.remove('opacity-0');
-							wrapper.classList.add('opacity-1');
-							wrapper.classList.remove('pointer-none');
-							wrapper.classList.add('pointer-auto');
-						}
+					const wrapper = existingActive.closest('.active-chat-wrapper') ?? existingActive;
+					if (wrapper) {
+						wrapper.style.transition = "opacity 0.2s ease";
+						wrapper.style.opacity = "1";
+						wrapper.style.pointerEvents = "";
 					}
+				}
 			}
 
 			updateTotalUnreadCount();
@@ -338,7 +325,7 @@ export function handleDeleteChat() {
 export function handleEditNickname() {
 	_dom.detailNames.forEach((el) => {
 		el.setAttribute("contenteditable", "true");
-		el.classList.add('border-chat-time');
+		el.style.border = "1px solid var(--chat-time)";
 		el.focus();
 		const range = document.createRange();
 		const sel = window.getSelection();
@@ -348,9 +335,9 @@ export function handleEditNickname() {
 		sel.addRange(range);
 	});
 	const editNameDoneBtn1 = _dom.editNameDoneBtn?.[0];
-	if (editNameDoneBtn1) editNameDoneBtn1.classList.remove('d-none');
+	if (editNameDoneBtn1) editNameDoneBtn1.style.display = "block";
 	const cancelEditNameBtn1 = _dom.cancelEditNameBtn?.[0];
-	if (cancelEditNameBtn1) cancelEditNameBtn1.classList.remove('d-none');
+	if (cancelEditNameBtn1) cancelEditNameBtn1.style.display = "block";
 }
 
 export function handleEditNicknameDone() {
@@ -370,10 +357,10 @@ export function handleEditNicknameDone() {
 
 	_dom.detailNames.forEach((el) => {
 		el.setAttribute("contenteditable", "false");
-		el.classList.add('no-border');
+		el.style.border = "none";
 	});
-	_dom.editNameDoneBtn.forEach((el) => el.classList.add('d-none'));
-	_dom.cancelEditNameBtn.forEach((el) => el.classList.add('d-none'));
+	_dom.editNameDoneBtn.forEach((el) => (el.style.display = "none"));
+	_dom.cancelEditNameBtn.forEach((el) => (el.style.display = "none"));
 }
 
 export function handleEditNicknameCancel() {
@@ -403,20 +390,16 @@ export function handleBlockContact() {
 		document
 			.querySelectorAll("#block-contact-btn")
 			.forEach((btn) => (btn.textContent = "Unblock contact"));
-	messageContainer.classList.add('d-none');
-	const _ub = unblockActionBtn[0];
-	if (_ub) {
-		_ub.classList.remove('d-none');
-		_ub.classList.add('d-flex');
-	}
+		messageContainer.style.display = "none";
+		const _ub = unblockActionBtn[0];
+		if (_ub) _ub.style.display = "flex";
 	} else {
 		document
 			.querySelectorAll("#block-contact-btn")
 			.forEach((btn) => (btn.textContent = "Block contact"));
-	messageContainer.classList.remove('d-none');
-	messageContainer.classList.add('d-flex');
-	const _ub = unblockActionBtn[0];
-	if (_ub) _ub.classList.add('d-none');
+		messageContainer.style.display = "flex";
+		const _ub = unblockActionBtn[0];
+		if (_ub) _ub.style.display = "none";
 	}
 }
 
@@ -444,7 +427,9 @@ export function handleDeleteContact() {
 
 	// Hide it first
 	if (card) {
-		card.classList.add('fading-slow','opacity-0','pointer-none');
+		card.style.transition = "opacity 3s ease";
+		card.style.opacity = "0";
+		card.style.pointerEvents = "none";
 	}
 
 	closeProfile();
@@ -476,11 +461,9 @@ export function handleDeleteContact() {
 						createContactCard({ ...contactObj, hasMessages: !!contactObj.lastMessage }, _dom.onContactAction),
 					);
 				} else {
-					existingContact.classList.add('fading');
-					existingContact.classList.remove('opacity-0');
-					existingContact.classList.add('opacity-1');
-					existingContact.classList.remove('pointer-none');
-					existingContact.classList.add('pointer-auto');
+					existingContact.style.transition = "opacity 0.2s ease";
+					existingContact.style.opacity = "1";
+					existingContact.style.pointerEvents = "";
 				}
 			} else {
 				if (existingContact) existingContact.remove();
@@ -489,11 +472,9 @@ export function handleDeleteContact() {
 				} else {
 					const wrapper = existingActive.closest('.active-chat-wrapper') ?? existingActive;
 					if (wrapper) {
-						wrapper.classList.add('fading');
-						wrapper.classList.remove('opacity-0');
-						wrapper.classList.add('opacity-1');
-						wrapper.classList.remove('pointer-none');
-						wrapper.classList.add('pointer-auto');
+						wrapper.style.transition = "opacity 0.2s ease";
+						wrapper.style.opacity = "1";
+						wrapper.style.pointerEvents = "";
 					}
 				}
 			}

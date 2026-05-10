@@ -186,7 +186,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
 			forgotPass = false;
 			clearCodeInputs(verifyForm);
-			sendCode();
+			sendCode(signupEmail.value.trim());
 			startResendTimer(codeResendTimer);
 			showForm(allForms, verifyForm);
 			const firstDigit = verifyForm.querySelector(".code-digit");
@@ -292,7 +292,7 @@ document.addEventListener("DOMContentLoaded", function () {
 			codeResendTimer.addEventListener("click", () => {
 				if (codeResendTimer.classList.contains("disabled")) return;
 				clearCodeInputs(verifyForm);
-				sendCode();
+				sendCode(forgotInput.value.trim());
 				startResendTimer(codeResendTimer);
 			});
 		}

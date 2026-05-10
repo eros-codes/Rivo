@@ -42,7 +42,42 @@ export function initChat(dom) {
 // ─── Scroll ───────────────────────────────────────────────────────────────────
 export function scrollChatToBottom() {
 	if (!_dom.chatEl) return;
-	_dom.chatEl.scrollTop = _dom.chatEl.scrollHeight;
+	// Defer to the next animation frame so recent layout changes
+	// (like paddingBottom) are applied before we compute scrollHeight.
+	requestAnimationFrame(() => {
+		_dom.chatEl.scrollTop = _dom.chatEl.scrollHeight;
+	});
+}
+
+// Wait for chat padding transition to finish (or timeout) then scroll bottom.
+export function scrollChatToBottomAfterPadding(timeout = 400) {
+	if (!_dom.chatEl) return;
+	const el = _dom.chatEl;
+	let called = false;
+
+	function doScroll() {
+		if (called) return;
+		called = true;
+		// final RAF to ensure layout stable
+		requestAnimationFrame(() => {
+			el.scrollTop = el.scrollHeight;
+		});
+	}
+
+	function onTransition(e) {
+		if (!e || !e.propertyName) return;
+		if (e.propertyName.includes("padding")) {
+			el.removeEventListener("transitionend", onTransition);
+			doScroll();
+		}
+	}
+
+	el.addEventListener("transitionend", onTransition);
+	// fallback in case transitionend doesn't fire
+	setTimeout(() => {
+		el.removeEventListener("transitionend", onTransition);
+		doScroll();
+	}, timeout);
 }
 
 // ─── Open / Close ─────────────────────────────────────────────────────────────
@@ -77,9 +112,22 @@ export async function openChat(fromClick = false) {
 	// load messages از backend
 	const contact = contacts.find((c) => c.id === state.contactUserId);
 	if (contact?.conversationId) {
+		// show message skeletons while fetching
+		if (_dom.chatEl) {
+			_dom.chatEl.querySelectorAll('.skeleton-placeholder').forEach((n) => n.remove());
+			_dom.chatEl.appendChild(makeMessageSkeleton(8));
+			_dom.chatEl.setAttribute('aria-busy', 'true');
+		}
+
 		try {
-			const serverMessages = await getMessages(contact.conversationId);
-			// normalize برای فرانت
+			const PAGE_LIMIT = DEFAULT_PAGE_LIMIT;
+			const serverMessages = await getMessagesPage(contact.conversationId, { limit: PAGE_LIMIT });
+			// remove skeletons once we have results
+			if (_dom.chatEl) {
+				_dom.chatEl.querySelectorAll('.skeleton-placeholder').forEach((n) => n.remove());
+				_dom.chatEl.removeAttribute('aria-busy');
+			}
+			// normalize for frontend and keep createdAt for paging
 			messages[state.contactUserId] = serverMessages.map((m) => ({
 				id: m.id,
 				user: m.senderId === _currentUserId(),
@@ -144,9 +192,9 @@ function _currentUserId() {
 export function closeChat() {
 	const isMobile = window.matchMedia("(max-width: 768px)").matches;
 
-	_dom.peoplePart.querySelector(".main-header").classList.remove('d-none');
-	_dom.peoplePart.querySelector(".main-header").classList.remove('z-0');
-	_dom.peoplePart.classList.remove('d-none','d-flex','d-block');
+	_dom.peoplePart.querySelector(".main-header").style.display = "";
+	_dom.peoplePart.querySelector(".main-header").style.zIndex = "";
+	_dom.peoplePart.style.display = "";
 
 	if (isMobile) {
 		_dom.chatPart.classList.remove("slide-in");
@@ -156,14 +204,13 @@ export function closeChat() {
 			"animationend",
 			() => {
 				_dom.chatPart.classList.remove("slide-out");
-					_dom.chatPart.classList.add('d-none');
+				_dom.chatPart.style.display = "none";
 			},
 			{ once: true },
 		);
 	} else {
-		_dom.chatPart.classList.add('d-none');
-		_dom.mainContent.classList.add('flex-row-reverse');
-		_dom.mainContent.classList.remove('flex-column-reverse');
+		_dom.chatPart.style.display = "none";
+		_dom.mainContent.style.flexDirection = "row-reverse";
 	}
 
 	// Inform server we're leaving the active conversation (if any) so presence
@@ -212,9 +259,11 @@ export function updatePinCount(activeIdx) {
 	for (let i = 0; i < total; i++) {
 		const span = document.createElement("span");
 		if (i === activeSpan) {
-			span.classList.add('pinned-dot','active');
+			span.style.height = "1.2rem";
+			span.style.opacity = "1";
 		} else {
-			span.classList.add('pinned-dot');
+			span.style.height = "0.6rem";
+			span.style.opacity = "0.4";
 		}
 		_dom.pinnedMessageCount.appendChild(span);
 	}
@@ -223,21 +272,18 @@ export function updatePinCount(activeIdx) {
 // ─── Pinned message bar ───────────────────────────────────────────────────────
 export function updatePinnedMessage() {
 	const userMessages = messages[state.contactUserId];
+	if (!Array.isArray(userMessages)) return;
 	const pinnedMsg = userMessages.findLast((msg) => msg.isPinned);
 	if (pinnedMsg) {
-		_dom.pinnedMessageContainer.classList.remove('d-none');
-		_dom.pinnedMessageContainer.classList.add('d-flex');
+		_dom.pinnedMessageContainer.style.display = "flex";
 		_dom.pinnedMessageText.textContent = pinnedMsg.text;
 		_dom.pinnedMessageText.dataset.index = pinnedMsg.index;
-		_dom.chatHeader.classList.add('chat-header-radius-top');
-		_dom.chatHeader.classList.remove('chat-header-radius');
+		_dom.chatHeader.style.borderRadius = "1rem 1rem 0 0";
 	} else {
-		_dom.pinnedMessageContainer.classList.add('d-none');
-		_dom.pinnedMessageContainer.classList.remove('d-flex');
+		_dom.pinnedMessageContainer.style.display = "none";
 		_dom.pinnedMessageText.textContent = "";
 		_dom.pinnedMessageText.dataset.index = "";
-		_dom.chatHeader.classList.remove('chat-header-radius-top');
-		_dom.chatHeader.classList.add('chat-header-radius');
+		_dom.chatHeader.style.borderRadius = "1rem";
 	}
 	updatePinCount(pinnedMsg ? pinnedMsg.index : null);
 }
@@ -275,22 +321,9 @@ export function injectMessages(userId) {
 		return;
 	}
 
-	// Preserve any attached floating elements (like a message context menu)
-	// that may be children of a message node. Move shared UI elements to a
-	// stable container before clearing to avoid leaving orphaned pointers.
-	try {
-		const menu = _dom.messageMenu;
-		if (menu && menu.parentElement && menu.parentElement !== _dom.chatEl) {
-			// If already attached to a message, move it to chat overlay container
-			const overlay = _dom.chatOverlay || document.querySelector('.chat-overlay');
-			if (overlay) overlay.appendChild(menu);
-		}
-	} catch (e) { /* ignore */ }
 	_dom.chatEl.textContent = "";
-	_dom.pinnedMessageContainer.classList.add('d-none');
-	_dom.pinnedMessageContainer.classList.remove('d-flex');
-	_dom.chatHeader.classList.add('chat-header-radius');
-	_dom.chatHeader.classList.remove('chat-header-radius-top');
+	_dom.pinnedMessageContainer.style.display = "none";
+	_dom.chatHeader.style.borderRadius = "1rem";
 	state.pinnedIndexes = [];
 	let lastDate = null;
 
@@ -326,6 +359,87 @@ export function injectMessages(userId) {
 	_dom.chatEl.appendChild(fragment);
 }
 
+// Load older messages (page) and prepend to the current message list.
+export async function loadOlderMessages() {
+	const uid = state.contactUserId;
+	if (!uid) return;
+	const contact = contacts.find((c) => c.id === uid);
+	if (!contact || !contact.conversationId) return;
+
+	let meta = messagePaging[uid] || { hasMore: true, loading: false, pageSize: DEFAULT_PAGE_LIMIT };
+	// persist meta reference
+	messagePaging[uid] = meta;
+	if (!meta.hasMore || meta.loading) return;
+	meta.loading = true;
+
+		try {
+			const earliest = messages[uid] && messages[uid][0] ? messages[uid][0].createdAt : null;
+		if (!earliest) {
+			meta.loading = false;
+			return;
+		}
+
+		// insert a small top skeleton so user sees loading in progress
+		let topSkel = null;
+		if (_dom.chatEl) {
+			topSkel = createTopMessageSkeleton();
+			_dom.chatEl.prepend(topSkel);
+			_dom.chatEl.setAttribute('aria-busy', 'true');
+		}
+
+		const oldScrollHeight = _dom.chatEl ? _dom.chatEl.scrollHeight : 0;
+		const oldScrollTop = _dom.chatEl ? _dom.chatEl.scrollTop : 0;
+
+		const PAGE_LIMIT = meta.pageSize || DEFAULT_PAGE_LIMIT;
+		const earliestId = (messages[uid] && messages[uid][0]) ? messages[uid][0].id : null;
+		const more = await getMessagesPage(contact.conversationId, { limit: PAGE_LIMIT, before: earliest, beforeId: earliestId });
+		if (!Array.isArray(more) || more.length === 0) {
+			meta.hasMore = false;
+			meta.loading = false;
+			return;
+		}
+
+		const normalized = more.map((m) => ({
+			id: m.id,
+			user: m.senderId === _currentUserId(),
+			text: m.text,
+			time: new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+			date: new Date(m.createdAt).toISOString().slice(0, 10),
+			createdAt: m.createdAt,
+			isEdited: m.isEdited,
+			isPinned: m.isPinned,
+			isSeen: m.isSeen,
+			replyTo: m.replyToId ? { id: m.replyToId, sender: m.replyToName, text: m.replyToText } : null,
+			forwardedFrom: m.forwardedFrom || null,
+			forwardedText: m.forwardedText || null,
+		}));
+
+		// prepend
+		messages[uid] = [...normalized, ...(messages[uid] || [])];
+
+		// trim if too many
+		if (Array.isArray(messages[uid]) && messages[uid].length > MAX_MESSAGES_PER_CONVERSATION) {
+			messages[uid] = messages[uid].slice(-MAX_MESSAGES_PER_CONVERSATION);
+		}
+
+		// update hasMore
+		meta.hasMore = more.length === PAGE_LIMIT;
+
+		// re-render and adjust scroll to keep view stable
+		if (_dom.chatEl) {
+			injectMessages(uid);
+			// remove top skeleton if present
+			if (topSkel && topSkel.parentNode) topSkel.remove();
+			_dom.chatEl.removeAttribute('aria-busy');
+			_dom.chatEl.scrollTop = (_dom.chatEl.scrollHeight - oldScrollHeight) + oldScrollTop;
+		}
+	} catch (e) {
+		console.error('loadOlderMessages failed', e);
+	} finally {
+		if (messagePaging[uid]) messagePaging[uid].loading = false;
+	}
+}
+
 // ─── Receive incoming message (from socket) ───────────────────────────────────
 export async function receiveMessage(message) {
 	let contact = contacts.find(
@@ -336,84 +450,64 @@ export async function receiveMessage(message) {
 	// from the server (handles case where someone added the current user).
 	if (!contact) {
 		try {
-			// Serialize concurrent requests to avoid races; use a short in-memory
-			// pending promise map keyed by conversationId so parallel receives
-			// wait on the same fetch rather than issuing duplicate requests.
-			if (!window.__pendingGetContacts__) window.__pendingGetContacts__ = new Map();
-			let pending = window.__pendingGetContacts__.get(message.conversationId);
-			if (!pending) {
-				pending = (async () => {
-					const serverContacts = await getContacts();
-					return serverContacts || [];
-				})();
-				window.__pendingGetContacts__.set(message.conversationId, pending);
-			}
-			try {
-				const serverContacts = await pending;
-				if (Array.isArray(serverContacts)) {
-					const raw = serverContacts.find((c) => c.conversationId === message.conversationId);
-					if (raw) {
-						const newContact = {
-							...raw,
-							name: raw.nickname || raw.contact?.name || "",
-							username: raw.contact?.username || "",
-							profilePics: raw.contact?.profilePics || [],
-							isOnline: raw.contact?.isOnline || false,
-							lastSeen: raw.contact?.lastSeen || null,
-							bio: raw.contact?.bio || "",
-							email: raw.contact?.email || "",
-							lastMessage: raw.conversation?.messages?.[0]?.text || "",
-							lastMessageTime: raw.conversation?.messages?.[0]
-								? new Date(raw.conversation.messages[0].createdAt).toLocaleTimeString([], {
-									hour: "2-digit",
-									minute: "2-digit",
-									hour12: false,
-								})
-								: null,
-							lastMessageDate: raw.conversation?.messages?.[0]
-								? new Date(raw.conversation.messages[0].createdAt).toISOString().slice(0, 10)
-								: null,
-							unreadCount: raw.unreadCount ?? 0,
-							lastMessageSeen: (() => {
-								const lastMsg = raw.conversation?.messages?.[0];
-								if (!lastMsg) return true;
-								return lastMsg.isSeen === true;
-							})(),
-						};
+			const serverContacts = await getContacts();
+			if (Array.isArray(serverContacts)) {
+				const raw = serverContacts.find(
+					(c) => c.conversationId === message.conversationId,
+				);
+				if (raw) {
+					const newContact = {
+						...raw,
+						name: raw.nickname || raw.contact?.name || "",
+						username: raw.contact?.username || "",
+						profilePics: raw.contact?.profilePics || [],
+						isOnline: raw.contact?.isOnline || false,
+						lastSeen: raw.contact?.lastSeen || null,
+						bio: raw.contact?.bio || "",
+						email: raw.contact?.email || "",
+						lastMessage: raw.conversation?.messages?.[0]?.text || "",
+						lastMessageTime: raw.conversation?.messages?.[0]
+							? new Date(raw.conversation.messages[0].createdAt).toLocaleTimeString([], {
+								hour: "2-digit",
+								minute: "2-digit",
+								hour12: false,
+							})
+							: null,
+						lastMessageDate: raw.conversation?.messages?.[0]
+							? new Date(raw.conversation.messages[0].createdAt).toISOString().slice(0, 10)
+							: null,
+						unreadCount: raw.unreadCount ?? 0,
+						lastMessageSeen: (() => {
+							const lastMsg = raw.conversation?.messages?.[0];
+							if (!lastMsg) return true;
+							return lastMsg.isSeen === true;
+						})(),
+					};
 
-						// Avoid duplicates using conversation map
-						const existing = findContactByConversationId(newContact.conversationId);
-						if (!existing) {
-							contacts.push(newContact);
-							// add to maps
-							addContactToState(newContact);
+					// Avoid duplicates
+					if (!contacts.find((c) => c.id === newContact.id)) {
+						contacts.push(newContact);
 
-							// append DOM card to the appropriate container
-							const contactsContainer = document.querySelector(".contacts-container");
-							const activeChatsContainer = document.querySelector(".active-chats-container");
-							if (contactsContainer && activeChatsContainer) {
-								if (newContact.isPinned || newContact.unreadCount > 0 || newContact.lastMessageSeen === false) {
-									activeChatsContainer.appendChild(createActiveChatCard(newContact));
-								} else {
-									contactsContainer.appendChild(createContactCard({ ...newContact, hasMessages: !!newContact.lastMessage }, null));
-								}
-								updateTotalUnreadCount();
-								sortActiveChats();
-								sortContacts();
-								// Hide the "No contacts yet" placeholder immediately
-								const emptyEl = document.getElementById("contacts-empty");
-								if (emptyEl) emptyEl.classList.add('d-none');
+						// append DOM card to the appropriate container
+						const contactsContainer = document.querySelector(".contacts-container");
+						const activeChatsContainer = document.querySelector(".active-chats-container");
+						if (contactsContainer && activeChatsContainer) {
+							if (newContact.isPinned || newContact.unreadCount > 0 || newContact.lastMessageSeen === false) {
+								activeChatsContainer.appendChild(createActiveChatCard(newContact));
+							} else {
+								contactsContainer.appendChild(createContactCard({ ...newContact, hasMessages: !!newContact.lastMessage }, null));
 							}
-						} else {
-							// update existing contact with fresh data
-							updateContactInState(newContact);
+							updateTotalUnreadCount();
+							sortActiveChats();
+							sortContacts();
+							// Hide the "No contacts yet" placeholder immediately
+							const emptyEl = document.getElementById("contacts-empty");
+							if (emptyEl) emptyEl.style.display = "none";
 						}
-
-						contact = findContactByConversationId(message.conversationId);
 					}
+
+					contact = contacts.find((c) => c.conversationId === message.conversationId);
 				}
-			} finally {
-				window.__pendingGetContacts__.delete(message.conversationId);
 			}
 		} catch (e) {
 			console.error("receiveMessage: failed to sync contacts", e);
@@ -538,7 +632,7 @@ export async function sendMessage() {
 			return;
 		}
 
-		// Normal path: message has server id ΓÇö send edit request
+		// Normal path: message has server id — send edit request
 		try {
 			await emitEditMessage(msg.id, txt.trim());
 			// update local state

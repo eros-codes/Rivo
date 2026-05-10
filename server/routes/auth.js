@@ -64,11 +64,8 @@ router.post("/login", async (req, res) => {
             return res.status(401).json({ error: "Invalid credentials" });
         }
 
-        // Include a snapshot of passwordChangedAt in the token to reduce
-        // repeated DB lookups in the auth middleware for newer tokens.
-        const pwdAt = user.passwordChangedAt ? Math.floor(new Date(user.passwordChangedAt).getTime() / 1000) : 0;
         const token = jwt.sign(
-            { userId: user.id, pwdAt },
+            { userId: user.id },
             process.env.JWT_SECRET,
             { expiresIn: "7d" }
         );

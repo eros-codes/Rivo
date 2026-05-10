@@ -59,49 +59,46 @@ router.patch("/me", requireAuth, async (req, res) => {
 	const { name, username, bio, profilePics, privacyOnline, privacyEmail, privacyProfile } = req.body;
 
 	try {
-		// validate name if provided
-		if (typeof name !== 'undefined') {
-			if (typeof name !== 'string' || name.trim().length < 2) {
-				return res.status(400).json({ error: 'Name must be at least 2 characters' });
+		if (username) {
+			const existing = await prisma.user.findFirst({
+				where: {
+					username,
+					NOT: { id: req.userId },
+				},
+			});
+			if (existing) {
+				return res
+					.status(409)
+					.json({ error: "Username already taken" });
 			}
-		}
-
-		// validate username if provided
-		if (typeof username !== 'undefined') {
-			if (typeof username !== 'string') return res.status(400).json({ error: 'Invalid username' });
-			const uname = username.trim();
-			if (!/^[a-zA-Z0-9_]{3,20}$/.test(uname)) {
-				return res.status(400).json({ error: 'Username must be 3-20 characters (letters, numbers, underscore)' });
-			}
-			const existing = await prisma.user.findFirst({ where: { username: uname, NOT: { id: req.userId } } });
-			if (existing) return res.status(409).json({ error: 'Username already taken' });
 		}
 
 		// Only allow clearing profilePics via an explicit empty array.
+		// Do not accept arbitrary client-supplied `profilePics` values.
 		if (profilePics !== undefined && Array.isArray(profilePics) && profilePics.length === 0) {
-			// remove any stored avatar with common extensions
-			const exts = [".jpg", ".jpeg", ".png", ".webp"];
-			for (const ext of exts) {
-				const avatarPath = path.join(process.cwd(), "public", "assets", "images", "user-profiles", `${req.userId}${ext}`);
-				try {
-					await fs.promises.unlink(avatarPath);
-				} catch (e) {
-					if (e.code && e.code !== "ENOENT") console.error(e);
-				}
+			const avatarPath = path.join(
+				process.cwd(),
+				"public",
+				"assets",
+				"images",
+				"user-profiles",
+				`${req.userId}.jpg`,
+			);
+			try {
+				await fs.promises.unlink(avatarPath);
+			} catch (e) {
+				if (e.code && e.code !== "ENOENT") console.error(e);
 			}
 		}
 
-		const dataToUpdate = {};
-		if (typeof name !== 'undefined') dataToUpdate.name = name.trim();
-		if (typeof username !== 'undefined') dataToUpdate.username = username.trim();
-		if (typeof bio !== 'undefined') dataToUpdate.bio = bio;
-		// limit bio size to avoid large payload abuse
-		if (typeof bio !== 'undefined' && typeof bio === 'string' && bio.length > 2000) {
-			return res.status(400).json({ error: 'Bio too long (max 2000 characters)' });
-		}
-		if (typeof privacyOnline !== 'undefined') dataToUpdate.privacyOnline = privacyOnline;
-		if (typeof privacyEmail !== 'undefined') dataToUpdate.privacyEmail = privacyEmail;
-		if (typeof privacyProfile !== 'undefined') dataToUpdate.privacyProfile = privacyProfile;
+		const dataToUpdate = {
+			...(name && { name }),
+			...(username && { username }),
+			...(bio !== undefined && { bio }),
+			...(privacyOnline && { privacyOnline }),
+			...(privacyEmail && { privacyEmail }),
+			...(privacyProfile && { privacyProfile }),
+		};
 
 		// if client explicitly cleared profilePics, set it to an empty array
 		if (profilePics !== undefined && Array.isArray(profilePics) && profilePics.length === 0) {
@@ -179,19 +176,7 @@ router.delete("/me", requireAuth, async (req, res) => {
 		const match = await bcrypt.compare(password, user.passwordHash);
 		if (!match) return res.status(401).json({ error: "Wrong password" });
 
-		// Remove dependent rows in a transaction to avoid foreign-key errors
-		await prisma.$transaction(async (tx) => {
-			// delete messages sent by the user
-			await tx.message.deleteMany({ where: { senderId: req.userId } });
-			// remove conversation memberships for this user
-			await tx.conversationMember.deleteMany({ where: { userId: req.userId } });
-			// remove contacts owned by or pointing to this user
-			await tx.contact.deleteMany({ where: { OR: [{ ownerId: req.userId }, { contactId: req.userId }] } });
-			// delete any conversations that now have no members
-			await tx.conversation.deleteMany({ where: { members: { none: {} } } });
-			// finally delete the user
-			await tx.user.delete({ where: { id: req.userId } });
-		});
+		await prisma.user.delete({ where: { id: req.userId } });
 
 		return res.json({ success: true });
 	} catch (err) {

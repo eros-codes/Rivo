@@ -88,7 +88,7 @@
 .contact-detail-name svg {
 	width: 2.5rem;
 	height: 2.5rem;
-	color: black;
+	color: var(--text-main-color);
 	display: none;
 	cursor: pointer;
 }

@@ -19,10 +19,7 @@ export function initCardContextMenu(container, onCardAction) {
 		if (!mouseWrapper) return;
 		mouseStartX = e.clientX;
 		mouseDiff = 0;
-		const _card = _getCard(mouseWrapper);
-		if (_card) {
-			_card.classList.remove('card-transition','translate-left','translate-right','translate-none');
-		}
+		_getCard(mouseWrapper).style.transition = "none";
 	});
 
 	container.addEventListener("mousemove", (e) => {
@@ -101,17 +98,13 @@ export function initCardContextMenu(container, onCardAction) {
 		if (!card) return;
 		const s = _getState(wrapper);
 		s.swipeState = swipeState;
-		// use class-based snapping to avoid inline transition styles
-		card.classList.add('card-transition');
-		// clear any inline transform from dragging so classes take effect
-		card.style.transform = '';
-		card.classList.remove('translate-left','translate-right','translate-none');
+		card.style.transition = "all 0.25s ease";
 		if (swipeState === "left") {
-			card.classList.add('translate-left');
+			card.style.transform = `translateX(-${SWIPE_REVEAL_PX_LEFT}px)`;
 		} else if (swipeState === "right") {
-			card.classList.add('translate-right');
+			card.style.transform = `translateX(${SWIPE_REVEAL_PX_RIGHT}px)`;
 		} else {
-			card.classList.add('translate-none');
+			card.style.transform = "translateX(0)";
 		}
 	}
 
@@ -131,8 +124,7 @@ export function initCardContextMenu(container, onCardAction) {
 		s.startX = e.touches[0].clientX;
 		s.currentDiff = 0;
 		s.dragging = true;
-		const _card = _getCard(wrapper);
-		if (_card) _card.classList.remove('card-transition','translate-left','translate-right','translate-none');
+		_getCard(wrapper).style.transition = "none";
 	}
 
 	function _onTouchMove(e) {

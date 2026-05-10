@@ -64,10 +64,12 @@ export function initSocket(
 	socket.on("typing:stop", ({ userId }) => onTypingStop?.(userId));
 
 	socket.on("connect", () => {
+		console.log("Socket connected");
 		_hideStatus();
 	});
 
 	socket.on("disconnect", () => {
+		console.log("Socket disconnected");
 		_showStatus("Connecting...");
 	});
 

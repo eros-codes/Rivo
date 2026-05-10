@@ -1,37 +1,6 @@
 import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
 import prisma from "../prisma.js";
-import { parseIntSafe } from "../utils/validators.js";
-
-// Configurable limits and an in-memory cache shared at module-level so
-// other server modules (routes) can invalidate entries when contacts
-// are created/removed.
-export const MAX_MESSAGE_LENGTH = parseInt(process.env.MAX_MESSAGE_LENGTH || "2000", 10);
-export const MAX_NAME_LENGTH = parseInt(process.env.MAX_NAME_LENGTH || "255", 10);
-const CONTACTS_CACHE_TTL_MS = parseInt(process.env.CONTACTS_CACHE_TTL_MS || "30000", 10);
-const conversationContactsCache = new Map(); // Map<conversationId, { value: Array, expires: number }>
-
-export function invalidateConversationContacts(conversationId) {
-	const cid = parseIntSafe(conversationId);
-	if (!cid) return;
-	conversationContactsCache.delete(cid);
-}
-
-async function getRecipientContacts(conversationId) {
-	const now = Date.now();
-	const cid = parseIntSafe(conversationId);
-	if (!cid) return [];
-	const entry = conversationContactsCache.get(cid);
-	if (entry && entry.expires > now) return entry.value;
-
-	const contacts = await prisma.contact.findMany({
-		where: { conversationId: cid },
-		select: { id: true, ownerId: true },
-	});
-
-	conversationContactsCache.set(cid, { value: contacts, expires: now + CONTACTS_CACHE_TTL_MS });
-	return contacts;
-}
 
 export function initSocket(httpServer) {
 	const allowedOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"]);
@@ -45,7 +14,7 @@ export function initSocket(httpServer) {
 		},
 	});
 
-
+	const MAX_MESSAGE_LENGTH = parseInt(process.env.MAX_MESSAGE_LENGTH || "2000");
 	// Map<conversationId, Set<userId>> of users currently in each conversation room
 	const convoOnline = new Map();
 
@@ -132,28 +101,8 @@ export function initSocket(httpServer) {
 				forwardedText,
 			} = data;
 
-			// validate conversationId is a number
-			const cid = parseIntSafe(conversationId);
-			if (!cid) {
-				return callback?.({ error: "Invalid data" });
-			}
-
 			if (!text || typeof text !== "string" || !text.trim() || text.trim().length > MAX_MESSAGE_LENGTH) {
 				return callback?.({ error: "Invalid data" });
-			}
-
-			// validate optional fields
-			if (replyToName && (typeof replyToName !== 'string' || replyToName.trim().length === 0 || replyToName.trim().length > MAX_NAME_LENGTH)) {
-				return callback?.({ error: 'Invalid data' });
-			}
-			if (replyToText && (typeof replyToText !== 'string' || replyToText.trim().length > MAX_MESSAGE_LENGTH)) {
-				return callback?.({ error: 'Invalid data' });
-			}
-			if (forwardedFrom && (typeof forwardedFrom !== 'string' || forwardedFrom.trim().length === 0 || forwardedFrom.trim().length > MAX_NAME_LENGTH)) {
-				return callback?.({ error: 'Invalid data' });
-			}
-			if (forwardedText && (typeof forwardedText !== 'string' || forwardedText.trim().length > MAX_MESSAGE_LENGTH)) {
-				return callback?.({ error: 'Invalid data' });
 			}
 
 			try {
@@ -175,7 +124,7 @@ export function initSocket(httpServer) {
 
 				const member = await prisma.conversationMember.findFirst({
 					where: {
-						conversationId: cid,
+						conversationId,
 						userId: socket.userId,
 					},
 				});
@@ -184,13 +133,12 @@ export function initSocket(httpServer) {
 					return callback?.({ error: "Forbidden" });
 				}
 
-				const rId = parseIntSafe(replyToId);
 				const message = await prisma.message.create({
 					data: {
-						conversationId: cid,
+						conversationId,
 						senderId: socket.userId,
 						text: text.trim(),
-						...(rId && { replyToId: rId }),
+						...(replyToId && { replyToId }),
 						...(replyToName && { replyToName }),
 						...(replyToText && { replyToText }),
 						...(forwardedFrom && { forwardedFrom }),
@@ -209,16 +157,18 @@ export function initSocket(httpServer) {
 				});
 
 				await prisma.conversation.update({
-					where: { id: cid },
+					where: { id: conversationId },
 					data: { lastMessageAt: message.createdAt },
 				});
 
 
-				const allContacts = await getRecipientContacts(cid);
-				const recipientContacts = allContacts.filter(c => c.ownerId !== socket.userId);
+				const recipientContacts = await prisma.contact.findMany({
+					where: { conversationId, ownerId: { not: socket.userId } },
+					select: { id: true, ownerId: true },
+				});
 
 				// Use in-memory map of users present in conversation to avoid expensive fetchSockets()
-				const usersInRoom = convoOnline.get(cid) || new Set();
+				const usersInRoom = convoOnline.get(conversationId) || new Set();
 
 				const toUpdateIds = recipientContacts
 					.filter((c) => !usersInRoom.has(c.ownerId))
@@ -233,7 +183,7 @@ export function initSocket(httpServer) {
 				}
 
 				socket
-					.to(`conversation:${cid}`)
+					.to(`conversation:${conversationId}`)
 					.emit("message:new", message);
 
 				// Also deliver the message directly to connected sockets belonging to
@@ -269,10 +219,8 @@ export function initSocket(httpServer) {
 			if (!text || typeof text !== "string" || !text.trim() || text.trim().length > MAX_MESSAGE_LENGTH) {
 				return callback?.({ error: "Invalid data" });
 			}
-				const mid = parseIntSafe(messageId);
-				if (!mid) return callback?.({ error: "Invalid data" });
 				const message = await prisma.message.findUnique({
-					where: { id: mid },
+					where: { id: messageId },
 				});
 
 				if (!message || message.senderId !== socket.userId) {
@@ -280,7 +228,7 @@ export function initSocket(httpServer) {
 				}
 
 				const updated = await prisma.message.update({
-					where: { id: mid },
+					where: { id: messageId },
 					data: { text: text.trim(), isEdited: true },
 				});
 
@@ -296,8 +244,10 @@ export function initSocket(httpServer) {
 
 				// Also deliver edited event directly to connected sockets of recipients
 				try {
-					const allContacts = await getRecipientContacts(message.conversationId);
-					const recipientContacts = allContacts.filter(c => c.ownerId !== socket.userId).map(c => ({ ownerId: c.ownerId }));
+					const recipientContacts = await prisma.contact.findMany({
+						where: { conversationId: message.conversationId, ownerId: { not: socket.userId } },
+						select: { ownerId: true },
+					});
 					const usersInRoom = convoOnline.get(message.conversationId) || new Set();
 					const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
 					for (const uid of recipientUserIds) {
@@ -326,10 +276,8 @@ export function initSocket(httpServer) {
 			const { messageId } = data;
 
 			try {
-				const mid = parseIntSafe(messageId);
-				if (!mid) return callback?.({ error: "Invalid data" });
 				const message = await prisma.message.findUnique({
-					where: { id: mid },
+					where: { id: messageId },
 				});
 
 				if (!message || message.senderId !== socket.userId) {
@@ -337,7 +285,7 @@ export function initSocket(httpServer) {
 				}
 
 				await prisma.message.update({
-					where: { id: mid },
+					where: { id: messageId },
 					data: { isDeleted: true },
 				});
 
@@ -372,7 +320,7 @@ export function initSocket(httpServer) {
 				if (!member) return callback?.({ error: "Forbidden" });
 
 				const updated = await prisma.message.update({
-					where: { id: mid },
+					where: { id: messageId },
 					data: { isPinned: !message.isPinned },
 				});
 
@@ -386,8 +334,10 @@ export function initSocket(httpServer) {
 
 				// Also deliver pinned event directly to connected sockets of recipients
 				try {
-					const allContacts = await getRecipientContacts(message.conversationId);
-					const recipientContacts = allContacts.filter(c => c.ownerId !== socket.userId).map(c => ({ ownerId: c.ownerId }));
+					const recipientContacts = await prisma.contact.findMany({
+						where: { conversationId: message.conversationId, ownerId: { not: socket.userId } },
+						select: { ownerId: true },
+					});
 					const usersInRoom = convoOnline.get(message.conversationId) || new Set();
 					const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
 					for (const uid of recipientUserIds) {
@@ -415,29 +365,29 @@ export function initSocket(httpServer) {
 			// ensure sender is a member of the conversation before emitting
 			(async () => {
 				try {
-					const cid = parseIntSafe(conversationId);
-					if (!cid) return;
 					const member = await prisma.conversationMember.findFirst({
-						where: { conversationId: cid, userId: socket.userId },
+						where: { conversationId, userId: socket.userId },
 					});
 					if (!member) return;
-					socket.to(`conversation:${cid}`).emit("typing:start", {
+					socket.to(`conversation:${conversationId}`).emit("typing:start", {
 						userId: socket.userId,
-						conversationId: cid,
+						conversationId,
 					});
 
 					// also deliver typing start to connected sockets not joined to the room
 					try {
-						const allContacts = await getRecipientContacts(cid);
-						const recipientContacts = allContacts.filter(c => c.ownerId !== socket.userId).map(c => ({ ownerId: c.ownerId }));
-						const usersInRoom = convoOnline.get(cid) || new Set();
+						const recipientContacts = await prisma.contact.findMany({
+							where: { conversationId, ownerId: { not: socket.userId } },
+							select: { ownerId: true },
+						});
+						const usersInRoom = convoOnline.get(conversationId) || new Set();
 						const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
 						for (const uid of recipientUserIds) {
 							if (usersInRoom.has(uid)) continue;
 							const sidSet = userSockets.get(uid) || new Set();
 							for (const sid of sidSet) {
 								const s = io.sockets.sockets.get(sid);
-								if (s) s.emit('typing:start', { userId: socket.userId, conversationId: cid });
+								if (s) s.emit('typing:start', { userId: socket.userId, conversationId });
 							}
 						}
 					} catch (e) {
@@ -453,31 +403,29 @@ export function initSocket(httpServer) {
 			// ensure sender is a member of the conversation before emitting
 			(async () => {
 				try {
-					const cid = parseIntSafe(conversationId);
-					if (!cid) return;
 					const member = await prisma.conversationMember.findFirst({
-						where: { conversationId: cid, userId: socket.userId },
+						where: { conversationId, userId: socket.userId },
 					});
 					if (!member) return;
-					socket.to(`conversation:${cid}`).emit("typing:stop", {
+					socket.to(`conversation:${conversationId}`).emit("typing:stop", {
 						userId: socket.userId,
-						conversationId: cid,
+						conversationId,
 					});
 
 					// also deliver typing stop to connected sockets not joined to the room
 					try {
 						const recipientContacts = await prisma.contact.findMany({
-							where: { conversationId: cid, ownerId: { not: socket.userId } },
+							where: { conversationId, ownerId: { not: socket.userId } },
 							select: { ownerId: true },
 						});
-						const usersInRoom = convoOnline.get(cid) || new Set();
+						const usersInRoom = convoOnline.get(conversationId) || new Set();
 						const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
 						for (const uid of recipientUserIds) {
 							if (usersInRoom.has(uid)) continue;
 							const sidSet = userSockets.get(uid) || new Set();
 							for (const sid of sidSet) {
 								const s = io.sockets.sockets.get(sid);
-								if (s) s.emit('typing:stop', { userId: socket.userId, conversationId: cid });
+								if (s) s.emit('typing:stop', { userId: socket.userId, conversationId });
 							}
 						}
 					} catch (e) {
@@ -578,14 +526,14 @@ export function initSocket(httpServer) {
 
 				// Only allow marking messages as seen if this socket explicitly
 				// joined the conversation (prevents other tabs/sockets from auto-seeing)
-				if (!socket.joinedConversations || !socket.joinedConversations.has(cid)) {
+				if (!socket.joinedConversations || !socket.joinedConversations.has(conversationId)) {
 					return callback?.({ success: true, marked: [] });
 				}
 
 				// find message ids that will be marked as seen (messages sent by others to this socket)
 				const toMark = await prisma.message.findMany({
 					where: {
-						conversationId: cid,
+						conversationId,
 						senderId: { not: socket.userId },
 						isSeen: false,
 					},
@@ -600,7 +548,7 @@ export function initSocket(httpServer) {
 
 					await prisma.contact.updateMany({
 						where: {
-							conversationId: cid,
+							conversationId,
 							ownerId: socket.userId,
 						},
 						data: { unreadCount: 0 },
@@ -608,9 +556,9 @@ export function initSocket(httpServer) {
 
 					// notify other participants only when there are messages actually marked as seen
 					socket
-						.to(`conversation:${cid}`)
+						.to(`conversation:${conversationId}`)
 						.emit("message:seen", {
-							conversationId: cid,
+							conversationId,
 							messageIds: toMark.map((m) => m.id),
 							seenBy: socket.userId,
 						});
@@ -628,21 +576,19 @@ export function initSocket(httpServer) {
 
 		socket.on("conversation:join", async ({ conversationId }) => {
 			try {
-				const cid = parseIntSafe(conversationId);
-				if (!cid) return;
 				const member = await prisma.conversationMember.findFirst({
 					where: {
-						conversationId: cid,
+						conversationId,
 						userId: socket.userId,
 					},
-				});
-				if (!member) return;
-				socket.join(`conversation:${cid}`);
-				socket.joinedConversations = socket.joinedConversations || new Set();
-				socket.joinedConversations.add(cid);
-				const set = convoOnline.get(cid) || new Set();
-				set.add(socket.userId);
-				convoOnline.set(cid, set);
+					});
+					if (!member) return;
+					socket.join(`conversation:${conversationId}`);
+					socket.joinedConversations = socket.joinedConversations || new Set();
+					socket.joinedConversations.add(conversationId);
+					const set = convoOnline.get(conversationId) || new Set();
+					set.add(socket.userId);
+					convoOnline.set(conversationId, set);
 			} catch (e) {
 				console.error("conversation:join error", e);
 			}
@@ -651,12 +597,10 @@ export function initSocket(httpServer) {
 		// Allow clients to explicitly leave a conversation room when they close it.
 		socket.on("conversation:leave", async ({ conversationId }) => {
 			try {
-				const cid = parseIntSafe(conversationId);
-				if (!cid) return;
-				if (!socket.joinedConversations || !socket.joinedConversations.has(cid)) return;
-				socket.leave(`conversation:${cid}`);
-				socket.joinedConversations.delete(cid);
-				const set = convoOnline.get(cid);
+				if (!socket.joinedConversations || !socket.joinedConversations.has(conversationId)) return;
+				socket.leave(`conversation:${conversationId}`);
+				socket.joinedConversations.delete(conversationId);
+				const set = convoOnline.get(conversationId);
 				if (set) {
 					// If the user has other sockets, only remove their presence if
 					// none of the other sockets remain joined to this conversation.
@@ -665,15 +609,15 @@ export function initSocket(httpServer) {
 					for (const sid of otherSids) {
 						if (sid === socket.id) continue;
 						const s = io.sockets.sockets.get(sid);
-						if (s && s.joinedConversations && s.joinedConversations.has(cid)) {
+						if (s && s.joinedConversations && s.joinedConversations.has(conversationId)) {
 							stillPresent = true;
 							break;
 						}
 					}
 					if (!stillPresent) {
 						set.delete(socket.userId);
-						if (set.size === 0) convoOnline.delete(cid);
-						else convoOnline.set(cid, set);
+						if (set.size === 0) convoOnline.delete(conversationId);
+						else convoOnline.set(conversationId, set);
 					}
 				}
 			} catch (e) {

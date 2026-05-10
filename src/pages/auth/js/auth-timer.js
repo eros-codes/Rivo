@@ -5,16 +5,29 @@ export function getSentCode() {
 	return _sentCode;
 }
 
-export function sendCode() {
+export function sendCode(email) {
 	_sentCode = Math.floor(Math.random() * 900000 + 100000);
-	// Do not use `alert` in production. Dispatch an event so the UI can handle
-	// rendering (email/SMS would be used in real deployments).
+	// Do not reveal the raw verification code in alerts for production.
+	// Show a brief, non-sensitive message and log the code to console
+	// for local/dev debugging only.
 	try {
-		window.dispatchEvent(new CustomEvent('rivo:codeSent', { detail: { code: _sentCode } }));
+		let masked = "your email";
+		if (email && typeof email === "string") {
+			const at = email.indexOf("@");
+			if (at > 2) masked = email.slice(0, 2) + "..." + email.slice(at);
+			else if (at > 0) masked = email[0] + "..." + email.slice(at);
+		}
+		alert(`A verification code has been sent to ${masked}`);
+		// dev-only: print full code to console for debugging
+		// (remove or disable in production)
+		// eslint-disable-next-line no-console
+		console.log("[dev] verification code:", _sentCode, "email:", email ?? "(unknown)");
 	} catch (e) {
-		// ignore if CustomEvent is not supported
+		// fallback: at least log the code
+		// eslint-disable-next-line no-console
+		console.log("[dev] verification code:", _sentCode);
 	}
-	return _sentCode;
+	return { code: _sentCode };
 }
 
 export function startResendTimer(codeResendTimer) {

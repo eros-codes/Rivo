@@ -2,6 +2,8 @@ import { parseSvg } from "../../../utils/svg.js";
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 let _t = {};
+let _toastTimer1 = null;
+let _toastTimer2 = null;
 
 /**
 
@@ -13,50 +15,31 @@ export function initToast(dom) {
 }
 
 export function showToast(message, icon= "", showUndo = false) {
-	if (!_t || !_t.toaster) {
-		console.warn('showToast called before initToast');
-		return;
-	}
-	// clear any previous timers so repeated calls behave predictably
-	if (_toastHideTimer) {
-		clearTimeout(_toastHideTimer);
-		_toastHideTimer = null;
-	}
-	if (_toastDisplayTimer) {
-		clearTimeout(_toastDisplayTimer);
-		_toastDisplayTimer = null;
-	}
+	// cancel any pending hide timers so repeated calls behave correctly
+	clearTimeout(_toastTimer1);
+	clearTimeout(_toastTimer2);
 
-	_t.toaster.classList.remove('d-none');
-	_t.toaster.classList.add('d-flex');
-	_t.toaster.style.bottom = _t.messageContainer.getBoundingClientRect().height + 14 + "px";
-	_t.toaster.classList.remove('opacity-0');
-	_t.toaster.classList.add('opacity-1');
+	_t.toaster.style.display = "flex";
+	_t.toaster.style.bottom =
+		_t.messageContainer.getBoundingClientRect().height + 14 + "px";
+	_t.toaster.style.opacity = 1;
 	_t.toastMessage.textContent = message;
-	// Safely insert SVG icon without assigning to innerHTML
-	_t.toastIcon.textContent = "";
-	if (icon) {
-		if (typeof icon === "string") {
-			const svg = parseSvg(icon);
-			if (svg) _t.toastIcon.appendChild(svg.cloneNode(true));
-		} else if (icon instanceof Element) {
-			_t.toastIcon.appendChild(icon);
+		// Safely insert SVG icon without assigning to innerHTML
+		_t.toastIcon.textContent = "";
+		if (icon) {
+			if (typeof icon === "string") {
+				const svg = parseSvg(icon);
+				if (svg) _t.toastIcon.appendChild(svg.cloneNode(true));
+			} else if (icon instanceof Element) {
+				_t.toastIcon.appendChild(icon);
+			}
 		}
-	}
-	if (showUndo) {
-		_t.undoBtn.classList.remove('d-none');
-		_t.undoBtn.classList.add('d-block');
-	} else {
-		_t.undoBtn.classList.add('d-none');
-	}
-	_toastHideTimer = setTimeout(() => {
-		_t.toaster.classList.remove('opacity-1');
-		_t.toaster.classList.add('opacity-0');
-		_toastHideTimer = null;
+	_t.undoBtn.style.display = showUndo ? "block" : "none";
+	_toastTimer1 = setTimeout(() => {
+		_t.toaster.style.opacity = 0;
 	}, 3000);
-	_toastDisplayTimer = setTimeout(() => {
-		_t.toaster.classList.add('d-none');
-		_toastDisplayTimer = null;
+	_toastTimer2 = setTimeout(() => {
+		_t.toaster.style.display = "none";
 	}, 3150);
 }
 
@@ -93,8 +76,7 @@ export function showEmptyState(chatEl, emptyStateEl) {
 	if (!chatEl) return;
 	chatEl.textContent = "";
 	chatEl.appendChild(emptyStateEl);
-	emptyStateEl.classList.remove('d-none');
-	emptyStateEl.classList.add('d-flex');
+	emptyStateEl.style.display = "flex";
 }
 
 export function hideEmptyState(chatEl, emptyStateEl) {

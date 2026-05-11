@@ -672,6 +672,7 @@ export async function sendMessage() {
 				: [state.forwardingMsg];
 
 		const contact = contacts.find((c) => c.id === state.contactUserId);
+		if (!contact) return;
 		hideEmptyState(_dom.chatEl, _dom.emptyStateEl);
 
 		for (const msg of msgsToSend) {

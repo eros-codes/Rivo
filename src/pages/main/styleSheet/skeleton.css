@@ -1,118 +1,90 @@
-/* Skeleton loading styles */
-
-:root{
-  --skeleton-fill-light: rgba(0,0,0,0.06);
-  --skeleton-fill-dark: rgba(255,255,255,0.06);
+/* ─── Skeleton variables ─────────────────────────────────────────────────── */
+:root {
+    --skel-base: rgba(0, 0, 0, 0.07);
+    --skel-shine: rgba(255, 255, 255, 0.65);
 }
 
-/* Base skeleton container — actual fill is provided by pseudo-elements so
-   shimmer overlay is visible regardless of parent opacity or theme. */
-.skeleton{
-  position: relative;
-  display: inline-block;
-  overflow: hidden;
+body.dark-mode {
+    --skel-base: rgba(255, 255, 255, 0.07);
+    --skel-shine: rgba(255, 255, 255, 0.13);
 }
 
-@keyframes shimmer{
-  0%{transform:translateX(-150%) skewX(-20deg)}
-  100%{transform:translateX(150%) skewX(-20deg)}
+/* ─── Animation ──────────────────────────────────────────────────────────── */
+@keyframes shimmer {
+    0%   { background-position: -200% center; }
+    100% { background-position:  200% center; }
 }
 
-.skeleton-placeholder{pointer-events: none;}
-
-.skel-card{display:flex;gap:12px;align-items:center;padding:10px}
-.skel-avatar{width:40px;height:40px;border-radius:50%;display:inline-block;position:relative}
-.skel-line{height:6px;border-radius:6px;display:block;margin:6px 0;position:relative}
-.skel-message{max-width:65%;padding:10px;border-radius:12px}
-.skel-incoming{align-self:flex-start}
-.skel-outgoing{align-self:flex-end;margin-left:auto}
-.skel-row{display:flex;gap:8px;align-items:center}
-.skeleton-top{display:flex;flex-direction:column;gap:8px;padding:8px}
-
-/* Fill (base) and shimmer overlay for line-like skeletons */
-.skel-line::before,
-.contact-profile.skeleton::before,
-.active-chat-profile.skeleton::before,
-.skel-avatar::before,
-.chat-message-text.skeleton::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  /* use chat-time color as the base fill; the low alpha makes it minimal */
-  background: var(--chat-time);
-  opacity: 0.12;
+/* ─── Base shimmer mixin ─────────────────────────────────────────────────── */
+.skel-avatar,
+.skel-line,
+.skel-message {
+    background: linear-gradient(
+        105deg,
+        var(--skel-base) 40%,
+        var(--skel-shine) 50%,
+        var(--skel-base) 60%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s ease-in-out infinite;
 }
 
-.skel-line::after,
-.contact-profile.skeleton::after,
-.active-chat-profile.skeleton::after,
-.skel-avatar::after,
-.chat-message-text.skeleton::after {
-  content: "";
-  position: absolute;
-  /* narrow, angled band that sweeps across the element to create a "shining surface" */
-  top: -10%; bottom: -10%;
-  left: -50%;
-  width: 40%;
-  border-radius: 2rem;
-  background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.16) 50%, rgba(255,255,255,0) 100%);
-  transform: translateX(-150%) skewX(-20deg);
-  animation: shimmer 1.4s ease-in-out infinite;
-  filter: blur(6px);
-  pointer-events: none;
+/* ─── Shapes ─────────────────────────────────────────────────────────────── */
+.skel-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    flex-shrink: 0;
 }
 
-/* chat-message-specific minimal shape */
-.chat-message-text.skeleton {
-  display: block;
-  border-radius: 1rem;
-  padding: 6px 10px;
-  min-height: 10px;
+.skel-line {
+    height: 10px;
+    border-radius: 6px;
+    display: block;
 }
 
-
-/* Component-specific overrides so skeletons visually match real components */
-.contacts-card.skeleton-placeholder,
-.active-chat-wrapper.skeleton-placeholder {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
+.skel-message {
+    height: 36px;
+    border-radius: 1rem;
+    max-width: 65%;
 }
 
-.contacts-card.skeleton-placeholder .contact-profile,
-.active-chat .active-chat-profile.skeleton,
-.contact-profile.skeleton {
-  background: linear-gradient(90deg,var(--skeleton-bg) 25%,var(--skeleton-highlight) 50%,var(--skeleton-bg) 75%);
-  background-size:200% 100%;
-  border-radius:50%;
-  animation:shimmer 1.2s linear infinite;
-  display:block;
+/* ─── Layout helpers ─────────────────────────────────────────────────────── */
+.skel-card {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 14px;
 }
 
-.contacts-card.skeleton-placeholder .contact-name .skel-line,
-.active-chat-info .skel-line,
-.last-message.skel-line,
-.chat-message-text.skel-line {
-  height: 12px;
-  border-radius: 8px;
-  display: block;
-  margin: 6px 0;
+.skel-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex: 1;
+    flex-direction: column;
 }
 
-/* Make chat message skeletons appear inside the real bubble shape */
-.chat-message.skeleton-placeholder {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-  padding: 0 !important;
-}
-.chat-message-text.skeleton {
-  display: block;
-  border-radius: 1rem;
-  padding: 10px 12px;
-  min-height: 1.2rem;
+.skel-incoming { align-self: flex-start; }
+.skel-outgoing { align-self: flex-end; }
+
+.skeleton-placeholder { pointer-events: none; }
+
+/* ─── Stagger delays for natural feel ───────────────────────────────────── */
+.skeleton-placeholder:nth-child(2) .skel-avatar,
+.skeleton-placeholder:nth-child(2) .skel-line,
+.skeleton-placeholder:nth-child(2) .skel-message {
+    animation-delay: 0.15s;
 }
 
-.chat-message-meta.skeleton { display:flex; gap:6px; align-items:center; }
+.skeleton-placeholder:nth-child(3) .skel-avatar,
+.skeleton-placeholder:nth-child(3) .skel-line,
+.skeleton-placeholder:nth-child(3) .skel-message {
+    animation-delay: 0.3s;
+}
 
+.skeleton-placeholder:nth-child(4) .skel-avatar,
+.skeleton-placeholder:nth-child(4) .skel-line,
+.skeleton-placeholder:nth-child(4) .skel-message {
+    animation-delay: 0.45s;
+}

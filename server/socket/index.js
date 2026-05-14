@@ -119,7 +119,7 @@ export function initSocket(httpServer) {
 					}
 				} catch (e) {
 					// rate limiting must not crash handler
-					console.error('rate limit check failed', e);
+					console.error("rate limit check failed", e);
 				}
 
 				const member = await prisma.conversationMember.findFirst({
@@ -161,14 +161,26 @@ export function initSocket(httpServer) {
 					data: { lastMessageAt: message.createdAt },
 				});
 
-
+				// Self-conversation (Saved Messages) — skip unread increment
+				const isSelfConversation =
+					(await prisma.conversationMember.count({
+						where: { conversationId },
+					})) === 1;
+				if (isSelfConversation) {
+					socket
+						.to(`conversation:${conversationId}`)
+						.emit("message:new", message);
+					return callback?.({ success: true, message });
+				}
+				
 				const recipientContacts = await prisma.contact.findMany({
 					where: { conversationId, ownerId: { not: socket.userId } },
 					select: { id: true, ownerId: true },
 				});
 
 				// Use in-memory map of users present in conversation to avoid expensive fetchSockets()
-				const usersInRoom = convoOnline.get(conversationId) || new Set();
+				const usersInRoom =
+					convoOnline.get(conversationId) || new Set();
 
 				const toUpdateIds = recipientContacts
 					.filter((c) => !usersInRoom.has(c.ownerId))
@@ -176,10 +188,12 @@ export function initSocket(httpServer) {
 
 				if (toUpdateIds.length > 0) {
 					// perform unread count update asynchronously so it doesn't block delivery
-					prisma.contact.updateMany({
-						where: { id: { in: toUpdateIds } },
-						data: { unreadCount: { increment: 1 } },
-					}).catch((e) => console.error('update unread failed', e));
+					prisma.contact
+						.updateMany({
+							where: { id: { in: toUpdateIds } },
+							data: { unreadCount: { increment: 1 } },
+						})
+						.catch((e) => console.error("update unread failed", e));
 				}
 
 				socket
@@ -190,7 +204,9 @@ export function initSocket(httpServer) {
 				// recipients who are not actively joined to the conversation room
 				// (handles case where a user was just added to contacts server-side).
 				try {
-					const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
+					const recipientUserIds = Array.from(
+						new Set(recipientContacts.map((c) => c.ownerId)),
+					);
 					for (const uid of recipientUserIds) {
 						if (usersInRoom.has(uid)) continue;
 						const sidSet = userSockets.get(uid) || new Set();
@@ -202,7 +218,10 @@ export function initSocket(httpServer) {
 						}
 					}
 				} catch (e) {
-					console.error('deliver direct message to offline-room sockets failed', e);
+					console.error(
+						"deliver direct message to offline-room sockets failed",
+						e,
+					);
 				}
 
 				callback?.({ success: true, message });
@@ -494,6 +513,7 @@ export function initSocket(httpServer) {
 					for (const cid of socket.joinedConversations) {
 						const set = convoOnline.get(cid);
 						if (!set) continue;
+						fri
 						let stillPresent = false;
 						const otherSids = userSockets.get(socket.userId) || new Set();
 						for (const sid of otherSids) {

@@ -9,7 +9,12 @@ import {
 } from "./chat-logic.js";
 import { createContactCard } from "../../../components/contact-cards/contact-card.js";
 import { createActiveChatCard } from "../../../components/active-chats/active-chats.js";
-import { updateContact, deleteContact as apiDeleteContact, deleteChat as apiDeleteChat, searchUsers } from "./api.js";
+import {
+	updateContact,
+	deleteContact as apiDeleteContact,
+	deleteChat as apiDeleteChat,
+	searchUsers,
+} from "./api.js";
 
 let _dom = {};
 
@@ -47,9 +52,7 @@ function formatLastSeen(isoString) {
 export async function openProfile(friend) {
 	_dom.detailPictures.forEach(
 		(el) =>
-			(el.src =
-				friend.profilePics[0] ||
-				"/assets/images/profile.jpeg"),
+			(el.src = friend.profilePics[0] || "/assets/images/profile.jpeg"),
 	);
 	_dom.detailNames.forEach(
 		(el) => (el.textContent = friend.nickname || friend.name),
@@ -73,18 +76,37 @@ export async function openProfile(friend) {
 		try {
 			const users = await searchUsers(friend.username);
 			if (Array.isArray(users) && users.length > 0) {
-				const found = users.find((u) => String(u.username).toLowerCase() === String(friend.username).toLowerCase());
+				const found = users.find(
+					(u) =>
+						String(u.username).toLowerCase() ===
+						String(friend.username).toLowerCase(),
+				);
 				if (found) {
 					friend.bio = found.bio || "";
-					_dom.detailBios.forEach((el) => (el.textContent = friend.bio || ""));
+					_dom.detailBios.forEach(
+						(el) => (el.textContent = friend.bio || ""),
+					);
 					// also refresh picture/name if they were missing
-					if ((!friend.profilePics || friend.profilePics.length === 0) && found.profilePics) {
+					if (
+						(!friend.profilePics ||
+							friend.profilePics.length === 0) &&
+						found.profilePics
+					) {
 						friend.profilePics = found.profilePics;
-						_dom.detailPictures.forEach((el) => (el.src = friend.profilePics[0] || "/assets/images/profile.jpeg"));
+						_dom.detailPictures.forEach(
+							(el) =>
+								(el.src =
+									friend.profilePics[0] ||
+									"/assets/images/profile.jpeg"),
+						);
 					}
 					if (!friend.name && found.name) {
 						friend.name = found.name;
-						_dom.detailNames.forEach((el) => (el.textContent = friend.nickname || friend.name));
+						_dom.detailNames.forEach(
+							(el) =>
+								(el.textContent =
+									friend.nickname || friend.name),
+						);
 					}
 				}
 			}
@@ -143,6 +165,11 @@ export async function openProfile(friend) {
 					: "Block contact"),
 		);
 
+	document.querySelectorAll("#archive-contact-btn").forEach((btn) => {
+		btn.textContent = friend.isArchived
+			? "Unarchive Chat"
+			: "Archive Chat";
+	});
 	state.isProfileDialogOpen = true;
 }
 
@@ -160,7 +187,7 @@ export function closeProfile() {
 	if (state.contactUserId !== null && window.innerWidth >= 700) {
 		_dom.profileDialog.close();
 		_dom.profileDialog.textContent = "";
-	} else {		
+	} else {
 		_dom.contactProfileDetails.classList.remove("slide-in");
 		_dom.contactProfileDetails.classList.add("slide-out");
 		_dom.contactProfileDetails.addEventListener(
@@ -193,10 +220,12 @@ export function handleDeleteChat() {
 	_dom.chatEl.textContent = "";
 	closeChat();
 
-		// Immediately clear in-memory messages for this conversation so UI won't show stale messages
-		try {
-			messages[deletingContactId] = [];
-		} catch (e) { /* ignore */ }
+	// Immediately clear in-memory messages for this conversation so UI won't show stale messages
+	try {
+		messages[deletingContactId] = [];
+	} catch (e) {
+		/* ignore */
+	}
 
 	// Fade any matching cards in both lists (active and contacts)
 	const fadedNodes = [];
@@ -204,14 +233,16 @@ export function handleDeleteChat() {
 		const selector = `[data-user-id="${deletingContactId}"], [data-wrapper-user-id="${deletingContactId}"]`;
 		let matches = [];
 		if (_dom.activeChatsContainer)
-			matches.push(..._dom.activeChatsContainer.querySelectorAll(selector));
+			matches.push(
+				..._dom.activeChatsContainer.querySelectorAll(selector),
+			);
 		if (_dom.contactsContainer)
 			matches.push(..._dom.contactsContainer.querySelectorAll(selector));
 		// fallback to document if nothing found (dynamic containers may differ)
 		if (matches.length === 0) {
 			matches = Array.from(document.querySelectorAll(selector));
 		}
-		
+
 		matches.forEach((el) => {
 			const wrapper = el.closest(".active-chat-wrapper") ?? el;
 			if (!wrapper) return;
@@ -222,12 +253,24 @@ export function handleDeleteChat() {
 				fadedNodes.push(wrapper);
 			}
 		});
-	} catch (e) { /* ignore */ }
+	} catch (e) {
+		/* ignore */
+	}
 
 	showToast("Chat deleted", _dom.deleteIcon, true);
 
 	// record original desired container so undo can restore correctly
-	const originalContainer = (contact && contact._previousContainer) ? contact._previousContainer : (_dom.activeChatsContainer?.querySelector(`[data-user-id="${deletingContactId}"]`) ? 'active' : 'contacts');
+	// Saved messages should always be considered part of the active chats
+	const originalContainer =
+		contact && contact._previousContainer
+			? contact._previousContainer
+			: contact && contact.isSaved
+			? "active"
+			: _dom.activeChatsContainer?.querySelector(
+					`[data-user-id="${deletingContactId}"]`,
+				  )
+			? "active"
+			: "contacts";
 
 	const timer = setTimeout(() => {
 		messages[deletingContactId] = [];
@@ -236,18 +279,27 @@ export function handleDeleteChat() {
 		try {
 			const selector = `[data-user-id="${deletingContactId}"], [data-wrapper-user-id="${deletingContactId}"]`;
 			if (_dom.activeChatsContainer) {
-				_dom.activeChatsContainer.querySelectorAll(selector).forEach((el) => {
-					const wrapper = el.closest(".active-chat-wrapper") ?? el;
-					if (wrapper) wrapper.remove();
-				});
+				_dom.activeChatsContainer
+					.querySelectorAll(selector)
+					.forEach((el) => {
+						const wrapper =
+							el.closest(".active-chat-wrapper") ?? el;
+						if (wrapper) wrapper.remove();
+					});
 			}
-		} catch (e) { /* ignore */ }
+		} catch (e) {
+			/* ignore */
+		}
 		try {
 			const selector = `[data-user-id="${deletingContactId}"], [data-wrapper-user-id="${deletingContactId}"]`;
 			if (_dom.contactsContainer) {
-				_dom.contactsContainer.querySelectorAll(selector).forEach((el) => el.remove());
+				_dom.contactsContainer
+					.querySelectorAll(selector)
+					.forEach((el) => el.remove());
 			}
-		} catch (e) { /* ignore */ }
+		} catch (e) {
+			/* ignore */
+		}
 
 		const contact = contacts.find((c) => c.id === deletingContactId);
 
@@ -263,13 +315,32 @@ export function handleDeleteChat() {
 			contact.isPinned = false;
 			// contact.isInChat removed from model; no local flag to set
 
-			// Final state after delete should be a plain contact card
-			_dom.contactsContainer.appendChild(
-				createContactCard(
-					{ ...contact, hasMessages: false },
-					_dom.onContactAction,
-				),
-			);
+			if (contact.isSaved) {
+				// Ensure saved convo stays in active chats (prepend to top)
+				try {
+					const existingActive = _dom.activeChatsContainer?.querySelector(
+						`[data-user-id="${contact.id}"]`,
+					);
+					if (existingActive) {
+						const wrapper =
+							existingActive.closest(".active-chat-wrapper") ?? existingActive;
+						if (wrapper) wrapper.remove();
+					}
+					const newCard = createActiveChatCard(contact);
+					_dom.activeChatsContainer.prepend(newCard);
+					sortActiveChats();
+				} catch (e) {
+					/* ignore DOM errors */
+				}
+			} else {
+				// Final state after delete should be a plain contact card
+				_dom.contactsContainer.appendChild(
+					createContactCard(
+						{ ...contact, hasMessages: false },
+						_dom.onContactAction,
+					),
+				);
+			}
 		}
 
 		updateTotalUnreadCount();
@@ -281,18 +352,30 @@ export function handleDeleteChat() {
 		try {
 			const contactObj = contacts.find((c) => c.id === deletingContactId);
 			if (!contactObj) return;
-			const existingActive = _dom.activeChatsContainer?.querySelector(`[data-user-id="${contactObj.id}"]`);
-			const existingContact = _dom.contactsContainer?.querySelector(`[data-user-id="${contactObj.id}"]`);
+			const existingActive = _dom.activeChatsContainer?.querySelector(
+				`[data-user-id="${contactObj.id}"]`,
+			);
+			const existingContact = _dom.contactsContainer?.querySelector(
+				`[data-user-id="${contactObj.id}"]`,
+			);
 
-			if (originalContainer === 'contacts') {
+			if (originalContainer === "contacts") {
 				// ensure not duplicated in active list
 				if (existingActive) {
-					const wrapper = existingActive.closest('.active-chat-wrapper') ?? existingActive;
+					const wrapper =
+						existingActive.closest(".active-chat-wrapper") ??
+						existingActive;
 					if (wrapper) wrapper.remove();
 				}
 				if (!existingContact) {
 					_dom.contactsContainer.appendChild(
-						createContactCard({ ...contactObj, hasMessages: !!contactObj.lastMessage }, _dom.onContactAction),
+						createContactCard(
+							{
+								...contactObj,
+								hasMessages: !!contactObj.lastMessage,
+							},
+							_dom.onContactAction,
+						),
 					);
 				} else {
 					existingContact.style.transition = "opacity 0.2s ease";
@@ -303,9 +386,13 @@ export function handleDeleteChat() {
 				// restore to active chats
 				if (existingContact) existingContact.remove();
 				if (!existingActive) {
-					_dom.activeChatsContainer.appendChild(createActiveChatCard(contactObj));
+					_dom.activeChatsContainer.appendChild(
+						createActiveChatCard(contactObj),
+					);
 				} else {
-					const wrapper = existingActive.closest('.active-chat-wrapper') ?? existingActive;
+					const wrapper =
+						existingActive.closest(".active-chat-wrapper") ??
+						existingActive;
 					if (wrapper) {
 						wrapper.style.transition = "opacity 0.2s ease";
 						wrapper.style.opacity = "1";
@@ -317,7 +404,9 @@ export function handleDeleteChat() {
 			updateTotalUnreadCount();
 			sortActiveChats();
 			sortContacts();
-		} catch (e) { /* ignore */ }
+		} catch (e) {
+			/* ignore */
+		}
 	};
 }
 
@@ -344,9 +433,10 @@ export function handleEditNicknameDone() {
 	const friend = contacts.find((c) => c.id === state.contactUserId);
 	if (!friend) return;
 	const firstDetailName = _dom.detailNames?.[0];
-	const newName = (firstDetailName && firstDetailName.textContent
-		? firstDetailName.textContent.trim()
-		: "");
+	const newName =
+		firstDetailName && firstDetailName.textContent
+			? firstDetailName.textContent.trim()
+			: "";
 	if (newName) {
 		friend.nickname = newName;
 		updateContact(friend.id, { nickname: newName });
@@ -421,9 +511,14 @@ export function handleDeleteContact() {
 
 	// Determine where this contact originated so undo can restore correctly
 	const contactObj = contacts.find((c) => c.id === deletingContactId);
-	const originalContainer = contactObj && contactObj._previousContainer
-		? contactObj._previousContainer
-		: (_dom.activeChatsContainer?.querySelector(`[data-user-id="${deletingContactId}"]`) ? 'active' : 'contacts');
+	const originalContainer =
+		contactObj && contactObj._previousContainer
+			? contactObj._previousContainer
+			: _dom.activeChatsContainer?.querySelector(
+						`[data-user-id="${deletingContactId}"]`,
+				  )
+				? "active"
+				: "contacts";
 
 	// Hide it first
 	if (card) {
@@ -448,17 +543,29 @@ export function handleDeleteContact() {
 		clearTimeout(timer);
 		try {
 			// restore the visual card in the original container
-			const existingActive = _dom.activeChatsContainer?.querySelector(`[data-user-id="${deletingContactId}"]`);
-			const existingContact = _dom.contactsContainer?.querySelector(`[data-user-id="${deletingContactId}"]`);
+			const existingActive = _dom.activeChatsContainer?.querySelector(
+				`[data-user-id="${deletingContactId}"]`,
+			);
+			const existingContact = _dom.contactsContainer?.querySelector(
+				`[data-user-id="${deletingContactId}"]`,
+			);
 
-			if (originalContainer === 'contacts') {
+			if (originalContainer === "contacts") {
 				if (existingActive) {
-					const w = existingActive.closest('.active-chat-wrapper') ?? existingActive;
+					const w =
+						existingActive.closest(".active-chat-wrapper") ??
+						existingActive;
 					if (w) w.remove();
 				}
 				if (!existingContact) {
 					_dom.contactsContainer.appendChild(
-						createContactCard({ ...contactObj, hasMessages: !!contactObj.lastMessage }, _dom.onContactAction),
+						createContactCard(
+							{
+								...contactObj,
+								hasMessages: !!contactObj.lastMessage,
+							},
+							_dom.onContactAction,
+						),
 					);
 				} else {
 					existingContact.style.transition = "opacity 0.2s ease";
@@ -468,9 +575,13 @@ export function handleDeleteContact() {
 			} else {
 				if (existingContact) existingContact.remove();
 				if (!existingActive) {
-					_dom.activeChatsContainer.appendChild(createActiveChatCard(contactObj));
+					_dom.activeChatsContainer.appendChild(
+						createActiveChatCard(contactObj),
+					);
 				} else {
-					const wrapper = existingActive.closest('.active-chat-wrapper') ?? existingActive;
+					const wrapper =
+						existingActive.closest(".active-chat-wrapper") ??
+						existingActive;
 					if (wrapper) {
 						wrapper.style.transition = "opacity 0.2s ease";
 						wrapper.style.opacity = "1";
@@ -482,6 +593,8 @@ export function handleDeleteContact() {
 			updateTotalUnreadCount();
 			sortActiveChats();
 			sortContacts();
-		} catch (e) { /* ignore */ }
+		} catch (e) {
+			/* ignore */
+		}
 	};
 }

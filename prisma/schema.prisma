@@ -41,6 +41,7 @@ model Contact {
   isMuted        Boolean      @default(false)
   isBlocked      Boolean      @default(false)
   isArchived     Boolean      @default(false)
+  isSaved        Boolean      @default(false)
   unreadCount    Int          @default(0)
   conversation   Conversation @relation(fields: [conversationId], references: [id])
   conversationId Int

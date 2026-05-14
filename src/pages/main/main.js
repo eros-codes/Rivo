@@ -1,9 +1,14 @@
-import { updateContact as apiUpdateContact, logout as apiLogout, getContacts, getMe } from "./js/api.js";
+import {
+	updateContact as apiUpdateContact,
+	logout as apiLogout,
+	getContacts,
+	getMe,
+} from "./js/api.js";
 import { createContactCard } from "../../components/contact-cards/contact-card.js";
 import { createActiveChatCard } from "../../components/active-chats/active-chats.js";
+import { createArchivedCard } from "../../components/archived/archived-card.js";
 import { createForwardedContactCard } from "../../components/contact-cards/contacts-forward.js";
 import { state, contacts, messages } from "./js/state.js";
-// escapeHtml removed — prefer textContent for safety
 import {
 	initToast,
 	showToast,
@@ -70,12 +75,18 @@ import {
 	handleBlockContact,
 	handleDeleteContact,
 } from "./js/profile.js";
-import { initCardContextMenu } from "./js/card-context-menu.js";
+import { initCardContextMenu, closeAllSwipes } from "./js/card-context-menu.js";
 import { initSearch, runSearch } from "./js/search.js";
 import { initEditProfile, openEditProfile } from "./js/edit-profile.js";
-import { initSettings, openSettings } from "./js/settings.js";
+import { initSettings, openSettings, closeSettings } from "./js/settings.js";
 import { initAddContact } from "./js/add-contact.js";
-import { initSocket, emitTypingStart, emitTypingStop, emitMessageSeen, getSocket } from "./js/socket.js";
+import {
+	initSocket,
+	emitTypingStart,
+	emitTypingStop,
+	emitMessageSeen,
+	getSocket,
+} from "./js/socket.js";
 import { loadThemeFromStorage } from "../../utils/theme.js";
 import { parseSvg } from "../../utils/svg.js";
 
@@ -83,29 +94,45 @@ document.addEventListener("DOMContentLoaded", async function () {
 	// Initialize client-side Sentry (loaded from CDN if `window.__SENTRY_DSN__` set)
 	(function initClientSentry() {
 		try {
-			const dsn = window.__SENTRY_DSN__ || localStorage.getItem('sentryDsn');
+			const dsn =
+				window.__SENTRY_DSN__ || localStorage.getItem("sentryDsn");
 			if (!dsn) return;
-			const s = document.createElement('script');
-			s.src = 'https://browser.sentry-cdn.com/7.66.0/bundle.min.js';
-			s.crossOrigin = 'anonymous';
+			const s = document.createElement("script");
+			s.src = "https://browser.sentry-cdn.com/7.66.0/bundle.min.js";
+			s.crossOrigin = "anonymous";
 			s.onload = () => {
 				try {
 					if (window.Sentry) {
 						window.Sentry.init({ dsn, tracesSampleRate: 0.0 });
-						window.Sentry.setTag('app', 'rivo-client');
+						window.Sentry.setTag("app", "rivo-client");
 					}
-				} catch (e) { void e; }
+				} catch (e) {
+					void e;
+				}
 			};
 			document.head.appendChild(s);
 
-			window.addEventListener('error', (ev) => {
-				try { if (window.Sentry) window.Sentry.captureException(ev.error || ev); } catch (e) { void e; }
+			window.addEventListener("error", (ev) => {
+				try {
+					if (window.Sentry)
+						window.Sentry.captureException(ev.error || ev);
+				} catch (e) {
+					void e;
+				}
 			});
-			window.addEventListener('unhandledrejection', (ev) => {
-				try { if (window.Sentry) window.Sentry.captureException(ev.reason || ev); } catch (e) { void e; }
+			window.addEventListener("unhandledrejection", (ev) => {
+				try {
+					if (window.Sentry)
+						window.Sentry.captureException(ev.reason || ev);
+				} catch (e) {
+					void e;
+				}
 			});
-		} catch (e) { void e; }
+		} catch (e) {
+			void e;
+		}
 	})();
+
 	// Rely on HttpOnly cookie for auth; if user info not present, ask server for current user.
 	let currentUser = null;
 	try {
@@ -130,6 +157,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 		}
 	}
 
+	// Theme
 	const theme = localStorage.getItem("rivo-theme") || "light";
 	if (theme === "dark") document.body.classList.add("dark-mode");
 
@@ -145,8 +173,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 	const activeChatsContainer = document.querySelector(
 		".active-chats-container",
 	);
-
-
 
 	const chatProfilePic = document.querySelector(".chat-profile-picture");
 	const chatName = document.querySelector(".chat-name");
@@ -212,6 +238,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 	const detailUsernames = document.querySelectorAll("#contact-username h3");
 	const detailEmails = document.querySelectorAll("#contact-email h3");
 	const deleteChatBtns = document.querySelectorAll("#delete-chat-btn");
+	const archiveContactBtns = document.querySelectorAll("#archive-contact-btn")
 	const editNameBtns = document.querySelectorAll("#edit-name-btn");
 	const editNameDoneBtn = document.querySelectorAll(
 		".contact-detail-name #edit-name-done-btn",
@@ -251,17 +278,39 @@ document.addEventListener("DOMContentLoaded", async function () {
 	const settingsPanelClose = document.querySelector(".settings-panel-close");
 	const settingsThemeRow = document.getElementById("settings-theme-row");
 	const settingsThemeValue = document.getElementById("settings-theme-value");
-	const settingsDeleteAccount = document.getElementById("settings-delete-account");
-	const settingsChangePassword = document.getElementById("settings-change-password");
-	const settingsChangePasswordForm = document.getElementById("settings-change-password-form");
-	const settingsCurrentPassword = document.getElementById("settings-current-password");
-	const settingsNewPassword = document.getElementById("settings-new-password");
-	const settingsConfirmPassword = document.getElementById("settings-confirm-password");
-	const settingsChangePasswordSubmit = document.getElementById("settings-change-password-submit");
-	const settingsSendResetEmail = document.getElementById("settings-send-reset-email");
-	const settingsPrivacyOnline = document.getElementById("settings-privacy-online");
-	const settingsPrivacyEmail = document.getElementById("settings-privacy-email");
-	const settingsPrivacyProfile = document.getElementById("settings-privacy-profile");
+	const settingsDeleteAccount = document.getElementById(
+		"settings-delete-account",
+	);
+	const settingsChangePassword = document.getElementById(
+		"settings-change-password",
+	);
+	const settingsChangePasswordForm = document.getElementById(
+		"settings-change-password-form",
+	);
+	const settingsCurrentPassword = document.getElementById(
+		"settings-current-password",
+	);
+	const settingsNewPassword = document.getElementById(
+		"settings-new-password",
+	);
+	const settingsConfirmPassword = document.getElementById(
+		"settings-confirm-password",
+	);
+	const settingsChangePasswordSubmit = document.getElementById(
+		"settings-change-password-submit",
+	);
+	const settingsSendResetEmail = document.getElementById(
+		"settings-send-reset-email",
+	);
+	const settingsPrivacyOnline = document.getElementById(
+		"settings-privacy-online",
+	);
+	const settingsPrivacyEmail = document.getElementById(
+		"settings-privacy-email",
+	);
+	const settingsPrivacyProfile = document.getElementById(
+		"settings-privacy-profile",
+	);
 	const pickerOnline = document.getElementById("picker-online");
 	const pickerEmail = document.getElementById("picker-email");
 	const pickerProfile = document.getElementById("picker-profile");
@@ -315,13 +364,20 @@ document.addEventListener("DOMContentLoaded", async function () {
 	const settingsWallpaperValue = document.getElementById(
 		"settings-wallpaper-value",
 	);
-
+	const archivedDialog = document.getElementById("archived-dialog");
+	const archivedDialogClose = document.getElementById(
+		"archived-dialog-close",
+	);
+	const archivedDialogList = document.getElementById("archived-dialog-list");
 
 	// ─── SVG icons ────────────────────────────────────────────────────────────
 	const copyIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></g></svg>`;
 	const deleteIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM8 9h8v10H8zm7.5-5l-1-1h-5l-1 1H5v2h14V4z"/></svg>`;
 	const pinIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path fill="currentColor" d="M15.744 4.276c1.221-2.442 4.476-2.97 6.406-1.04l6.614 6.614c1.93 1.93 1.402 5.186-1.04 6.406l-6.35 3.176a1.5 1.5 0 0 0-.753.867l-1.66 4.983a2 2 0 0 1-3.312.782l-4.149-4.15l-6.086 6.087H4v-1.415l6.086-6.085l-4.149-4.15a2 2 0 0 1 .782-3.31l4.982-1.662a1.5 1.5 0 0 0 .868-.752z"/></svg>`;
 	const replyIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M10 9V5l-7 7l7 7v-4.1c5 0 8.5 1.6 11 5.1c-1-5-4-10-11-10"/></svg>`;
+	const archiveIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M20.54 5.23L19.13 3.81A2 2 0 0 0 17.72 3H6.28A2 2 0 0 0 4.87 3.81L3.46 5.23A2 2 0 0 0 3 6.5V19a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6.5a2 2 0 0 0-.46-1.27zM12 17l-5-5h3V9h4v3h3z"/></svg>`;
+	const savedIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24"><path fill="currentColor" d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3l7 3V5c0-1.1-.9-2-2-2z"/></svg>`;
+
 	// ─── Empty state element ──────────────────────────────────────────────────
 	const emptyStateEl = createEmptyStateEl();
 
@@ -336,7 +392,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 	// ─── other variables ─────────────────────────────────────────────────────
 	let _typingTimeout = null;
-	let _suppressNextClick = false; 
+	let _suppressNextClick = false;
 
 	// ─── Init all modules ─────────────────────────────────────────────────────
 	initToast({ toaster, messageContainer, toastMessage, toastIcon, undoBtn });
@@ -382,21 +438,26 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 	// Robust overlay handlers: immediate close on single tap/click
 	if (chatOverlay) {
-		chatOverlay.addEventListener('click', (e) => {
+		chatOverlay.addEventListener("click", (e) => {
 			if (state.isMenuOpen) {
 				_suppressNextClick = false;
 				closeContextMenu();
-				if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+				if (e && typeof e.stopPropagation === "function")
+					e.stopPropagation();
 			}
 		});
 
-		chatOverlay.addEventListener('touchend', (e) => {
-			if (state.isMenuOpen) {
-				_suppressNextClick = false;
-				closeContextMenu();
-				if (e && e.cancelable) e.preventDefault();
-			}
-		}, { passive: false });
+		chatOverlay.addEventListener(
+			"touchend",
+			(e) => {
+				if (state.isMenuOpen) {
+					_suppressNextClick = false;
+					closeContextMenu();
+					if (e && e.cancelable) e.preventDefault();
+				}
+			},
+			{ passive: false },
+		);
 	}
 
 	initSelection({
@@ -466,6 +527,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 			apiUpdateContact(friend.id, { isMuted: friend.isMuted });
 			refreshCard(friend);
 		}
+		if (action === "archive") {
+			_archiveContact(userId);
+		}
 		if (action === "delete") {
 			handleDeleteChat();
 		}
@@ -484,8 +548,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 			state.contactUserId = contact.id;
 			chatProfilePic.src =
-				contact.profilePics[0] ||
-				"/assets/images/profile.jpeg";
+				contact.profilePics[0] || "/assets/images/profile.jpeg";
 			chatName.textContent = contact.nickname || contact.name;
 			openChat(true);
 			if (contact.conversationId) {
@@ -509,27 +572,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}, 500);
 		},
 	});
-
-	initEditProfile({
-		editProfilePanel,
-		editProfileDialog,
-		editProfileClose,
-		editProfileSave,
-		editNameInput,
-		editUsernameInput,
-		editBioInput,
-		editProfileAvatar,
-		avatarBtn,
-		avatarFileInput,
-		avatarCropDialog,
-		avatarCropImage,
-		avatarCropCancel,
-		avatarCropConfirm,
-		deleteAvatarBtn,
-		chatPart,
-		peoplePart,
-	});
-
 	initSettings(
 		{
 			settingsPanel,
@@ -564,10 +606,29 @@ document.addEventListener("DOMContentLoaded", async function () {
 			settingsWallpaperUpload,
 			settingsWallpaperRemove,
 			settingsWallpaperValue,
+			onOpenArchived: _openArchivedDialog,
 		},
 		currentUser,
 	);
-
+	initEditProfile({
+		editProfilePanel,
+		editProfileDialog,
+		editProfileClose,
+		editProfileSave,
+		editNameInput,
+		editUsernameInput,
+		editBioInput,
+		editProfileAvatar,
+		avatarBtn,
+		avatarFileInput,
+		avatarCropDialog,
+		avatarCropImage,
+		avatarCropCancel,
+		avatarCropConfirm,
+		deleteAvatarBtn,
+		chatPart,
+		peoplePart,
+	});
 	initAddContact(
 		{
 			addContactDialog,
@@ -578,54 +639,56 @@ document.addEventListener("DOMContentLoaded", async function () {
 			addContactSubmit,
 			addFriendsBtn,
 		},
-			(newContact) => {
-				const normalized = {
-					...newContact,
-					contactId: newContact.contact?.id,
-					conversationId: newContact.conversationId,
-					profilePics: newContact.contact?.profilePics || [],
-					name: newContact.nickname || newContact.contact?.name || "",
-					username: newContact.contact?.username || "",
-					isOnline: newContact.contact?.isOnline || false,
-					lastSeen: newContact.contact?.lastSeen || null,
-					bio: newContact.contact?.bio || "",
-					email: newContact.contact?.email || "",
-					lastMessage: "",
-					lastMessageTime: null,
-					lastMessageDate: null,
-					unreadCount: 0,
-					lastMessageSeen: true,
-					_previousContainer: 'contacts',
-				};
+		(newContact) => {
+			const normalized = {
+				...newContact,
+				contactId: newContact.contact?.id,
+				conversationId: newContact.conversationId,
+				profilePics: newContact.contact?.profilePics || [],
+				name: newContact.nickname || newContact.contact?.name || "",
+				username: newContact.contact?.username || "",
+				isOnline: newContact.contact?.isOnline || false,
+				lastSeen: newContact.contact?.lastSeen || null,
+				bio: newContact.contact?.bio || "",
+				email: newContact.contact?.email || "",
+				lastMessage: "",
+				lastMessageTime: null,
+				lastMessageDate: null,
+				unreadCount: 0,
+				lastMessageSeen: true,
+				_previousContainer: "contacts",
+			};
 
-				// keep in-memory list in sync
-				contacts.push(normalized);
+			// keep in-memory list in sync
+			contacts.push(normalized);
 
-				const _sock = getSocket();
-				if (_sock && normalized.conversationId) {
-					_sock.emit("conversation:join", { conversationId: normalized.conversationId });
-				}
+			const _sock = getSocket();
+			if (_sock && normalized.conversationId) {
+				_sock.emit("conversation:join", {
+					conversationId: normalized.conversationId,
+				});
+			}
 
-				updateContactsEmptyState();
+			updateContactsEmptyState();
 
-				// build card from the normalized object so it has profile/name/bio filled
-				const card = createContactCard(
-					{ ...normalized, hasMessages: false },
-					_onContactAction,
-				);
-				contactsContainer.appendChild(card);
+			// build card from the normalized object so it has profile/name/bio filled
+			const card = createContactCard(
+				{ ...normalized, hasMessages: false },
+				_onContactAction,
+			);
+			contactsContainer.appendChild(card);
 
-				// set chat header immediately so opening the chat shows correct info
-				chatProfilePic.src = normalized.profilePics[0] || "/assets/images/profile.jpeg";
-				chatName.textContent = normalized.nickname || normalized.name;
+			// set chat header immediately so opening the chat shows correct info
+			chatProfilePic.src =
+				normalized.profilePics[0] || "/assets/images/profile.jpeg";
+			chatName.textContent = normalized.nickname || normalized.name;
 
-				state.contactUserId = normalized.id;
-				openChat(true);
-				if (normalized.conversationId) {
-					emitMessageSeen(normalized.conversationId);
-				}
-			},
-
+			state.contactUserId = normalized.id;
+			openChat(true);
+			if (normalized.conversationId) {
+				emitMessageSeen(normalized.conversationId);
+			}
+		},
 	);
 
 	initSocket(
@@ -703,7 +766,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 					friend.lastMessage = lastMsg.text;
 					friend.lastMessageTime = lastMsg.time;
 					friend.lastMessageDate = lastMsg.date || "";
-					friend.lastMessageSeen = lastMsg.user ? lastMsg.isSeen === true : true;
+					friend.lastMessageSeen = lastMsg.user
+						? lastMsg.isSeen === true
+						: true;
 				} else {
 					friend.lastMessage = "";
 					friend.lastMessageTime = "";
@@ -721,6 +786,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			if (!contact) return;
 			contact.isOnline = true;
 			if (state.contactUserId === contact.id) {
+				if (contact.isSaved) return; // saved messages don't show online status
 				chatProfilePicture.classList.add("online");
 			}
 			refreshCard(contact);
@@ -729,6 +795,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 		(userId, lastSeen) => {
 			const contact = contacts.find((c) => c.contactId === userId);
 			if (!contact) return;
+			if (contact.isSaved) return; // saved messages don't show online status
 			contact.isOnline = false;
 			contact.lastSeen = lastSeen;
 			if (state.contactUserId === contact.id) {
@@ -769,7 +836,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 					break;
 				}
 			}
-		}
+		},
 	);
 
 	// Rejoin active conversation after socket reconnect and emit leave on unload
@@ -778,9 +845,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 		if (sock) {
 			sock.on("connect", () => {
 				try {
-					const friend = contacts.find((c) => c.id === state.contactUserId);
+					const friend = contacts.find(
+						(c) => c.id === state.contactUserId,
+					);
 					if (friend && friend.conversationId) {
-						sock.emit("conversation:join", { conversationId: friend.conversationId });
+						sock.emit("conversation:join", {
+							conversationId: friend.conversationId,
+						});
 					}
 				} catch (e) {
 					// ignore
@@ -789,14 +860,23 @@ document.addEventListener("DOMContentLoaded", async function () {
 		}
 		window.addEventListener("beforeunload", () => {
 			try {
-				const friend = contacts.find((c) => c.id === state.contactUserId);
+				const friend = contacts.find(
+					(c) => c.id === state.contactUserId,
+				);
 				if (friend && friend.conversationId) {
 					const s = getSocket();
-					if (s) s.emit("conversation:leave", { conversationId: friend.conversationId });
+					if (s)
+						s.emit("conversation:leave", {
+							conversationId: friend.conversationId,
+						});
 				}
-			} catch (e) { /* ignore */ }
+			} catch (e) {
+				/* ignore */
+			}
 		});
-	} catch (e) { /* ignore */ }
+	} catch (e) {
+		/* ignore */
+	}
 
 	function updateContactsEmptyState() {
 		const empty = document.getElementById("contacts-empty");
@@ -808,6 +888,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 		state.contactUserId = userId;
 		const friend = contacts.find((c) => c.id === userId);
 		if (!friend) return;
+		if (friend.isSaved) return;
 		if (action === "pin") {
 			friend.isPinned = !friend.isPinned;
 			apiUpdateContact(friend.id, { isPinned: friend.isPinned });
@@ -838,6 +919,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 			handleBlockContact();
 			refreshCard(friend);
 		}
+		if (action === "archive") {
+			if (friend.isArchived) {
+				_unarchiveContact(userId);
+			} else {
+				_archiveContact(userId);
+			}
+		}
 	}
 
 	function openPinnedView() {
@@ -866,7 +954,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 			meta.className = "pinned-view-item-meta";
 			const sender = document.createElement("span");
 			sender.className = "pinned-view-item-sender";
-			sender.textContent = msg.user ? "You" : (friend?.nickname || friend?.name || "");
+			sender.textContent = msg.user
+				? "You"
+				: friend?.nickname || friend?.name || "";
 			const time = document.createElement("span");
 			time.className = "pinned-view-item-time";
 			time.textContent = msg.time;
@@ -902,27 +992,35 @@ document.addEventListener("DOMContentLoaded", async function () {
 	try {
 		// show skeleton placeholders
 		if (contactsContainer) {
-			contactsContainer.querySelectorAll('.skeleton-placeholder').forEach((n) => n.remove());
+			contactsContainer
+				.querySelectorAll(".skeleton-placeholder")
+				.forEach((n) => n.remove());
 			contactsContainer.appendChild(makeContactSkeleton(6));
-			contactsContainer.setAttribute('aria-busy', 'true');
+			contactsContainer.setAttribute("aria-busy", "true");
 		}
 		if (activeChatsContainer) {
-			activeChatsContainer.querySelectorAll('.skeleton-placeholder').forEach((n) => n.remove());
+			activeChatsContainer
+				.querySelectorAll(".skeleton-placeholder")
+				.forEach((n) => n.remove());
 			activeChatsContainer.appendChild(makeActiveChatSkeleton(4));
-			activeChatsContainer.setAttribute('aria-busy', 'true');
+			activeChatsContainer.setAttribute("aria-busy", "true");
 		}
 
 		const serverContacts = await getContacts();
 		serverContacts.forEach((c) => {
 			contacts.push({
 				...c,
-				name: c.nickname || c.contact?.name || "",
-				username: c.contact?.username || "",
-				profilePics: c.contact?.profilePics || [],
-				isOnline: c.contact?.isOnline || false,
-				lastSeen: c.contact?.lastSeen || null,
-				bio: c.contact?.bio || "",
-				email: c.contact?.email || "",
+				name: c.isSaved
+					? "Saved Messages"
+					: c.nickname || c.contact?.name || "",
+				username: c.isSaved ? "" : c.contact?.username || "",
+				profilePics: c.isSaved ? [] : c.contact?.profilePics || [],
+				isOnline: c.isSaved ? false : c.contact?.isOnline || false,
+				lastSeen: c.isSaved ? null : c.contact?.lastSeen || null,
+				bio: c.isSaved ? "" : c.contact?.bio || "",
+				email: c.isSaved ? "" : c.contact?.email || "",
+				contactId: c.isSaved ? c.ownerId : c.contact?.id || null,
+				isSaved: c.isSaved ?? false,
 				lastMessage: c.conversation?.messages?.[0]?.text || "",
 				lastMessageTime: c.conversation?.messages?.[0]
 					? new Date(
@@ -944,7 +1042,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 					if (!lastMsg) return true;
 					return lastMsg.isSeen === true;
 				})(),
-				_previousContainer: 'contacts',
+				_previousContainer: "contacts",
 			});
 		});
 	} catch (err) {
@@ -953,14 +1051,26 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 	// remove skeleton placeholders before rendering real cards
 	if (contactsContainer) {
-		contactsContainer.querySelectorAll('.skeleton-placeholder').forEach((n) => n.remove());
-		contactsContainer.removeAttribute('aria-busy');
+		contactsContainer
+			.querySelectorAll(".skeleton-placeholder")
+			.forEach((n) => n.remove());
+		contactsContainer.removeAttribute("aria-busy");
 	}
 	if (activeChatsContainer) {
-		activeChatsContainer.querySelectorAll('.skeleton-placeholder').forEach((n) => n.remove());
-		activeChatsContainer.removeAttribute('aria-busy');
+		activeChatsContainer
+			.querySelectorAll(".skeleton-placeholder")
+			.forEach((n) => n.remove());
+		activeChatsContainer.removeAttribute("aria-busy");
 	}
 	contacts.forEach((contact) => {
+		if (contact.isArchived) return;
+		if (contact.isSaved) {
+			// saved message is always in active chat
+			const card = createActiveChatCard(contact);
+			card.dataset.saved = "true";
+			activeChatsContainer.prepend(card); // first in list
+			return;
+		}
 		if (
 			contact.isPinned ||
 			contact.unreadCount > 0 ||
@@ -1023,7 +1133,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			chatEl.textContent = "";
 			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (friend) {
-				// local-only field `isInChat` removed from model; no-op
+				if (friend.isSaved) { closeChat(); return; }
 				if (
 					!friend.isPinned &&
 					friend.unreadCount === 0 &&
@@ -1052,9 +1162,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 				try {
 					const sock = getSocket();
 					if (sock && prevFriend.conversationId) {
-						sock.emit("conversation:leave", { conversationId: prevFriend.conversationId });
+						sock.emit("conversation:leave", {
+							conversationId: prevFriend.conversationId,
+						});
 					}
-				} catch (e) { /* ignore */ }
+				} catch (e) {
+					/* ignore */
+				}
 				// local-only `isInChat` removed; nothing to persist
 				if (
 					!prevFriend.isPinned &&
@@ -1074,8 +1188,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 			// join the new conversation room so server considers us present
 			try {
 				const sock = getSocket();
-				if (sock && friend.conversationId) sock.emit("conversation:join", { conversationId: friend.conversationId });
-					} catch (e) { /* ignore */ }
+				if (sock && friend.conversationId)
+					sock.emit("conversation:join", {
+						conversationId: friend.conversationId,
+					});
+			} catch (e) {
+				/* ignore */
+			}
 
 			if (friend.unreadCount > 0) {
 				friend.lastMessageSeen = true;
@@ -1088,9 +1207,29 @@ document.addEventListener("DOMContentLoaded", async function () {
 			if (unreadEl) unreadEl.style.opacity = "0";
 			updateTotalUnreadCount();
 
-			chatProfilePic.src =
-				friend.profilePics[0] ||
-				"/assets/images/profile.jpeg";
+			if (friend.isSaved) {
+				chatProfilePic.style.display = "none";
+				chatProfilePicture.classList.add("saved-icon");
+				const existingSavedIcon = chatProfilePicture.querySelector(
+					".saved-icon-svg",
+				);
+				if (existingSavedIcon) existingSavedIcon.remove();
+				const _savedIcon = parseSvg(savedIconSvg);
+				if (_savedIcon) {
+					_savedIcon.classList.add("saved-icon-svg");
+					chatProfilePicture.appendChild(_savedIcon);
+				}
+				chatProfilePic.src = "";
+			} else {
+				chatProfilePic.style.display = "";
+				chatProfilePicture.classList.remove("saved-icon");
+				const existingSavedIcon = chatProfilePicture.querySelector(
+					".saved-icon-svg",
+				);
+				if (existingSavedIcon) existingSavedIcon.remove();
+				chatProfilePic.src =
+					friend.profilePics?.[0] || "/assets/images/profile.jpeg";
+			}
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 			if (friend.conversationId) {
@@ -1130,14 +1269,18 @@ document.addEventListener("DOMContentLoaded", async function () {
 				(c) => c.id === state.contactUserId,
 			);
 			if (prevFriend && prevFriend.id !== Number(card.dataset.userId)) {
-					// leave previous conversation room if any
-					try {
-						const sock = getSocket();
-						if (sock && prevFriend.conversationId) {
-							sock.emit("conversation:leave", { conversationId: prevFriend.conversationId });
-						}
-					} catch (e) { /* ignore */ }
-					// local-only `isInChat` removed
+				// leave previous conversation room if any
+				try {
+					const sock = getSocket();
+					if (sock && prevFriend.conversationId) {
+						sock.emit("conversation:leave", {
+							conversationId: prevFriend.conversationId,
+						});
+					}
+				} catch (e) {
+					/* ignore */
+				}
+				// local-only `isInChat` removed
 				if (
 					!prevFriend.isPinned &&
 					prevFriend.unreadCount === 0 &&
@@ -1156,8 +1299,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 			// join the new conversation room so server considers us present
 			try {
 				const sock = getSocket();
-				if (sock && friend.conversationId) sock.emit("conversation:join", { conversationId: friend.conversationId });
-			} catch (e) { /* ignore */ }
+				if (sock && friend.conversationId)
+					sock.emit("conversation:join", {
+						conversationId: friend.conversationId,
+					});
+			} catch (e) {
+				/* ignore */
+			}
 
 			if (friend.unreadCount > 0) {
 				friend.lastMessageSeen = true;
@@ -1167,15 +1315,15 @@ document.addEventListener("DOMContentLoaded", async function () {
 			updateTotalUnreadCount();
 
 			// remember where this card came from so undo/delete logic can restore correctly
-			friend._previousContainer = 'contacts';
+			friend._previousContainer = "contacts";
 			card.remove();
 			activeChatsContainer.appendChild(createActiveChatCard(friend));
 
 			chatProfilePic.src =
-				friend.profilePics[0] ||
-				"/assets/images/profile.jpeg";
+				friend.profilePics[0] || "/assets/images/profile.jpeg";
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
+
 			if (friend.conversationId) {
 				emitMessageSeen(friend.conversationId);
 			}
@@ -1341,18 +1489,18 @@ document.addEventListener("DOMContentLoaded", async function () {
 						swipeBounced = true;
 						const icon = swipeIcon;
 						if (icon) {
-							icon.classList.add('visible');
-							icon.classList.add('bounce');
+							icon.classList.add("visible");
+							icon.classList.add("bounce");
 							const onEnd = () => {
-								if (icon) icon.classList.remove('bounce');
-								icon.removeEventListener('animationend', onEnd);
+								if (icon) icon.classList.remove("bounce");
+								icon.removeEventListener("animationend", onEnd);
 							};
-							icon.addEventListener('animationend', onEnd);
+							icon.addEventListener("animationend", onEnd);
 						}
 					} else if (progress < 1 && swipeBounced) {
 						// allow re-bounce if user moves back and re-crosses threshold
 						swipeBounced = false;
-						if (swipeIcon) swipeIcon.classList.remove('bounce');
+						if (swipeIcon) swipeIcon.classList.remove("bounce");
 					}
 				}
 			},
@@ -1387,7 +1535,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 						swipeIcon.remove();
 						swipeIcon = null;
 					}
-
 				} else if (swipeIcon) {
 					swipeIcon.remove();
 					swipeIcon = null;
@@ -1431,7 +1578,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 			if (!reply) return;
 			// Try to locate by message id first (new format), fallback to index (legacy)
 			const targetMsg =
-				chatEl.querySelector(`[data-message-id="${reply.dataset.replyTo}"]`) ||
+				chatEl.querySelector(
+					`[data-message-id="${reply.dataset.replyTo}"]`,
+				) ||
 				chatEl.querySelector(`[data-index="${reply.dataset.replyTo}"]`);
 			if (targetMsg) {
 				targetMsg.scrollIntoView({
@@ -1517,7 +1666,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 					if (!msgs) return;
 					pinnedMessageText.textContent = msgs.text;
 					pinnedMessageText.dataset.index = prevIdx;
-					pinnedMessageContainer.style.animation = "highlightPin 0.5s";
+					pinnedMessageContainer.style.animation =
+						"highlightPin 0.5s";
 					setTimeout(
 						() => (pinnedMessageContainer.style.animation = ""),
 						500,
@@ -1578,8 +1728,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 				: contacts.find((c) => c.id === state.contactUserId)?.name;
 
 			chatProfilePic.src =
-				friend.profilePics[0] ||
-				"/assets/images/profile.jpeg";
+				friend.profilePics[0] || "/assets/images/profile.jpeg";
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 			if (friend.isBlocked) {
@@ -1600,8 +1749,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			chatEl.style.paddingBottom =
 				basePadding + state.actionPreviewHeight + "rem";
 			msgActionText.textContent = "Forwarding message from " + senderName;
-			const msgs =
-				messages[state.contactUserId][Number(state.msgIndex)];
+			const msgs = messages[state.contactUserId][Number(state.msgIndex)];
 			if (!msgs) return;
 			msgActionmsg.textContent = msgs.text;
 			messageInput.style.borderRadius = "0 0 2rem 2rem";
@@ -1609,10 +1757,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			scrollChatToBottom();
 
 			state.isForwarding = true;
-			state.forwardingMsg = buildForwardedMsg(
-				msgs,
-				friend.id,
-			);
+			state.forwardingMsg = buildForwardedMsg(msgs, friend.id);
 			forwardDialog.close();
 			state.contactUserId = friend.id;
 		});
@@ -1660,7 +1805,11 @@ document.addEventListener("DOMContentLoaded", async function () {
 			const prevLastMessageSeen = friend?.lastMessageSeen;
 			const prevLastMessageDate = friend?.lastMessageDate;
 
-			const { timeout, deletedMsg, idx: deletedIdx } = deleteMessage(state.selectedMsg, state.msgIndex);
+			const {
+				timeout,
+				deletedMsg,
+				idx: deletedIdx,
+			} = deleteMessage(state.selectedMsg, state.msgIndex);
 			state.deleting = timeout;
 
 			if (friend) {
@@ -1672,7 +1821,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 					friend.lastMessage = lastMsg.text;
 					friend.lastMessageTime = lastMsg.time;
 					friend.lastMessageDate = lastMsg.date || "";
-					friend.lastMessageSeen = lastMsg.user ? lastMsg.isSeen === true : true;
+					friend.lastMessageSeen = lastMsg.user
+						? lastMsg.isSeen === true
+						: true;
 				} else {
 					friend.lastMessage = "";
 					friend.lastMessageTime = "";
@@ -1733,7 +1884,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 	if (forwardMsg[0]) {
 		forwardMsg[0].addEventListener("click", () => {
 			closeContextMenu();
-			forwardDialog.querySelector(".forwarded-contact-dialog").textContent = "";
+			forwardDialog.querySelector(
+				".forwarded-contact-dialog",
+			).textContent = "";
 			contacts.forEach((contact) => {
 				forwardDialog
 					.querySelector(".forwarded-contact-dialog")
@@ -1763,6 +1916,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 		chatHeader.addEventListener("click", () => {
 			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (!friend) return;
+			if (friend.isSaved) return; // saved messages has no profile
 			openProfile(friend);
 		});
 	}
@@ -1799,6 +1953,20 @@ document.addEventListener("DOMContentLoaded", async function () {
 			b.addEventListener("click", () => {
 				handleDeleteContact();
 				updateContactsEmptyState();
+			}),
+		);
+
+	if (archiveContactBtns.length > 0)
+		archiveContactBtns.forEach((btn) => 
+			btn.addEventListener("click", () => {
+				const friend = contacts.find(
+					(c) => c.id === state.contactUserId,
+				);
+				if (!friend) return;
+				_onContactAction("archive", friend.id);
+				state.skipShowChatOnProfileClose = true;
+				closeProfile();
+				closeChat();
 			}),
 		);
 
@@ -1849,11 +2017,165 @@ document.addEventListener("DOMContentLoaded", async function () {
 		});
 	}
 
+	// ─── Archived ──────────────────────────────────────────────────
+	async function _archiveContact(userId) {
+		const friend = contacts.find((c) => c.id === userId);
+		if (!friend) return;
+
+		try {
+			await apiUpdateContact(friend.id, { isArchived: true });
+			friend.isArchived = true;
+
+			// حذف از DOM
+			const card =
+				activeChatsContainer.querySelector(
+					`[data-wrapper-user-id="${userId}"]`,
+				) ||
+				activeChatsContainer
+					.querySelector(`[data-user-id="${userId}"]`)
+					?.closest(".active-chat-wrapper") ||
+				contactsContainer.querySelector(`[data-user-id="${userId}"]`);
+			card?.remove();
+
+			updateContactsEmptyState();
+			showToast("Chat archived", archiveIcon);
+		} catch (err) {
+			console.error("Failed to archive contact", err);
+			showToast("Failed to archive chat");
+		}
+	}
+
+	async function _unarchiveContact(userId) {
+		const friend = contacts.find((c) => c.id === userId);
+		if (!friend) return;
+
+		try {
+			await apiUpdateContact(friend.id, { isArchived: false });
+			friend.isArchived = false;
+
+			if (
+				friend.isPinned ||
+				friend.unreadCount > 0 ||
+				friend.lastMessageSeen === false
+			) {
+				activeChatsContainer.appendChild(createActiveChatCard(friend));
+				sortActiveChats();
+			} else {
+				contactsContainer.appendChild(
+					createContactCard(
+						{ ...friend, hasMessages: !!friend.lastMessage },
+						_onContactAction,
+					),
+				);
+				sortContacts();
+			}
+
+			updateContactsEmptyState();
+			showToast("Chat unarchived", archiveIcon);
+		} catch (err) {
+			console.error("Failed to unarchive contact", err);
+			showToast("Failed to unarchive chat");
+		}
+	}
+
+	function _openArchivedDialog() {
+		if (!archivedDialog) return;
+
+		archivedDialogList.innerHTML = "";
+
+		const archivedContacts = contacts.filter((c) => c.isArchived);
+
+		if (archivedContacts.length === 0) {
+			const empty = document.createElement("p");
+			empty.className = "archived-dialog-empty";
+			empty.textContent = "No archived chats";
+			archivedDialogList.appendChild(empty);
+		} else {
+			archivedContacts.forEach((contact) => {
+				archivedDialogList.appendChild(
+					createArchivedCard(
+						contact,
+						(id) => {
+							// Unarchive
+							_unarchiveContact(id);
+							const card = archivedDialogList.querySelector(
+								`[data-user-id="${id}"]`,
+							);
+							card?.remove();
+							if (
+								!archivedDialogList.querySelector(
+									".archived-card",
+								)
+							) {
+								const empty = document.createElement("p");
+								empty.className = "archived-dialog-empty";
+								empty.textContent = "No archived chats";
+								archivedDialogList.appendChild(empty);
+							}
+						},
+						(id) => {
+							// Open chat
+							archivedDialog.close();
+							closeSettings();
+							const friend = contacts.find((c) => c.id === id);
+							if (!friend) return;
+							state.contactUserId = id;
+							chatProfilePic.src =
+								friend.profilePics?.[0] ||
+								"/assets/images/profile.jpeg";
+							chatName.textContent =
+								friend.nickname || friend.name;
+							openChat(true);
+							if (friend.conversationId) {
+								emitMessageSeen(friend.conversationId);
+							}
+							scrollChatToBottom();
+
+							if (friend.isBlocked) {
+								messageContainer.style.display = "none";
+								const _ub = unblockActionBtn[0];
+								if (_ub) _ub.style.display = "flex";
+							} else {
+								messageContainer.style.display = "flex";
+								const _ub = unblockActionBtn[0];
+								if (_ub) _ub.style.display = "none";
+							}
+							if (window.innerWidth <= 700) {
+								chatPart.style.display = "flex";
+								peoplePart.style.display = "none";
+							}
+						},
+					),
+				);
+			});
+		}
+
+		archivedDialog.showModal();
+	}
+
+	if (archivedDialogClose) {
+		archivedDialogClose.addEventListener("click", () => {
+			archivedDialog?.close();
+		});
+	}
+
+	archivedDialog?.addEventListener("click", (e) => {
+		if (e.target === archivedDialog) archivedDialog.close();
+	});
+
+	document.addEventListener("contact:unarchived", (e) => {
+		_unarchiveContact(e.detail.id);
+	});
+
 	// ─── Global click ─────────────────────────────────────────────────────────
 	document.addEventListener("click", (e) => {
-		if (settingsList && (!settingsList.contains(e.target) && (!settingsBtn || !settingsBtn.contains(e.target)))) {
+		if (
+			settingsList &&
+			!settingsList.contains(e.target) &&
+			(!settingsBtn || !settingsBtn.contains(e.target))
+		) {
 			settingsList.classList.remove("open");
-			}
+		}
 		if (!searchbar.contains(e.target)) {
 			searchbar.classList.remove("open");
 			searchInput.value = "";
@@ -1870,7 +2192,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 		) {
 			// If the user tapped the overlay, close immediately even if we are
 			// suppressing the next click (this happens after long-press).
-			if (chatOverlay && (e.target === chatOverlay || chatOverlay.contains(e.target))) {
+			if (
+				chatOverlay &&
+				(e.target === chatOverlay || chatOverlay.contains(e.target))
+			) {
 				_suppressNextClick = false;
 				closeContextMenu();
 				return;
@@ -1889,21 +2214,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 		) {
 			emojiPicker.style.display = "none";
 		}
-		activeChatsContainer
-			.querySelectorAll(".active-chat-wrapper")
-			.forEach((wrapper) => {
-				const card = wrapper.querySelector(".active-chat");
-				if (!card) return;
-				const transform = card.style.transform;
-				if (
-					transform &&
-					transform !== "translateX(0px)" &&
-					transform !== ""
-				) {
-					card.style.transition = "all 0.25s ease";
-					card.style.transform = "translateX(0)";
-				}
-			});
+		closeAllSwipes();
 	});
 
 	// prevent pinch zoom and double tap zoom on mobile devices for better UX

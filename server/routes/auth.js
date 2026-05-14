@@ -15,25 +15,44 @@ router.post("/register", async (req, res) => {
     }
 
     try {
-        const existing = await prisma.user.findFirst({
-            where: {
-                OR: [{ email }, { username }],
-            },
-        });
+		const existing = await prisma.user.findFirst({
+			where: {
+				OR: [{ email }, { username }],
+			},
+		});
 
-        if (existing) {
-            const field = existing.email === email ? "email" : "username";
-            return res.status(409).json({ error: `This ${field} is already taken` });
-        }
+		if (existing) {
+			const field = existing.email === email ? "email" : "username";
+			return res
+				.status(409)
+				.json({ error: `This ${field} is already taken` });
+		}
 
-        const passwordHash = await bcrypt.hash(password, 10);
+		const passwordHash = await bcrypt.hash(password, 10);
 
-        const user = await prisma.user.create({
-            data: { name, email, username, passwordHash },
-        });
+		const user = await prisma.user.create({
+			data: { name, email, username, passwordHash },
+		});
+        
+		// ─── Auto-create Saved Messages ───────────────────────────────────────────
+		await prisma.$transaction(async (tx) => {
+			const savedConv = await tx.conversation.create({
+				data: {
+					members: { create: [{ userId: user.id }] },
+				},
+			});
+			await tx.contact.create({
+				data: {
+					ownerId: user.id,
+					contactId: user.id,
+					conversationId: savedConv.id,
+					isSaved: true,
+				},
+			});
+		});
 
-        return res.status(201).json({ success: true, userId: user.id });
-    } catch (err) {
+		return res.status(201).json({ success: true, userId: user.id });
+	} catch (err) {
         console.error(err);
         return res.status(500).json({ error: "Server error" });
     }

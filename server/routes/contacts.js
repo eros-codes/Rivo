@@ -35,6 +35,7 @@ router.get("/", requireAuth, async (req, res) => {
 				},
 			},
 			orderBy: [
+				{ isSaved: "desc" },
 				{ isPinned: "desc" },
 				{ pinOrder: "asc" },
 				{ conversation: { lastMessageAt: "desc" } },
@@ -64,6 +65,56 @@ router.get("/", requireAuth, async (req, res) => {
 			return cc;
 		});
 
+		// Auto-create saved messages for existing users
+		const hasSaved = contacts.some((c) => c.isSaved);
+		if (!hasSaved) {
+			await prisma.$transaction(async (tx) => {
+				const savedConv = await tx.conversation.create({
+					data: { members: { create: [{ userId: req.userId }] } },
+				});
+				await tx.contact.create({
+					data: {
+						ownerId: req.userId,
+						contactId: req.userId,
+						conversationId: savedConv.id,
+						isSaved: true,
+					},
+				});
+			});
+			// re-fetch
+			const refetched = await prisma.contact.findFirst({
+				where: { ownerId: req.userId, isSaved: true },
+				include: {
+					conversation: {
+						select: {
+							id: true,
+							messages: {
+								take: 1,
+								orderBy: { createdAt: "desc" },
+							},
+						},
+					},
+				},
+			});
+			if (refetched) {
+				sanitized.unshift({
+					...refetched,
+					contact: {
+						id: req.userId,
+						name: "Saved Messages",
+						username: "",
+						profilePics: [],
+						bio: "",
+						isOnline: true,
+						lastSeen: null,
+					},
+					conversationId: refetched.conversationId,
+					isSaved: true,
+				});
+			}
+		}
+
+		return res.json(sanitized);
 		return res.json(sanitized);
 	} catch (err) {
 		console.error(err);
@@ -166,7 +217,7 @@ router.post("/", requireAuth, async (req, res) => {
 router.patch("/:id", requireAuth, async (req, res) => {
 	const contactId = parseInt(req.params.id);
 	// Prevent clients from setting server-controlled fields
-	const { isPinned, pinOrder, isMuted, isBlocked, nickname } = req.body;
+	const { isPinned, pinOrder, isMuted, isBlocked, nickname, isArchived } = req.body;
 
 	try {
 		const contact = await prisma.contact.findFirst({
@@ -188,6 +239,7 @@ router.patch("/:id", requireAuth, async (req, res) => {
 				...(isMuted !== undefined && { isMuted }),
 				...(isBlocked !== undefined && { isBlocked }),
 				...(nickname !== undefined && { nickname }),
+				...(isArchived !== undefined && { isArchived }),
 			},
 		});
 

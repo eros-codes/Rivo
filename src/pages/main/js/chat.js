@@ -10,7 +10,11 @@ import {
 	updateTotalUnreadCount,
 } from "./chat-logic.js";
 import { emitMessage, emitEditMessage, emitMessageSeen, getSocket } from "./socket.js";
-import { getMessagesPage, getContacts } from "./api.js";
+import {
+	getMessagesPage,
+	getContacts,
+	updateContact as apiUpdateContact,
+} from "./api.js";
 import { makeMessageSkeleton, createTopMessageSkeleton } from "./skeleton.js";
 import { createContactCard } from "../../../components/contact-cards/contact-card.js";
 import { createActiveChatCard } from "../../../components/active-chats/active-chats.js";
@@ -578,7 +582,17 @@ export async function receiveMessage(message) {
 		contact.unreadCount = (contact.unreadCount || 0) + 1;
 	}
 
-	moveToActiveChats(contact);
+	if (contact.isArchived) {
+		contact.isArchived = false;
+		apiUpdateContact(contact.id, { isArchived: false }).catch(() => {});
+		document.dispatchEvent(
+			new CustomEvent("contact:unarchived", {
+				detail: { id: contact.id },
+			}),
+		);
+	} else {
+		moveToActiveChats(contact);
+	}
 	refreshCard(contact);
 	sortActiveChats();
 }
@@ -591,7 +605,10 @@ export async function sendMessage() {
 		const txt = _dom.messageInput.value;
 		if (!txt || txt.trim() === "") return;
 		let msg = null;
-		if (typeof state.msgIndex !== 'undefined' && messages[state.contactUserId]) {
+		if (
+			typeof state.msgIndex !== "undefined" &&
+			messages[state.contactUserId]
+		) {
 			msg = messages[state.contactUserId][Number(state.msgIndex)];
 		}
 		// fallback: try find by messageId present on selected DOM element
@@ -606,10 +623,20 @@ export async function sendMessage() {
 
 		// Breadcrumb: attempted edit
 		try {
-			if (typeof window !== 'undefined' && window.Sentry && window.Sentry.addBreadcrumb) {
-				window.Sentry.addBreadcrumb({ category: 'edit', message: 'submit_edit', data: { messageId: msg?.id, localOnly: !msg.id } });
+			if (
+				typeof window !== "undefined" &&
+				window.Sentry &&
+				window.Sentry.addBreadcrumb
+			) {
+				window.Sentry.addBreadcrumb({
+					category: "edit",
+					message: "submit_edit",
+					data: { messageId: msg?.id, localOnly: !msg.id },
+				});
 			}
-		} catch (e) { void e; }
+		} catch (e) {
+			void e;
+		}
 		if (msg.text === txt.trim()) {
 			state.isEditing = false;
 			resetInput();
@@ -621,17 +648,23 @@ export async function sendMessage() {
 			msg.text = txt.trim();
 			msg.isEdited = true;
 			if (state.selectedMsg) {
-				const textEl = state.selectedMsg.querySelector('.chat-message-text');
+				const textEl =
+					state.selectedMsg.querySelector(".chat-message-text");
 				if (textEl) textEl.textContent = msg.text;
-				if (!state.selectedMsg.querySelector('.chat-edited-label')) {
-					const label = document.createElement('span');
-					label.className = 'chat-edited-label';
-					label.textContent = 'edited';
-					state.selectedMsg.querySelector('.chat-message-meta')?.prepend(label);
+				if (!state.selectedMsg.querySelector(".chat-edited-label")) {
+					const label = document.createElement("span");
+					label.className = "chat-edited-label";
+					label.textContent = "edited";
+					state.selectedMsg
+						.querySelector(".chat-message-meta")
+						?.prepend(label);
 				}
 			}
 			// if user was near bottom before editing, keep them scrolled to bottom
-			const nearBottomAfterEdit = nearBottom(_dom.chatEl, (_dom.msgAction?.getBoundingClientRect().height || 0) + 30);
+			const nearBottomAfterEdit = nearBottom(
+				_dom.chatEl,
+				(_dom.msgAction?.getBoundingClientRect().height || 0) + 30,
+			);
 			if (nearBottomAfterEdit) scrollChatToBottomAfterPadding();
 			state.isEditing = false;
 			resetInput();
@@ -646,18 +679,24 @@ export async function sendMessage() {
 			msg.text = txt.trim();
 			msg.isEdited = true;
 			if (state.selectedMsg) {
-				const textEl = state.selectedMsg.querySelector('.chat-message-text');
+				const textEl =
+					state.selectedMsg.querySelector(".chat-message-text");
 				if (textEl) textEl.textContent = msg.text;
-				if (!state.selectedMsg.querySelector('.chat-edited-label')) {
-					const label = document.createElement('span');
-					label.className = 'chat-edited-label';
-					label.textContent = 'edited';
-					state.selectedMsg.querySelector('.chat-message-meta')?.prepend(label);
+				if (!state.selectedMsg.querySelector(".chat-edited-label")) {
+					const label = document.createElement("span");
+					label.className = "chat-edited-label";
+					label.textContent = "edited";
+					state.selectedMsg
+						.querySelector(".chat-message-meta")
+						?.prepend(label);
 				}
 			}
 		} catch (e) {
-			console.error('edit failed', e);
-			showToast(typeof e === 'string' ? e : (e?.message || 'Edit failed'), '');
+			console.error("edit failed", e);
+			showToast(
+				typeof e === "string" ? e : e?.message || "Edit failed",
+				"",
+			);
 		}
 		state.isEditing = false;
 		resetInput();
@@ -680,16 +719,20 @@ export async function sendMessage() {
 				const sent = await emitMessage({
 					conversationId: contact.conversationId,
 					text: msg.text,
-					forwardedFrom: msg.forwardedFrom || (msg.user ? "You" : null),
+					forwardedFrom:
+						msg.forwardedFrom || (msg.user ? "You" : null),
 					forwardedText: msg.text,
 				});
 				const normalized = _normalizeOutgoing(sent);
 				normalized.index = messages[state.contactUserId].length;
 				messages[state.contactUserId].push(normalized);
 				// Insert date separator if this message starts a new day
-				const prev = messages[state.contactUserId][normalized.index - 1] || null;
+				const prev =
+					messages[state.contactUserId][normalized.index - 1] || null;
 				if (!prev || prev.date !== normalized.date) {
-					_dom.chatEl.appendChild(createDateSeparator(normalized.date));
+					_dom.chatEl.appendChild(
+						createDateSeparator(normalized.date),
+					);
 				}
 				_dom.chatEl.appendChild(createMessage(normalized));
 			} catch {
@@ -716,6 +759,17 @@ export async function sendMessage() {
 
 	const contact = contacts.find((c) => c.id === state.contactUserId);
 	if (!contact) return;
+	
+	// Auto-unarchive on send
+	if (contact.isArchived) {
+		contact.isArchived = false;
+		apiUpdateContact(contact.id, { isArchived: false }).catch(() => {});
+		document.dispatchEvent(
+			new CustomEvent("contact:unarchived", {
+				detail: { id: contact.id },
+			}),
+		);
+	}
 
 	const text = _dom.messageInput.value;
 	const replyTo = state.replyTo;
@@ -723,16 +777,16 @@ export async function sendMessage() {
 	// Preserve previous contact preview state for rollback
 	const prevContactState = contact
 		? {
-			lastMessage: contact.lastMessage,
-			lastMessageTime: contact.lastMessageTime,
-			lastMessageDate: contact.lastMessageDate,
-			lastMessageSeen: contact.lastMessageSeen,
-		}
+				lastMessage: contact.lastMessage,
+				lastMessageTime: contact.lastMessageTime,
+				lastMessageDate: contact.lastMessageDate,
+				lastMessageSeen: contact.lastMessageSeen,
+			}
 		: null;
 
 	// optimistic UI using a stable temporary id to avoid index races
 	const now = new Date();
-	const localId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2,9)}`;
+	const localId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 	const optimistic = {
 		_localId: localId,
 		user: true,
@@ -768,8 +822,10 @@ export async function sendMessage() {
 	resetInput();
 	state.replyTo = null;
 	scrollChatToBottom();
-	const msgInputEl = _dom.messageInput || document.querySelector(".message-input");
-	if (msgInputEl && typeof msgInputEl.focus === 'function') msgInputEl.focus();
+	const msgInputEl =
+		_dom.messageInput || document.querySelector(".message-input");
+	if (msgInputEl && typeof msgInputEl.focus === "function")
+		msgInputEl.focus();
 
 	// send via socket
 	try {
@@ -786,14 +842,26 @@ export async function sendMessage() {
 		);
 		if (localIdx !== -1) {
 			messages[state.contactUserId][localIdx].id = sent.id;
-			messages[state.contactUserId][localIdx].isSeen = sent.isSeen || false;
-			messages[state.contactUserId][localIdx].isPinned = sent.isPinned || false;
+			messages[state.contactUserId][localIdx].isSeen =
+				sent.isSeen || false;
+			messages[state.contactUserId][localIdx].isPinned =
+				sent.isPinned || false;
 			// preserve reply/forward metadata if server returned them
 			messages[state.contactUserId][localIdx].replyTo = sent.replyToId
-				? { id: sent.replyToId, sender: sent.replyToName, text: sent.replyToText }
+				? {
+						id: sent.replyToId,
+						sender: sent.replyToName,
+						text: sent.replyToText,
+					}
 				: messages[state.contactUserId][localIdx].replyTo || null;
-			messages[state.contactUserId][localIdx].forwardedFrom = sent.forwardedFrom || messages[state.contactUserId][localIdx].forwardedFrom || null;
-			messages[state.contactUserId][localIdx].forwardedText = sent.forwardedText || messages[state.contactUserId][localIdx].forwardedText || null;
+			messages[state.contactUserId][localIdx].forwardedFrom =
+				sent.forwardedFrom ||
+				messages[state.contactUserId][localIdx].forwardedFrom ||
+				null;
+			messages[state.contactUserId][localIdx].forwardedText =
+				sent.forwardedText ||
+				messages[state.contactUserId][localIdx].forwardedText ||
+				null;
 			delete messages[state.contactUserId][localIdx]._localId;
 		}
 		// update DOM node if present

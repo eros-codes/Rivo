@@ -359,6 +359,7 @@
 				<div class="contact-actions">
 					<div id="edit-name-btn">Edit Name</div>
 					<div id="block-contact-btn">Block Contact</div>
+					<div id="archive-contact-btn">Archive Contact</div>
 					<div id="delete-chat-btn">Delete Chat</div>
 					<div id="delete-contact-btn">Delete Contact</div>
 				</div>
@@ -717,6 +718,19 @@
 		<div class="connection-status" id="connection-status">
 			<span id="connection-status-text">Connecting...</span>
 		</div>
+
+		<!-- Archived Chats Dialog -->
+		<dialog class="archived-dialog" id="archived-dialog">
+			<div class="archived-dialog-header">
+				<button class="archived-dialog-close" id="archived-dialog-close" aria-label="Close">
+					<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12z"/></svg>
+				</button>
+				<span class="archived-dialog-title">Archived Chats</span>
+			</div>
+			<div class="archived-dialog-list" id="archived-dialog-list">
+				<!-- populated by JS -->
+			</div>
+		</dialog>
 	</main>
 
 	<script src="/js/cropper.min.js"></script>

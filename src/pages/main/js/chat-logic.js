@@ -79,33 +79,34 @@ export function refreshCard(friend) {
 /** Sorting the cards in the way that should be **/
 export function sortActiveChats() {
 	const pinned = [];
+	const saved = [];
 	const unpinned = [];
 
 	_dom.activeChatsContainer
 		.querySelectorAll(".active-chat-wrapper")
 		.forEach((el) => {
-			const card = el.querySelector(".active-chat")
+			const card = el.querySelector(".active-chat");
 			if (!card) return;
 			const friend = contacts.find(
 				(c) => c.id === Number(card.dataset.userId),
 			);
 			if (!friend) return;
-			friend.isPinned
-				? pinned.push({ el, friend })
-				: unpinned.push({ el, friend });
+			if (friend.isSaved) saved.push({ el, friend });
+			else if (friend.isPinned) pinned.push({ el, friend });
+			else unpinned.push({ el, friend });
 		});
 
-	// Pin order
 	pinned.sort((a, b) => (b.friend.pinOrder ?? 0) - (a.friend.pinOrder ?? 0));
 
-	// Sortfrom last message
 	unpinned.sort((a, b) => {
-		const ta = (a.friend.lastMessageDate || "") + (a.friend.lastMessageTime || "");
-		const tb = (b.friend.lastMessageDate || "") + (b.friend.lastMessageTime || "");
+		const ta =
+			(a.friend.lastMessageDate || "") + (a.friend.lastMessageTime || "");
+		const tb =
+			(b.friend.lastMessageDate || "") + (b.friend.lastMessageTime || "");
 		return tb.localeCompare(ta);
 	});
 
-	[...pinned, ...unpinned].forEach(({ el }) =>
+	[...pinned, ...saved, ...unpinned].forEach(({ el }) =>
 		_dom.activeChatsContainer.appendChild(el),
 	);
 }

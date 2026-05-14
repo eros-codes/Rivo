@@ -158,6 +158,18 @@
 	border: 0.2rem solid var(--online);
 }
 
+.active-chat-saved-icon {
+    width: 4.5rem;
+    height: 4.5rem;
+    border-radius: 50%;
+    background: linear-gradient(135deg, transparent, rgba(255, 255, 255, 0.2));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    flex-shrink: 0;
+}
+
 @media all and (max-width: 700px) {
 	.active-chats-container {
 		padding: 2rem 0.5rem;

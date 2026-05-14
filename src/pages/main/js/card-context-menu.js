@@ -1,5 +1,5 @@
 const SWIPE_THRESHOLD = 70; // px — minimum to snap open
-const SWIPE_REVEAL_PX_RIGHT = 70;
+const SWIPE_REVEAL_PX_RIGHT = 140;
 const SWIPE_REVEAL_PX_LEFT = 140;
 
 // Desktop mouse drag
@@ -10,7 +10,8 @@ let mouseDiff = 0;
 export function initCardContextMenu(container, onCardAction) {
 	// Use event delegation so dynamically added cards are covered too
 	container.addEventListener("touchstart", _onTouchStart, { passive: true });
-	container.addEventListener("touchmove", _onTouchMove, { passive: true });
+	// touchmove must be non-passive so we can preventDefault when blocking swipes
+	container.addEventListener("touchmove", _onTouchMove, { passive: false });
 	container.addEventListener("touchend", _onTouchEnd, { passive: true });
 	container.addEventListener("click", _onClick);
 
@@ -26,15 +27,18 @@ export function initCardContextMenu(container, onCardAction) {
 		if (!mouseWrapper) return;
 		mouseDiff = e.clientX - mouseStartX;
 		const s = _getState(mouseWrapper);
+		const isSaved = mouseWrapper.dataset.saved === "true";
+		const revealRight = isSaved ? 70 : SWIPE_REVEAL_PX_RIGHT;
+		const leftLimit = isSaved ? 0 : -SWIPE_REVEAL_PX_LEFT;
 		const base =
 			s.swipeState === "left"
 				? -SWIPE_REVEAL_PX_LEFT
 				: s.swipeState === "right"
-					? SWIPE_REVEAL_PX_RIGHT
-					: 0;
+				? revealRight
+				: 0;
 		const clamped = Math.max(
-			-SWIPE_REVEAL_PX_LEFT,
-			Math.min(SWIPE_REVEAL_PX_RIGHT, base + mouseDiff),
+			leftLimit,
+			Math.min(revealRight, base + mouseDiff),
 		);
 		_getCard(mouseWrapper).style.transform = `translateX(${clamped}px)`;
 	});
@@ -48,19 +52,24 @@ export function initCardContextMenu(container, onCardAction) {
 		}
 
 		const s = _getState(mouseWrapper);
+		const isSaved = mouseWrapper.dataset.saved === "true";
+		const revealRight = isSaved ? 70 : SWIPE_REVEAL_PX_RIGHT;
 		const base =
 			s.swipeState === "left"
 				? -SWIPE_REVEAL_PX_LEFT
 				: s.swipeState === "right"
-					? SWIPE_REVEAL_PX_RIGHT
-					: 0;
+				? revealRight
+				: 0;
 		const total = base + mouseDiff;
-		if (total < -SWIPE_THRESHOLD) {
+		if (isSaved && total < 0) {
+			// saved chats cannot be swiped left
+			_snapTo(mouseWrapper, "closed");
+		} else if (total < -SWIPE_THRESHOLD) {
 			_closeAll(mouseWrapper);
 			_snapTo(mouseWrapper, "left");
 		} else if (total > SWIPE_THRESHOLD) {
 			_closeAll(mouseWrapper);
-			_snapTo(mouseWrapper, "right");
+			_snapTo(mouseWrapper, "right", revealRight);
 		} else {
 			_snapTo(mouseWrapper, "closed");
 		}
@@ -93,7 +102,7 @@ export function initCardContextMenu(container, onCardAction) {
 		return wrapper.querySelector(".active-chat");
 	}
 
-	function _snapTo(wrapper, swipeState) {
+	function _snapTo(wrapper, swipeState, revealRight = SWIPE_REVEAL_PX_RIGHT) {
 		const card = _getCard(wrapper);
 		if (!card) return;
 		const s = _getState(wrapper);
@@ -102,7 +111,7 @@ export function initCardContextMenu(container, onCardAction) {
 		if (swipeState === "left") {
 			card.style.transform = `translateX(-${SWIPE_REVEAL_PX_LEFT}px)`;
 		} else if (swipeState === "right") {
-			card.style.transform = `translateX(${SWIPE_REVEAL_PX_RIGHT}px)`;
+			card.style.transform = `translateX(${revealRight}px)`; // ← dynamic
 		} else {
 			card.style.transform = "translateX(0)";
 		}
@@ -115,6 +124,8 @@ export function initCardContextMenu(container, onCardAction) {
 			if (s.swipeState !== "closed") _snapTo(w, "closed");
 		});
 	}
+
+	_activeCloseAll = _closeAll; // for external use
 
 	function _onTouchStart(e) {
 		const wrapper = e.target.closest(".active-chat-wrapper");
@@ -132,19 +143,33 @@ export function initCardContextMenu(container, onCardAction) {
 		if (!wrapper) return;
 		const s = _getState(wrapper);
 		if (!s.dragging) return;
+
 		const diff = e.touches[0].clientX - s.startX;
 		s.currentDiff = diff;
+
+		const isSaved = wrapper.dataset.saved === "true";
+		// saved messages can't be swiped left — enforce left limit 0
+		const revealRight = isSaved ? 70 : SWIPE_REVEAL_PX_RIGHT; // saved messages have only one action (delete), so reveal less when swiping right
+		const leftLimit = isSaved ? 0 : -SWIPE_REVEAL_PX_LEFT;
+
+		// If attempting to swipe left on a saved chat, keep it closed and prevent scrolling
+		if (isSaved && diff < 0) {
+			const card = _getCard(wrapper);
+			if (card) card.style.transform = "translateX(0)";
+			if (e.cancelable) e.preventDefault();
+			return;
+		}
 
 		const base =
 			s.swipeState === "left"
 				? -SWIPE_REVEAL_PX_LEFT
 				: s.swipeState === "right"
-					? SWIPE_REVEAL_PX_RIGHT
-					: 0;
+			? revealRight
+			: 0;
 
 		const clamped = Math.max(
-			-SWIPE_REVEAL_PX_LEFT,
-			Math.min(SWIPE_REVEAL_PX_RIGHT, base + diff),
+			leftLimit,
+			Math.min(revealRight, base + diff),
 		);
 		_getCard(wrapper).style.transform = `translateX(${clamped}px)`;
 	}
@@ -155,26 +180,33 @@ export function initCardContextMenu(container, onCardAction) {
 		const s = _getState(wrapper);
 		if (!s.dragging) return;
 		s.dragging = false;
+
+		const isSaved = wrapper.dataset.saved === "true";
+		const revealRight = isSaved ? 70 : SWIPE_REVEAL_PX_RIGHT;
+
 		const base =
 			s.swipeState === "left"
 				? -SWIPE_REVEAL_PX_LEFT
 				: s.swipeState === "right"
-					? SWIPE_REVEAL_PX_RIGHT
+					? revealRight
 					: 0;
 
 		const total = base + s.currentDiff;
+
+		if (isSaved && total < 0) {
+			_snapTo(wrapper, "closed");
+			return;
+		}
 
 		if (total < -SWIPE_THRESHOLD) {
 			_closeAll(wrapper);
 			_snapTo(wrapper, "left");
 		} else if (total > SWIPE_THRESHOLD) {
 			_closeAll(wrapper);
-			_snapTo(wrapper, "right");
+			_snapTo(wrapper, "right", revealRight);
 		} else {
 			_snapTo(wrapper, "closed");
 		}
-
-		s.currentDiff = 0;
 	}
 
 	function _onClick(e) {
@@ -203,4 +235,9 @@ export function initCardContextMenu(container, onCardAction) {
 			_snapTo(wrapper, "closed");
 		}
 	}
+}
+
+let _activeCloseAll = null;
+export function closeAllSwipes() {
+	_activeCloseAll?.();
 }

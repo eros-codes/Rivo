@@ -5,7 +5,8 @@ const unmuteIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height
 const pinIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path fill="currentColor" d="M15.744 4.276c1.221-2.442 4.476-2.97 6.406-1.04l6.614 6.614c1.93 1.93 1.402 5.186-1.04 6.406l-6.35 3.176a1.5 1.5 0 0 0-.753.867l-1.66 4.983a2 2 0 0 1-3.312.782l-4.149-4.15l-6.086 6.087H4v-1.415l6.086-6.085l-4.149-4.15a2 2 0 0 1 .782-3.31l4.982-1.662a1.5 1.5 0 0 0 .868-.752z"></path></svg>`;
 const unpinIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="m20.97 17.172l-1.414 1.414l-3.535-3.535l-.073.074l-.707 3.536l-1.415 1.414l-4.242-4.243l-4.95 4.95l-1.414-1.414l4.95-4.95l-4.243-4.243L5.34 8.761l3.536-.707l.073-.074l-3.536-3.536L6.828 3.03zM10.365 9.394l-.502.502l-2.822.565l6.5 6.5l.564-2.822l.502-.502zm8.411.074l-1.34 1.34l1.414 1.415l1.34-1.34l.707.707l1.415-1.415l-8.486-8.485l-1.414 1.414l.707.707l-1.34 1.34l1.414 1.415l1.34-1.34z"/></svg>`;
 const deleteIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM8 9h8v10H8zm7.5-5l-1-1h-5l-1 1H5v2h14V4z"/></svg>`;
-
+const archiveIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M20.54 5.23L19.13 3.81A2 2 0 0 0 17.72 3H6.28A2 2 0 0 0 4.87 3.81L3.46 5.23A2 2 0 0 0 3 6.5V19a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6.5a2 2 0 0 0-.46-1.27zM12 17l-5-5h3V9h4v3h3z"/></svg>`;
+const savedIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24"><path fill="currentColor" d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3l7 3V5c0-1.1-.9-2-2-2z"/></svg>`;
 export function createActiveChatCard({
 	id,
 	name,
@@ -17,6 +18,7 @@ export function createActiveChatCard({
 	lastMessageTime,
 	lastMessageDate,
 	isPinned,
+	isSaved,
 	unreadCount,
 }) {
 	// mute/pin svg markers are included inline where needed via parseSvg
@@ -24,10 +26,13 @@ export function createActiveChatCard({
 	const wrapper = document.createElement("div");
 	wrapper.className = "active-chat-wrapper";
 	wrapper.dataset.wrapperUserId = id;
+	// expose whether this card represents the "Saved Messages" convo
+	wrapper.dataset.saved = isSaved ? "true" : "false";
 
 	// Right actions (buttons)
 	const actionsRight = document.createElement("div");
 	actionsRight.className = "card-actions card-actions--right";
+
 	const muteBtn = document.createElement("button");
 	muteBtn.className = "card-action-btn card-action-btn--mute";
 	muteBtn.dataset.action = "mute";
@@ -35,6 +40,7 @@ export function createActiveChatCard({
 	muteBtn.textContent = '';
 	const _mute = parseSvg(isMuted ? unmuteIconSvg : muteIconSvg);
 	if (_mute) muteBtn.appendChild(_mute.cloneNode(true));
+
 	const pinBtn = document.createElement("button");
 	pinBtn.className = "card-action-btn card-action-btn--pin";
 	pinBtn.dataset.action = "pin";
@@ -42,20 +48,36 @@ export function createActiveChatCard({
 	pinBtn.textContent = '';
 	const _pin = parseSvg(isPinned ? unpinIconSvg : pinIconSvg);
 	if (_pin) pinBtn.appendChild(_pin.cloneNode(true));
+	
 	actionsRight.appendChild(muteBtn);
 	actionsRight.appendChild(pinBtn);
 
 	// Left actions
 	const actionsLeft = document.createElement("div");
 	actionsLeft.className = "card-actions card-actions--left";
+
 	const delBtn = document.createElement("button");
 	delBtn.className = "card-action-btn card-action-btn--delete";
 	delBtn.dataset.action = "delete";
 	delBtn.title = "Delete";
-	delBtn.textContent = '';
 	const _del = parseSvg(deleteIconSvg);
 	if (_del) delBtn.appendChild(_del.cloneNode(true));
-	actionsLeft.appendChild(delBtn);
+
+	const archiveBtn = document.createElement("button");
+	archiveBtn.className = "card-action-btn card-action-btn--archive";
+	archiveBtn.dataset.action = "archive";
+	archiveBtn.title = "Archive";
+	const _arch = parseSvg(archiveIconSvg);
+	if (_arch) archiveBtn.appendChild(_arch.cloneNode(true));
+
+	if (isSaved) {
+		// saved chats: only show delete on the left side
+		actionsRight.style.display = "none";
+		actionsLeft.appendChild(delBtn);
+	} else {
+		actionsLeft.appendChild(delBtn);
+		actionsLeft.appendChild(archiveBtn);
+	}
 
 	function formatCardTime (date, time) {
 		if (!date && !time) return "";
@@ -72,11 +94,18 @@ export function createActiveChatCard({
 	active.dataset.userId = id;
 
 	// use shared DOM helper safeSrc from src/utils/dom.js
-
-	const img = document.createElement("img");
-	img.className = `active-chat-profile ${isOnline ? "online-active-chat" : ""}`;
-	img.src = safeSrc((profilePics && profilePics[0]) || "/assets/images/profile.jpeg");
-	img.alt = "active-profile";
+	let profileEl;
+	if (isSaved) {
+		profileEl = document.createElement("div");
+		profileEl.className = "active-chat-profile active-chat-saved-icon";
+		const _savedIcon = parseSvg(savedIconSvg);
+		if (_savedIcon) profileEl.appendChild(_savedIcon.cloneNode(true));
+	} else {
+		profileEl = document.createElement("img");
+		profileEl.className = `active-chat-profile${isOnline ? " online" : ""}`;
+		profileEl.src = safeSrc(profilePics?.[0] || "/assets/images/profile.jpeg");
+		profileEl.alt = "";
+	}
 
 	const info = document.createElement("span");
 	info.className = "active-chat-info";
@@ -125,7 +154,7 @@ export function createActiveChatCard({
 	meta.appendChild(timeEl);
 	meta.appendChild(unreadEl);
 
-	active.appendChild(img);
+	active.appendChild(profileEl);
 	active.appendChild(info);
 	active.appendChild(meta);
 

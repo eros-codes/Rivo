@@ -421,7 +421,7 @@ export function initSettings(dom, currentUser) {
 	// Archived
 	if (_dom.settingsArchived)
 		_dom.settingsArchived.addEventListener("click", () =>
-			showToast("Coming soon"),
+			_dom.onOpenArchived?.()
 		);
 
 	// Apply theme on init

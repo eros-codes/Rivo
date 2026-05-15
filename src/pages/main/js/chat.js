@@ -18,6 +18,10 @@ import {
 import { makeMessageSkeleton, createTopMessageSkeleton } from "./skeleton.js";
 import { createContactCard } from "../../../components/contact-cards/contact-card.js";
 import { createActiveChatCard } from "../../../components/active-chats/active-chats.js";
+import { showNotification } from "./in-app-notification.js";
+
+// Local notification dedupe fallback (main may expose window._notifQueue)
+const _localNotifQueue = new Set();
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 export const basePadding = 4;
@@ -580,19 +584,30 @@ export async function receiveMessage(message) {
 	contact.lastMessageSeen = false;
 	if (state.contactUserId !== contact.id) {
 		contact.unreadCount = (contact.unreadCount || 0) + 1;
+		try {
+			if (!normalized.user && !contact.isSaved && !contact.isMuted) {
+				// Deduplicate notifications by message id using main's queue if present
+				const notifQueue = (typeof window !== 'undefined' && window._notifQueue) ? window._notifQueue : _localNotifQueue;
+				if (normalized.id) {
+					if (!notifQueue.has(normalized.id)) {
+						notifQueue.add(normalized.id);
+						setTimeout(() => notifQueue.delete(normalized.id), 5000);
+						showNotification(contact, normalized);
+					}
+				} else {
+					showNotification(contact, normalized);
+				}
+			}
+		} catch (e) {
+			// ignore notification errors
+		}
 	}
 
-	if (contact.isArchived) {
-		contact.isArchived = false;
-		apiUpdateContact(contact.id, { isArchived: false }).catch(() => {});
-		document.dispatchEvent(
-			new CustomEvent("contact:unarchived", {
-				detail: { id: contact.id },
-			}),
-		);
-	} else {
-		moveToActiveChats(contact);
-	}
+// Do not auto-unarchive when receiving a message. Keep archived contacts archived
+// until the local user explicitly sends a message (auto-unarchive on send).
+if (!contact.isArchived) {
+    moveToActiveChats(contact);
+}
 	refreshCard(contact);
 	sortActiveChats();
 }

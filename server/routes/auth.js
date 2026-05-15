@@ -86,7 +86,7 @@ router.post("/login", async (req, res) => {
         const token = jwt.sign(
             { userId: user.id },
             process.env.JWT_SECRET,
-            { expiresIn: "7d" }
+            { expiresIn: "30d" }
         );
 
         // Set HttpOnly cookie so clients can opt into cookie-based auth.

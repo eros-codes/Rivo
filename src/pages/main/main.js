@@ -28,6 +28,7 @@ import {
 	nearBottom,
 	loadOlderMessages,
 	updatePinCount,
+	updatePinnedMessage,
 	basePadding,
 	lineHeight,
 	maxLines,
@@ -76,6 +77,7 @@ import {
 	handleDeleteContact,
 } from "./js/profile.js";
 import { initCardContextMenu, closeAllSwipes } from "./js/card-context-menu.js";
+import { initInAppNotification } from "./js/in-app-notification.js";
 import { initSearch, runSearch } from "./js/search.js";
 import { initEditProfile, openEditProfile } from "./js/edit-profile.js";
 import { initSettings, openSettings, closeSettings } from "./js/settings.js";
@@ -89,6 +91,9 @@ import {
 } from "./js/socket.js";
 import { loadThemeFromStorage } from "../../utils/theme.js";
 import { parseSvg } from "../../utils/svg.js";
+const _notifQueue = new Set();
+// expose to other modules (e.g., chat) for notification deduplication
+try { window._notifQueue = _notifQueue; } catch (e) { /* ignore */ }
 
 document.addEventListener("DOMContentLoaded", async function () {
 	// Initialize client-side Sentry (loaded from CDN if `window.__SENTRY_DSN__` set)
@@ -132,6 +137,106 @@ document.addEventListener("DOMContentLoaded", async function () {
 			void e;
 		}
 	})();
+
+	try {
+		initInAppNotification();
+		// open chat when in-app notification is clicked — use same flow as archived dialog
+		document.addEventListener("in-app-notif:open", (e) => {
+			try {
+				const id = e?.detail?.contactId;
+				if (!id) return;
+				// Mirror contact-click flow exactly
+				const prevFriend = contacts.find((c) => c.id === state.contactUserId);
+				if (prevFriend && prevFriend.id !== Number(id)) {
+					try {
+						const sock = getSocket();
+						if (sock && prevFriend.conversationId) {
+							sock.emit("conversation:leave", {
+								conversationId: prevFriend.conversationId,
+							});
+						}
+					} catch (err) {
+						/* ignore */
+					}
+
+					if (
+						!prevFriend.isPinned &&
+						prevFriend.unreadCount === 0 &&
+						prevFriend.lastMessageSeen !== false
+					) {
+						moveToContacts(prevFriend);
+						sortActiveChats();
+						sortContacts();
+					}
+				}
+
+				state.contactUserId = Number(id);
+				const friend = contacts.find((c) => c.id === state.contactUserId);
+				if (!friend) return;
+
+				// join the new conversation room so server considers us present
+				try {
+					const sock = getSocket();
+					if (sock && friend.conversationId)
+						sock.emit("conversation:join", {
+							conversationId: friend.conversationId,
+						});
+				} catch (e) {
+					/* ignore */
+				}
+
+				if (friend.unreadCount > 0) {
+					friend.lastMessageSeen = true;
+				}
+				friend.unreadCount = 0;
+				updateTotalUnreadCount();
+
+				// remember where this card came from so undo/delete logic can restore correctly
+				friend._previousContainer = "contacts";
+				const existingCard = activeChatsContainer.querySelector(
+					`[data-user-id="${friend.id}"]`,
+				);
+				if (existingCard) {
+					const wrapper =
+						existingCard.closest(".active-chat-wrapper") ??
+						existingCard;
+					wrapper.replaceWith(createActiveChatCard(friend));
+				} else {
+					// remove from contacts list if present and append to active
+					const card = document.querySelector(`[data-user-id="${friend.id}"]`);
+					if (card) card.remove();
+					activeChatsContainer.appendChild(createActiveChatCard(friend));
+				}
+
+				chatProfilePic.src = friend.profilePics?.[0] || "/assets/images/profile.jpeg";
+				chatName.textContent = friend.nickname || friend.name;
+				closeSettings();
+				openChat(true);
+				if (friend.conversationId) {
+					emitMessageSeen(friend.conversationId);
+				}
+				scrollChatToBottom();
+
+				if (friend.isBlocked) {
+					messageContainer.style.display = "none";
+					const _ub = unblockActionBtn[0];
+					if (_ub) _ub.style.display = "flex";
+				} else {
+					messageContainer.style.display = "flex";
+					const _ub = unblockActionBtn[0];
+					if (_ub) _ub.style.display = "none";
+				}
+				if (window.innerWidth <= 700) {
+					chatPart.style.display = "flex";
+					peoplePart.style.display = "none";
+				}
+			} catch (err) {
+				// ignore
+			}
+		});
+	} catch (e) {
+		// ignore init errors
+	}
 
 	// Rely on HttpOnly cookie for auth; if user info not present, ask server for current user.
 	let currentUser = null;
@@ -466,6 +571,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 		selectionToolbar,
 		selectionCount,
 		forwardDialog,
+		selectionDeleteBtn,
 		deleteIcon,
 		emptyStateEl,
 		chatProfilePic,
@@ -751,11 +857,31 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}
 			if (foundUserId === null) return;
 			const userMsgs = messages[foundUserId];
+			// preserve the removed message so we can adjust unread counters
+			const removedMsg = userMsgs[foundIndex];
 			userMsgs.splice(foundIndex, 1);
+
+			// If the deleted message was incoming and unseen, decrement unread
+			// so the contact preview reflects the deletion.
+			try {
+				const friend = contacts.find((c) => c.id === foundUserId);
+				if (friend && removedMsg && !removedMsg.user && !removedMsg.isSeen) {
+					friend.unreadCount = Math.max(0, (friend.unreadCount || 0) - 1);
+					updateTotalUnreadCount();
+				}
+			} catch (e) {
+				// ignore
+			}
 
 			// If this conversation is open, re-render messages so indexes stay correct
 			if (state.contactUserId === foundUserId) {
 				injectMessages(foundUserId);
+				// Refresh pinned banner after messages re-rendered
+				try {
+					updatePinnedMessage();
+				} catch (e) {
+					/* ignore */
+				}
 			}
 
 			// Update contact card last-message preview
@@ -1957,7 +2083,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 		);
 
 	if (archiveContactBtns.length > 0)
-		archiveContactBtns.forEach((btn) => 
+		archiveContactBtns.forEach((btn) =>
 			btn.addEventListener("click", () => {
 				const friend = contacts.find(
 					(c) => c.id === state.contactUserId,
@@ -1966,7 +2092,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 				_onContactAction("archive", friend.id);
 				state.skipShowChatOnProfileClose = true;
 				closeProfile();
-				closeChat();
+				setTimeout(() => closeChat(), 350);
 			}),
 		);
 

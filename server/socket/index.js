@@ -101,6 +101,11 @@ export function initSocket(httpServer) {
 				forwardedText,
 			} = data;
 
+			// Basic message validation / DoS prevention
+			if (!text?.trim() || text.trim().length > 4000) {
+				return callback?.({ error: "Message too long" });
+			}
+
 			if (!text || typeof text !== "string" || !text.trim() || text.trim().length > MAX_MESSAGE_LENGTH) {
 				return callback?.({ error: "Invalid data" });
 			}
@@ -308,12 +313,55 @@ export function initSocket(httpServer) {
 					data: { isDeleted: true },
 				});
 
-				socket.to(`conversation:${message.conversationId}`).emit(
+				// If the message was not seen by recipients, decrement their unread counts
+				// so contact previews stay in sync. This mirrors the increment logic
+				// used when messages are sent.
+				try {
+					if (!message.isSeen) {
+						const recipientContacts = await prisma.contact.findMany({
+							where: { conversationId: message.conversationId, ownerId: { not: socket.userId } },
+							select: { id: true },
+						});
+						if (recipientContacts.length > 0) {
+							await prisma.contact.updateMany({
+								where: { id: { in: recipientContacts.map((c) => c.id) }, unreadCount: { gt: 0 } },
+								data: { unreadCount: { decrement: 1 } },
+							});
+						}
+					}
+				} catch (e) {
+					console.error('decrement unread on delete failed', e);
+				}
+
+				// Emit to entire conversation room (include sender's other sockets)
+				io.to(`conversation:${message.conversationId}`).emit(
 					"message:deleted",
 					{
 						messageId,
 					},
 				);
+
+				// Also deliver delete event directly to connected sockets of recipients
+				try {
+					const recipientContacts = await prisma.contact.findMany({
+						where: { conversationId: message.conversationId, ownerId: { not: socket.userId } },
+						select: { ownerId: true },
+					});
+					const usersInRoom = convoOnline.get(message.conversationId) || new Set();
+					const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
+					for (const uid of recipientUserIds) {
+						if (usersInRoom.has(uid)) continue;
+						const sidSet = userSockets.get(uid) || new Set();
+						for (const sid of sidSet) {
+							const s = io.sockets.sockets.get(sid);
+							if (s) {
+								s.emit('message:deleted', { messageId });
+							}
+						}
+					}
+				} catch (e) {
+					console.error('deliver deleted to direct sockets failed', e);
+				}
 
 				callback?.({ success: true });
 			} catch (err) {
@@ -513,7 +561,6 @@ export function initSocket(httpServer) {
 					for (const cid of socket.joinedConversations) {
 						const set = convoOnline.get(cid);
 						if (!set) continue;
-						fri
 						let stillPresent = false;
 						const otherSids = userSockets.get(socket.userId) || new Set();
 						for (const sid of otherSids) {

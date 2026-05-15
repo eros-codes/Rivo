@@ -12,6 +12,7 @@ import {
 	moveToContacts,
 	sortActiveChats,
 	sortContacts,
+	updateTotalUnreadCount,
 } from "./chat-logic.js";
 import { emitDeleteMessage, emitPinMessage } from "./socket.js";
 import { parseSvg } from "../../../utils/svg.js";
@@ -72,6 +73,12 @@ export function openContextMenu(msg, e) {
 		editMsg0.style.display = !forwardedFrom && isOwner ? "flex" : "none";
 	}
 
+	// Hide delete for incoming messages (only show for owner's messages)
+	const deleteMsg0 = document.querySelectorAll(".delete-message")[0];
+	if (deleteMsg0) {
+		deleteMsg0.style.display = isOwner ? "flex" : "none";
+	}
+
 	// Position menu
 	const rect = msg.getBoundingClientRect();
 	const menuHeight = _dom.messageMenu.getBoundingClientRect().height;
@@ -108,6 +115,8 @@ export function closeContextMenu() {
 	_dom.chatOverlay.style.opacity = 0;
 	const editMsg0c = _dom.editMsg?.[0];
 	if (editMsg0c) editMsg0c.style.display = "flex";
+	const deleteMsg0c = document.querySelectorAll(".delete-message")[0];
+	if (deleteMsg0c) deleteMsg0c.style.display = "flex";
 	_dom.messageMenu.style.display = "none";
 	_dom.chatOverlay.style.display = "none";
 	if (state.selectedMsg) {
@@ -145,10 +154,41 @@ export function deleteMessage(msg, index) {
 					);
 				if (removeIdx === -1) removeIdx = idx;
 
-				// Remove element from DOM and data structures
+				// Determine which message object will be removed so we can
+				// adjust unread counts for incoming, unseen messages.
+				let removedCandidate = null;
+				if (removeIdx !== -1 && removeIdx < currentArr.length) {
+					removedCandidate = currentArr[removeIdx];
+				} else if (deletedMsg) {
+					removedCandidate = deletedMsg;
+				}
+
+				// Update DOM and data structures
 				msg.remove();
 				if (removeIdx !== -1 && removeIdx < currentArr.length) {
 					currentArr.splice(removeIdx, 1);
+				}
+
+				// If we removed an incoming message that was not seen by the
+				// current user, decrement the unread counter for this contact.
+				try {
+					const friend = contacts.find(
+						(c) => c.id === state.contactUserId,
+					);
+					if (
+						friend &&
+						removedCandidate &&
+						!removedCandidate.user &&
+						!removedCandidate.isSeen
+					) {
+						friend.unreadCount = Math.max(
+							0,
+							(friend.unreadCount || 0) - 1,
+						);
+						updateTotalUnreadCount();
+					}
+				} catch (e) {
+					/* ignore unread update errors */
 				}
 				currentArr.forEach((m, i) => (m.index = i));
 

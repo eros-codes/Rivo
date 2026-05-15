@@ -29,6 +29,8 @@ let _dom = {};
   */
 export function initSelection(dom) {
 	_dom = dom;
+	// ensure we have a reference to the toolbar delete button
+	_dom.selectionDeleteBtn = dom.selectionDeleteBtn || document.querySelector(".selection-delete-btn");
 }
 
 // ─── Enter / cancel selection mode ───────────────────────────────────────────
@@ -55,15 +57,42 @@ export function cancelSelection() {
 
 	_dom.messageContainer.style.display = "flex";
 	_dom.selectionToolbar.style.display = "none";
+	// reset delete button visibility
+	if (_dom.selectionDeleteBtn) _dom.selectionDeleteBtn.style.display = "flex";
 }
 
 export function updateSelectionCount() {
 	_dom.selectionCount.textContent = `${state.selectedMessages.length} selected`;
+
+	// Hide selection delete button if any selected message is incoming (not owned by current user)
+	let anyIncoming = false;
+	const arr = messages[state.contactUserId] || [];
+	for (const idx of state.selectedMessages) {
+		const m = arr[idx];
+		if (m && !m.user) {
+			anyIncoming = true;
+			break;
+		}
+	}
+	if (_dom.selectionDeleteBtn) {
+		_dom.selectionDeleteBtn.style.display = anyIncoming ? "none" : "flex";
+	}
 }
 
 // ─── Bulk delete ──────────────────────────────────────────────────────────────
 export function handleBulkDelete() {
 	const msgsToDelete = [...state.selectedMessages].sort((a, b) => b - a);
+
+	// Prevent deleting if selection contains only incoming messages
+	const allIncoming = msgsToDelete.every((idx) => {
+		const msg = messages[state.contactUserId]?.[idx];
+		return msg && !msg.user;
+	});
+	if (allIncoming) {
+		showToast("You can only delete your own messages");
+		cancelSelection();
+		return;
+	}
 
 	const friend = contacts.find((c) => c.id === state.contactUserId);
 	// save before state changes for undo

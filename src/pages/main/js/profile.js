@@ -312,10 +312,10 @@ export function handleDeleteChat() {
 			contact.lastMessageDate = "";
 			contact.lastMessageSeen = true;
 			contact.unreadCount = 0;
-			contact.isPinned = false;
+			// preserve pinned state: do not clear contact.isPinned here
 			// contact.isInChat removed from model; no local flag to set
 
-			if (contact.isSaved) {
+			if (contact.isSaved || contact.isPinned) {
 				// Ensure saved convo stays in active chats (prepend to top)
 				try {
 					const existingActive = _dom.activeChatsContainer?.querySelector(
@@ -527,9 +527,14 @@ export function handleDeleteContact() {
 		card.style.pointerEvents = "none";
 	}
 
+	// Prevent profile close from re-opening the chat on mobile; close profile first,
+	// then close the chat after the profile slide-out animation completes.
+	state.skipShowChatOnProfileClose = true;
 	closeProfile();
-	closeChat();
-	showToast("Contact deleted", _dom.deleteIcon, true);
+	setTimeout(() => {
+		closeChat();
+		showToast("Contact deleted", _dom.deleteIcon, true);
+	}, 350);
 
 	const timer = setTimeout(() => {
 		if (card) card.remove();

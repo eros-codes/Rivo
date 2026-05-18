@@ -121,6 +121,13 @@ router.patch("/me", requireAuth, async (req, res) => {
 			},
 		});
 
+		// Broadcast profile update when relevant (e.g., avatar cleared)
+		try {
+			if (globalThis.__rivo_io) globalThis.__rivo_io.emit('user:updated', { id: user.id, name: user.name, username: user.username, profilePics: user.profilePics });
+		} catch (e) {
+			/* ignore broadcast failures */
+		}
+
 		return res.json(user);
 	} catch (err) {
 		console.error(err);
@@ -215,19 +222,50 @@ router.post("/me/avatar", requireAuth, upload.single("avatar"), async (req, res)
         return res.status(400).json({ error: "No file uploaded" });
     }
 
+	// Validate magic bytes (first 4 bytes) to ensure uploaded file is an image
+	const filePath = req.file.path;
+	try {
+		const buf = Buffer.alloc(4);
+		const fd = fs.openSync(filePath, 'r');
+		fs.readSync(fd, buf, 0, 4, 0);
+		fs.closeSync(fd);
+
+		const isJpeg = buf[0] === 0xFF && buf[1] === 0xD8;
+		const isPng = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
+		const isGif = buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46;
+		const isWebp = buf[0] === 0x52 && buf[1] === 0x49; // 'RI' from 'RIFF'
+
+		if (!isJpeg && !isPng && !isGif && !isWebp) {
+			try { fs.unlinkSync(filePath); } catch (e) { /* ignore */ }
+			return res.status(400).json({ error: "Invalid image file" });
+		}
+	} catch (e) {
+		try { fs.unlinkSync(filePath); } catch (er) { /* ignore */ }
+		return res.status(400).json({ error: "Invalid image file" });
+	}
+
 	const url = `/assets/images/user-profiles/${req.userId}.jpg`;
 
-    try {
-        await prisma.user.update({
-            where: { id: req.userId },
-            data: { profilePics: [url] },
-        });
+	try {
+		const updated = await prisma.user.update({
+			where: { id: req.userId },
+			data: { profilePics: [url] },
+			select: { id: true, name: true, username: true, profilePics: true },
+		});
 
-        return res.json({ url });
-    } catch (err) {
-        console.error(err);
-        return res.status(500).json({ error: "Server error" });
-    }
+		// Broadcast profile update to connected clients so other users see the
+		// new avatar immediately.
+		try {
+			if (globalThis.__rivo_io) globalThis.__rivo_io.emit('user:updated', updated);
+		} catch (e) {
+			/* ignore broadcast failures */
+		}
+
+		return res.json({ url });
+	} catch (err) {
+		console.error(err);
+		return res.status(500).json({ error: "Server error" });
+	}
 });
 
 export default router;

@@ -1,6 +1,7 @@
 import { updatePrivacy, deleteAccount, changePassword, logout } from "./api.js";
 import { showToast } from "./ui.js";
 import { applyAccentColor, applyWallpaper } from "../../../utils/theme.js";
+import { updateThemeImages } from "../../../utils/dom.js";
 
 let _dom = {};
 let _currentUser = null;
@@ -35,6 +36,8 @@ export function initSettings(dom, currentUser) {
 
 			const accent = localStorage.getItem("rivo-accent") || "#fa5f1a";
 			applyAccentColor(accent);
+			// update any theme-sensitive images immediately
+			try { updateThemeImages(); } catch (e) { /* ignore */ }
 		});
 	}
 
@@ -416,6 +419,15 @@ export function initSettings(dom, currentUser) {
 				}
 			});
 		}
+
+		// support Enter key inside the change-password form
+		if (_dom.settingsChangePasswordForm) {
+			_dom.settingsChangePasswordForm.addEventListener("submit", (e) => {
+				e.preventDefault();
+				const btn = _dom.settingsChangePasswordSubmit;
+				if (btn) btn.click();
+			});
+		}
 	}
 
 	// Archived
@@ -429,6 +441,9 @@ export function initSettings(dom, currentUser) {
 	if (_dom.settingsThemeValue)
 		_dom.settingsThemeValue.textContent =
 			theme === "dark" ? "Dark" : "Light";
+
+	// ensure theme-aware images on init
+	try { updateThemeImages(); } catch (e) { /* ignore */ }
 }
 
 export function openSettings(user) {

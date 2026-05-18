@@ -87,6 +87,17 @@
 		inset 0 1px 0 rgba(255, 255, 255, 0.1);
 	display: block;
 }
+.edit-profile-avatar.initial-avatar {
+    width: 7rem;
+    height: 7rem;
+    font-size: 2rem;
+    border: 3px solid var(--background-color);
+    box-shadow:
+        0 4px 20px rgba(0, 0, 0, 0.3),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+	text-align: center;
+	line-height: 3.2;
+}
 .edit-profile-avatar-btn {
 	position: absolute;
 	bottom: 0.25rem;

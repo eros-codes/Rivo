@@ -78,6 +78,22 @@
 	border: 1px solid var(--chat-time);
   transform: translateX(1px);
 }
+.active-chat-profile.initial-avatar {
+    width: 4.5rem;
+    height: 4.5rem;
+    font-size: 1.4rem;
+}
+.active-chat-saved-icon {
+    width: 4.5rem;
+    height: 4.5rem;
+    border-radius: 50%;
+    background: linear-gradient(135deg, transparent, rgba(255, 255, 255, 0.2));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    flex-shrink: 0;
+}
 .active-chat-info {
 	display: flex;
 	flex-direction: column;
@@ -156,18 +172,6 @@
 }
 .online-active-chat {
 	border: 0.2rem solid var(--online);
-}
-
-.active-chat-saved-icon {
-    width: 4.5rem;
-    height: 4.5rem;
-    border-radius: 50%;
-    background: linear-gradient(135deg, transparent, rgba(255, 255, 255, 0.2));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #fff;
-    flex-shrink: 0;
 }
 
 @media all and (max-width: 700px) {

@@ -91,6 +91,7 @@ import {
 } from "./js/socket.js";
 import { loadThemeFromStorage } from "../../utils/theme.js";
 import { parseSvg } from "../../utils/svg.js";
+import { safeSrc, updateThemeImages, observeThemeChanges, createAvatarElement, mountAvatar, refreshUserAvatars } from "../../utils/dom.js";
 const _notifQueue = new Set();
 // expose to other modules (e.g., chat) for notification deduplication
 try { window._notifQueue = _notifQueue; } catch (e) { /* ignore */ }
@@ -208,7 +209,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 					activeChatsContainer.appendChild(createActiveChatCard(friend));
 				}
 
-				chatProfilePic.src = friend.profilePics?.[0] || "/assets/images/profile.jpeg";
+				mountAvatar(chatProfilePicture, {
+					name: friend.name,
+					nickname: friend.nickname,
+					profilePics: friend.profilePics,
+					className: 'chat-profile-picture',
+					isOnline: friend.isOnline,
+				});
 				chatName.textContent = friend.nickname || friend.name;
 				closeSettings();
 				openChat(true);
@@ -267,6 +274,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 	if (theme === "dark") document.body.classList.add("dark-mode");
 
 	loadThemeFromStorage();
+
+	// Ensure any static/default profile images reflect the active theme
+	try { updateThemeImages(); observeThemeChanges(); } catch (e) { /* ignore */ }
 
 	// ─── DOM references ───────────────────────────────────────────────────────
 	const logoutBtn = document.getElementById("logout");
@@ -518,6 +528,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 		chatHeader,
 		emptyStateEl,
 		chatProfilePicture,
+		onContactAction: _onContactAction,
 	});
 
 	initChatLogic({
@@ -653,8 +664,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 			runSearch("");
 
 			state.contactUserId = contact.id;
-			chatProfilePic.src =
-				contact.profilePics[0] || "/assets/images/profile.jpeg";
+			mountAvatar(chatProfilePicture, {
+				name: contact.name,
+				nickname: contact.nickname,
+				profilePics: contact.profilePics,
+				className: 'chat-profile-picture',
+				isOnline: contact.isOnline,
+			});
 			chatName.textContent = contact.nickname || contact.name;
 			openChat(true);
 			if (contact.conversationId) {
@@ -785,8 +801,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 			contactsContainer.appendChild(card);
 
 			// set chat header immediately so opening the chat shows correct info
-			chatProfilePic.src =
-				normalized.profilePics[0] || "/assets/images/profile.jpeg";
+			mountAvatar(chatProfilePicture, {
+				name: normalized.name,
+				nickname: normalized.nickname,
+				profilePics: normalized.profilePics,
+				className: 'chat-profile-picture',
+				isOnline: normalized.isOnline,
+			});
 			chatName.textContent = normalized.nickname || normalized.name;
 
 			state.contactUserId = normalized.id;
@@ -796,6 +817,33 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}
 		},
 	);
+
+	// Handler invoked when server notifies that a user's profile changed
+	function _handleUserUpdated(user) {
+		try {
+			// Keep in-memory contact objects in sync
+			for (const c of contacts) {
+				if (c.id === user.id) {
+					c.profilePics = user.profilePics || [];
+					if (user.name) c.name = user.name;
+					if (user.username) c.username = user.username;
+					if (user.username) c.nickname = user.username;
+				}
+			}
+			// Update DOM avatars immediately
+			try { refreshUserAvatars(user); } catch (e) { /* ignore */ }
+
+			// If the currently open chat is with this user, update header
+			if (state.contactUserId && Number(state.contactUserId) === Number(user.id)) {
+				const friend = contacts.find((c) => c.id === Number(user.id));
+				if (friend && typeof chatName !== 'undefined' && chatName) {
+					chatName.textContent = friend.nickname || friend.name || "";
+				}
+			}
+		} catch (e) {
+			/* ignore handler failures */
+		}
+	}
 
 	initSocket(
 		// new message
@@ -963,6 +1011,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 				}
 			}
 		},
+		_handleUserUpdated
 	);
 
 	// Rejoin active conversation after socket reconnect and emit leave on unload
@@ -1247,6 +1296,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 			} catch (e) {
 				// ignore
 			}
+			// Try to unsubscribe from push before logging out
+			try {
+				if (window.pushUnsubscribe) await window.pushUnsubscribe();
+			} catch (e) {
+				// push unsubscribe failed (suppressed)
+			}
 			await apiLogout();
 			window.location.href = "../auth/auth.html";
 		});
@@ -1334,7 +1389,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 			updateTotalUnreadCount();
 
 			if (friend.isSaved) {
-				chatProfilePic.style.display = "none";
+				// hide any current avatar element and show saved-icon
+				const _imgEl = chatProfilePicture.querySelector('img, .contact-profile, .initial-avatar');
+				if (_imgEl) _imgEl.style.display = "none";
 				chatProfilePicture.classList.add("saved-icon");
 				const existingSavedIcon = chatProfilePicture.querySelector(
 					".saved-icon-svg",
@@ -1345,16 +1402,23 @@ document.addEventListener("DOMContentLoaded", async function () {
 					_savedIcon.classList.add("saved-icon-svg");
 					chatProfilePicture.appendChild(_savedIcon);
 				}
-				chatProfilePic.src = "";
+				if (_imgEl && _imgEl.tagName && _imgEl.tagName.toLowerCase() === 'img') _imgEl.src = "";
 			} else {
-				chatProfilePic.style.display = "";
+				// ensure avatar container shows avatar and remove saved icon
+				const _imgEl = chatProfilePicture.querySelector('img, .contact-profile, .initial-avatar');
+				if (_imgEl) _imgEl.style.display = "";
 				chatProfilePicture.classList.remove("saved-icon");
 				const existingSavedIcon = chatProfilePicture.querySelector(
 					".saved-icon-svg",
 				);
 				if (existingSavedIcon) existingSavedIcon.remove();
-				chatProfilePic.src =
-					friend.profilePics?.[0] || "/assets/images/profile.jpeg";
+				mountAvatar(chatProfilePicture, {
+					name: friend.name,
+					nickname: friend.nickname,
+					profilePics: friend.profilePics,
+					className: 'chat-profile-picture',
+					isOnline: friend.isOnline,
+				});
 			}
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
@@ -1445,8 +1509,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 			card.remove();
 			activeChatsContainer.appendChild(createActiveChatCard(friend));
 
-			chatProfilePic.src =
-				friend.profilePics[0] || "/assets/images/profile.jpeg";
+						mountAvatar(chatProfilePicture, {
+							name: friend.name,
+							nickname: friend.nickname,
+							profilePics: friend.profilePics,
+							className: 'chat-profile-picture',
+							isOnline: friend.isOnline,
+						});
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 
@@ -1852,9 +1921,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 			].user
 				? "You"
 				: contacts.find((c) => c.id === state.contactUserId)?.name;
-
-			chatProfilePic.src =
-				friend.profilePics[0] || "/assets/images/profile.jpeg";
+						mountAvatar(chatProfilePicture, {
+							name: friend.name,
+							nickname: friend.nickname,
+							profilePics: friend.profilePics,
+							className: 'chat-profile-picture',
+							isOnline: friend.isOnline,
+						});
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 			if (friend.isBlocked) {
@@ -2246,9 +2319,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 							const friend = contacts.find((c) => c.id === id);
 							if (!friend) return;
 							state.contactUserId = id;
-							chatProfilePic.src =
-								friend.profilePics?.[0] ||
-								"/assets/images/profile.jpeg";
+							mountAvatar(chatProfilePicture, {
+								name: friend.name,
+								nickname: friend.nickname,
+								profilePics: friend.profilePics,
+								className: 'chat-profile-picture',
+								isOnline: friend.isOnline,
+							});
 							chatName.textContent =
 								friend.nickname || friend.name;
 							openChat(true);

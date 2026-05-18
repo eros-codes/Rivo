@@ -1,5 +1,6 @@
 /* global Cropper */
 import { updateMe, uploadAvatar, deleteAvatar } from "./api.js";
+import { safeSrc, mountAvatar, refreshUserAvatars } from "../../../utils/dom.js";
 let _dom = {};
 let _currentUser = null;
 let _cropper = null;
@@ -66,9 +67,28 @@ export function initEditProfile(dom) {
 			async (blob) => {
 				const formData = new FormData();
 				formData.append("avatar", blob, "avatar.jpg");
-				const res = await uploadAvatar(formData);
-				if (res.url) {
-					_dom.editProfileAvatar.src = res.url + "?t=" + Date.now();
+				const wrapper = _dom.editProfileAvatar?.closest?.('.edit-profile-avatar-wrapper');
+				if (wrapper) wrapper.classList.add('uploading');
+				let res;
+				try {
+					res = await uploadAvatar(formData);
+				} finally {
+					if (wrapper) wrapper.classList.remove('uploading');
+				}
+				if (res && res.url) {
+					// prefer mounting into the wrapper so we always replace the
+					// current avatar element (handles cases where the img was
+					// previously replaced by a div)
+					const wrapper = (_dom.editProfileAvatar && _dom.editProfileAvatar.closest)
+						? _dom.editProfileAvatar.closest('.edit-profile-avatar-wrapper')
+						: document.querySelector('.edit-profile-avatar-wrapper');
+					const target = wrapper || _dom.editProfileAvatar;
+					mountAvatar(target, {
+						name: _currentUser?.name || "",
+						nickname: _currentUser?.username || "",
+						profilePics: [res.url + "?t=" + Date.now()],
+						className: 'edit-profile-avatar',
+					});
 					if (_currentUser) _currentUser.profilePics = [res.url];
 					let stored = {};
 					try {
@@ -81,6 +101,8 @@ export function initEditProfile(dom) {
 						JSON.stringify({ ...stored, profilePics: [res.url] }),
 					);
 					_dom.avatarCropDialog.close();
+					// update avatars across the UI immediately
+					try { refreshUserAvatars(_currentUser); } catch (e) { /* ignore */ }
 				} else {
 					alert(res?.error || "Upload failed. Please try again.");
 				}
@@ -96,9 +118,27 @@ export function initEditProfile(dom) {
 	});
 
 	_dom.deleteAvatarBtn.addEventListener("click", async () => {
-		await deleteAvatar();
-		_dom.editProfileAvatar.src = "";
-		if (_currentUser) _currentUser.profilePics = [];
+		const wrapper = _dom.editProfileAvatar?.closest?.('.edit-profile-avatar-wrapper');
+		if (wrapper) wrapper.classList.add('uploading');
+		try {
+			await deleteAvatar();
+			// render initial-letter fallback
+			const wrapperTarget = (_dom.editProfileAvatar && _dom.editProfileAvatar.closest)
+				? _dom.editProfileAvatar.closest('.edit-profile-avatar-wrapper')
+				: document.querySelector('.edit-profile-avatar-wrapper');
+			const target = wrapperTarget || _dom.editProfileAvatar;
+			mountAvatar(target, {
+				name: _currentUser?.name || "",
+				nickname: _currentUser?.username || "",
+				profilePics: [],
+				className: 'edit-profile-avatar',
+			});
+			if (_currentUser) _currentUser.profilePics = [];
+			// update avatars across the UI immediately
+			try { refreshUserAvatars(_currentUser); } catch (e) { /* ignore */ }
+		} finally {
+			if (wrapper) wrapper.classList.remove('uploading');
+		}
 		let stored = {};
 		try {
 			stored = JSON.parse(localStorage.getItem("user") || "{}");
@@ -118,9 +158,16 @@ export function openEditProfile(user) {
 	_dom.editUsernameInput.value = user.username || "";
 	_dom.editBioInput.value = user.bio || "";
 	if (_dom.editProfileAvatar) {
-		_dom.editProfileAvatar.src =
-			user.profilePics?.[0] ||
-			"/assets/images/profile.jpeg";
+		const wrapperTarget = (_dom.editProfileAvatar && _dom.editProfileAvatar.closest)
+			? _dom.editProfileAvatar.closest('.edit-profile-avatar-wrapper')
+			: document.querySelector('.edit-profile-avatar-wrapper');
+		const target = wrapperTarget || _dom.editProfileAvatar;
+		mountAvatar(target, {
+			name: user.name,
+			nickname: user.username,
+			profilePics: user.profilePics,
+			className: 'edit-profile-avatar',
+		});
 	}
 
 	if (window.innerWidth > 700) {

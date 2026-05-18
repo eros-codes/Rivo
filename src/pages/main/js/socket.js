@@ -26,6 +26,7 @@ export function initSocket(
 	onTypingStart,
 	onTypingStop,
 	onMessagePinned,
+	onUserUpdated,
 ) {
 	socket = io({
 		withCredentials: true,
@@ -59,17 +60,23 @@ export function initSocket(
 		onMessagePinned?.(data);
 	});
 
+	socket.on("user:updated", (user) => {
+		try {
+			onUserUpdated?.(user);
+		} catch (e) {
+			/* ignore handler errors */
+		}
+	});
+
 	socket.on("typing:start", ({ userId }) => onTypingStart?.(userId));
 
 	socket.on("typing:stop", ({ userId }) => onTypingStop?.(userId));
 
 	socket.on("connect", () => {
-		console.log("Socket connected");
 		_hideStatus();
 	});
 
 	socket.on("disconnect", () => {
-		console.log("Socket disconnected");
 		_showStatus("Connecting...");
 	});
 

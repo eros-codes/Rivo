@@ -1,6 +1,7 @@
 import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
 import prisma from "../prisma.js";
+import push from "../utils/push.js";
 
 export function initSocket(httpServer) {
 	const allowedOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"]);
@@ -67,7 +68,7 @@ export function initSocket(httpServer) {
 	// ─── Connection ───────────────────────────────────────────────────────────
 	io.on("connection", async (socket) => {
 		try {
-			console.log(`User ${socket.userId} connected`);
+			// connection logged (suppressed in production)
 			await prisma.user.update({
 				where: { id: socket.userId },
 				data: { isOnline: true },
@@ -102,10 +103,6 @@ export function initSocket(httpServer) {
 			} = data;
 
 			// Basic message validation / DoS prevention
-			if (!text?.trim() || text.trim().length > 4000) {
-				return callback?.({ error: "Message too long" });
-			}
-
 			if (!text || typeof text !== "string" || !text.trim() || text.trim().length > MAX_MESSAGE_LENGTH) {
 				return callback?.({ error: "Invalid data" });
 			}
@@ -221,6 +218,27 @@ export function initSocket(httpServer) {
 								s.emit("message:new", message);
 							}
 						}
+					}
+					// Also trigger web-push for recipients not in the conversation room
+					try {
+						const recipientUserIdsSet = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
+						const offlineTargetIds = recipientUserIdsSet.filter((uid) => {
+							// Only consider user offline if not present in room and no active sockets
+							const hasSockets = userSockets.has(uid) && userSockets.get(uid).size > 0;
+							return !usersInRoom.has(uid) && !hasSockets;
+						});
+						for (const uid of offlineTargetIds) {
+							// fire-and-forget: suppress push errors to avoid noisy logs
+							push.sendNotificationToUser(uid, {
+								title: message.sender?.name || 'New message',
+								body: typeof message.text === 'string' ? message.text.slice(0, 200) : '',
+								data: { conversationId: conversationId },
+							}).catch(() => {
+								/* push error suppressed */
+							});
+						}
+					} catch (e) {
+						// push notify failed (suppressed)
 					}
 				} catch (e) {
 					console.error(
@@ -505,8 +523,8 @@ export function initSocket(httpServer) {
 		});
 
 		// ─── Disconnect ────────────────────────────────────────────────────────
-		socket.on("disconnect", async () => {
-			console.log(`User ${socket.userId} disconnected`);
+			socket.on("disconnect", async () => {
+				// disconnect logged (suppressed)
 
 			const lastSeen = new Date();
 			try {
@@ -692,6 +710,15 @@ export function initSocket(httpServer) {
 			}
 		});
 	});
+
+	// Expose io instance so HTTP route handlers can broadcast events when
+	// users update their profile (avatar/name/etc.). This keeps the
+	// change small and avoids large refactors to pass `io` through.
+	try {
+		globalThis.__rivo_io = io;
+	} catch (e) {
+		// ignore if environment doesn't allow globalThis assignment
+	}
 
 	return io;
 }

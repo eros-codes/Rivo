@@ -125,7 +125,7 @@
 						<span class="unread-message-count">5</span>
 					</span>
 					<span class="chat-profile">
-						<img class="chat-profile-picture" src="/assets/images/profile.jpeg" alt="profile-picture" />
+						<img class="chat-profile-picture" src="/assets/images/profile-light.JPG" alt="profile-picture" />
 					</span>
 					<span class="chat-name"></span>
 					<span class="chat-typing-status"></span>
@@ -318,9 +318,9 @@
 
 		<div class="contact-profile-details">
 			<div class="contact-detail-pic">
-				<div class="detail-picture">
-					<img src="/assets/images/profile.jpeg" alt="" />
-				</div>
+					<div class="detail-picture">
+						<img src="/assets/images/profile-light.JPG" alt="" />
+					</div>
 				<button>
 					<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
 						<path fill="currentColor"
@@ -380,7 +380,7 @@
 					</svg>
 				</button>
 				<div class="edit-profile-avatar-wrapper">
-					<img class="edit-profile-avatar" src="/assets/images/profile.jpeg" alt="" />
+					<img class="edit-profile-avatar" src="/assets/images/profile-light.JPG" alt="" />
 					<button class="edit-profile-avatar-btn">
 						<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
 							<path fill="currentColor"
@@ -586,12 +586,12 @@
 						</svg><span>Change Password</span>
 					</div>
 				</div>
-				<div class="settings-change-password-form" id="settings-change-password-form" style="display: none">
+				<form class="settings-change-password-form" id="settings-change-password-form" style="display: none" novalidate>
 					<div class="settings-change-password-field">
 						<label>Your password must be at least 8 characters long.</label>
 						<div class="password-wrapper">
 							<input type="password" id="settings-current-password" class="settings-password-input"
-								placeholder="Current password" />
+								placeholder="Current password" autocomplete="current-password" />
 							<button type="button" class="password-toggle" aria-label="Show password">
 								<svg class="eye-closed" xmlns="http://www.w3.org/2000/svg" width="20" height="20"
 									viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -611,7 +611,7 @@
 					<div class="settings-change-password-field">
 						<div class="password-wrapper">
 							<input type="password" id="settings-new-password" class="settings-password-input"
-								placeholder="New password" />
+								placeholder="New password" autocomplete="new-password" />
 							<button type="button" class="password-toggle" aria-label="Show password">
 								<svg class="eye-closed" xmlns="http://www.w3.org/2000/svg" width="20" height="20"
 									viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -631,7 +631,7 @@
 					<div class="settings-change-password-field">
 						<div class="password-wrapper">
 							<input type="password" id="settings-confirm-password" class="settings-password-input"
-								placeholder="Confirm new password" />
+								placeholder="Confirm new password" autocomplete="new-password" />
 							<button type="button" class="password-toggle" aria-label="Show password">
 								<svg class="eye-closed" xmlns="http://www.w3.org/2000/svg" width="20" height="20"
 									viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -649,14 +649,14 @@
 						</div>
 					</div>
 					<div class="settings-change-password-actions">
-						<button class="settings-change-password-submit" id="settings-change-password-submit">
+						<button type="button" class="settings-change-password-submit" id="settings-change-password-submit">
 							Change Password
 						</button>
-						<button class="settings-send-reset-email" id="settings-send-reset-email">
+						<button type="button" class="settings-send-reset-email" id="settings-send-reset-email">
 							Send reset email
 						</button>
 					</div>
-				</div>
+				</form>
 				<div class="settings-row settings-row-danger" id="settings-delete-account">
 					<div class="settings-row-left">
 						<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24">
@@ -737,6 +737,7 @@
 	<script src="/js/cropper.min.js"></script>
 	<script type="module" src="main.js"></script>
 	<script type="module" src="/js/index.js"></script>
+	<script src="/js/register-sw.js"></script>
 </body>
 
 </html>

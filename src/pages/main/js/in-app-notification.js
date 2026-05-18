@@ -1,4 +1,5 @@
 // Lightweight in-app notification module
+import { safeSrc, mountAvatar } from "../../../utils/dom.js";
 const QUEUE = [];
 let _container = null;
 let _notif = null;
@@ -17,7 +18,7 @@ export function initInAppNotification() {
   _container.innerHTML = `
     <div id="in-app-notif" class="in-app-notif" aria-hidden="true" role="button" tabindex="0">
       <div class="notif-card">
-        <img class="notif-avatar" src="/assets/images/profile.jpeg" alt="avatar">
+        <div class="notif-avatar"></div>
         <div class="notif-body">
           <div class="notif-title"></div>
           <div class="notif-text"></div>
@@ -115,7 +116,12 @@ function _showNext() {
 }
 
 function _render(contact, message) {
-  _avatar.src = (contact.profilePics && contact.profilePics[0]) || '/assets/images/profile.jpeg';
+  mountAvatar(_avatar, {
+    name: contact.name,
+    nickname: contact.nickname,
+    profilePics: contact.profilePics,
+    className: 'notif-avatar',
+  });
   _title.textContent = contact.nickname || contact.name || '';
   _text.textContent = message.text || '';
   _notif.dataset.contactId = String(contact.id || contact.contactId || '');

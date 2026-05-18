@@ -3,6 +3,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import prisma from "../prisma.js";
 import crypto from "crypto";
+import push from "../utils/push.js";
 
 const router = Router();
 
@@ -129,6 +130,20 @@ router.post("/login", async (req, res) => {
 
 // ─── Logout ───────────────────────────────────────────────────────────────────
 router.post("/logout", (req, res) => {
+    // Try to determine user from token and remove server-side subscriptions
+    try {
+        const token = req.cookies?.token;
+        if (token) {
+            try {
+                const payload = jwt.verify(token, process.env.JWT_SECRET);
+                const userId = payload.userId;
+                if (userId) {
+                    try { push.removeAllSubscriptions(userId); } catch (e) { /* ignore */ }
+                }
+            } catch (e) { /* invalid token */ }
+        }
+    } catch (e) { /* ignore */ }
+
     // Clear cookie-based tokens
     res.clearCookie("token");
     res.clearCookie("csrfToken");

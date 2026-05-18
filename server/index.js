@@ -4,6 +4,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { createServer } from "http";
 import { resolve } from "path";
+import { existsSync } from "fs";
 import { initSocket } from "./socket/index.js";
 import * as Sentry from "@sentry/node";
 
@@ -12,6 +13,7 @@ import userRoutes from "./routes/users.js";
 import contactRoutes from "./routes/contacts.js";
 import conversationRoutes from "./routes/conversations.js";
 import messageRoutes from "./routes/messages.js";
+import pushRoutes from "./routes/push.js";
 
 dotenv.config();
 
@@ -26,7 +28,14 @@ const app = express();
 const httpServer = createServer(app);
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
-const allowedOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"]);
+// Allow local dev and production domains (add production hosts here)
+const allowedOrigins = new Set([
+	"http://localhost:3000",
+	"http://127.0.0.1:3000",
+	"https://rivo.ir",
+	"https://www.rivo.ir",
+	"https://chat.rivo.ir",
+]);
 app.use(
 	cors({
 		origin: (origin, callback) => {
@@ -72,13 +81,36 @@ function csrfProtection(req, res, next) {
 app.use(csrfProtection);
 app.use(express.static("public"));
 app.use("/public", express.static("public"));
-app.use("/src", express.static("src"));
-app.use("/node_modules", express.static("node_modules"));
 
-// Serve root index.html from project root (useful for local dev)
-app.get("/", (req, res) => {
-	res.sendFile(resolve("index.html"));
-});
+if (process.env.NODE_ENV !== "production") {
+	// Expose source and node_modules only in development for local debugging
+	app.use("/src", express.static("src"));
+	app.use("/node_modules", express.static("node_modules"));
+}
+
+// Serve landing assets: prefer public, fall back to src (register both so missing files cascade)
+{
+	const publicLandingDir = resolve("public/landing");
+	const srcLandingDir = resolve("src/pages/landing");
+	// always register public first (it may be empty), then src as fallback
+	app.use('/landing', express.static(publicLandingDir));
+	app.use('/landing', express.static(srcLandingDir));
+}
+
+// Serve chat app assets: prefer public/chat, fall back to src/pages/main (so
+// production can serve the main app without exposing whole /src)
+{
+	const publicChat = resolve("public/chat");
+	const srcMain = resolve("src/pages/main");
+	app.use('/chat', express.static(publicChat));
+	app.use('/chat', express.static(srcMain));
+}
+
+// Serve auth pages from src in case they are not copied to public in production
+{
+	const srcAuth = resolve("src/pages/auth");
+	app.use('/auth', express.static(srcAuth));
+}
 
 // Dev-only runtime diagnostics endpoint. Exposes memory and active handle counts.
 if (process.env.NODE_ENV !== "production") {
@@ -116,6 +148,35 @@ app.use("/api/users", userRoutes);
 app.use("/api/contacts", contactRoutes);
 app.use("/api/conversations", conversationRoutes);
 app.use("/api/messages", messageRoutes);
+app.use("/api/push", pushRoutes);
+
+// Host-based fallback: serve landing for main domain and chat app for subdomain
+// Fallback handler: use middleware instead of a route pattern to avoid path-to-regexp issues
+app.use((req, res, next) => {
+	// Only handle GET navigations and not API/socket/static requests
+	if (req.method !== "GET") return next();
+	const p = req.path || "";
+	if (p.startsWith("/api") || p.startsWith("/socket.io") || p.startsWith("/public") || p.startsWith("/src") || p.startsWith("/node_modules") || p.startsWith("/__diag")) {
+		return next();
+	}
+	const host = (req.headers.host || "").split(":")[0];
+
+	// Serve chat app
+	if (host === "chat.rivo.ir") {
+		const publicChat = resolve("public/chat/index.html");
+		const srcChat = resolve("src/pages/chat/index.html");
+		if (existsSync(publicChat)) return res.sendFile(publicChat);
+		if (existsSync(srcChat)) return res.sendFile(srcChat);
+		return res.status(404).send("Not found");
+	}
+
+	// Default -> landing page (prefer public, fall back to src)
+	const publicLanding = resolve("public/landing/index.html");
+	const srcLanding = resolve("src/pages/landing/index.html");
+	if (existsSync(publicLanding)) return res.sendFile(publicLanding);
+	if (existsSync(srcLanding)) return res.sendFile(srcLanding);
+	return res.status(404).send("Not found");
+});
 
 // Sentry error handler (capture unhandled errors)
 if (process.env.SENTRY_DSN) {

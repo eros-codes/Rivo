@@ -503,7 +503,7 @@ export async function receiveMessage(message) {
 							if (newContact.isPinned || newContact.unreadCount > 0 || newContact.lastMessageSeen === false) {
 								activeChatsContainer.appendChild(createActiveChatCard(newContact));
 							} else {
-								contactsContainer.appendChild(createContactCard({ ...newContact, hasMessages: !!newContact.lastMessage }, null));
+								contactsContainer.appendChild(createContactCard({ ...newContact, hasMessages: !!newContact.lastMessage }, _dom.onContactAction));
 							}
 							updateTotalUnreadCount();
 							sortActiveChats();
@@ -581,7 +581,8 @@ export async function receiveMessage(message) {
 	contact.lastMessage = normalized.text;
 	contact.lastMessageTime = normalized.time;
 	contact.lastMessageDate = normalized.date;
-	contact.lastMessageSeen = false;
+	// If the chat is currently open, consider the last message seen locally
+	contact.lastMessageSeen = state.contactUserId === contact.id ? true : false;
 	if (state.contactUserId !== contact.id) {
 		contact.unreadCount = (contact.unreadCount || 0) + 1;
 		try {

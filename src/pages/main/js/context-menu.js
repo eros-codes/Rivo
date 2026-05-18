@@ -129,8 +129,9 @@ export function closeContextMenu() {
 // ─── Delete & undo ────────────────────────────────────────────────────────────
 export function deleteMessage(msg, index) {
 	const idx = Number(index);
-	const arr = Array.isArray(messages[state.contactUserId])
-		? messages[state.contactUserId]
+	const capturedContactId = state.contactUserId;
+	const arr = Array.isArray(messages[capturedContactId])
+		? messages[capturedContactId]
 		: [];
 	const deletedMsg = arr[idx];
 	const messageId = deletedMsg?.id;
@@ -144,7 +145,7 @@ export function deleteMessage(msg, index) {
 				if (messageId) await emitDeleteMessage(messageId);
 
 				// Remove message by id if possible, otherwise by localId, otherwise by index
-				const currentArr = messages[state.contactUserId] || [];
+				const currentArr = messages[capturedContactId] || [];
 				let removeIdx = -1;
 				if (messageId)
 					removeIdx = currentArr.findIndex((m) => m.id === messageId);
@@ -173,7 +174,7 @@ export function deleteMessage(msg, index) {
 				// current user, decrement the unread counter for this contact.
 				try {
 					const friend = contacts.find(
-						(c) => c.id === state.contactUserId,
+						(c) => c.id === capturedContactId,
 					);
 					if (
 						friend &&
@@ -206,7 +207,7 @@ export function deleteMessage(msg, index) {
 				const remaining = currentArr;
 
 				const friend = contacts.find(
-					(c) => c.id === state.contactUserId,
+					(c) => c.id === capturedContactId,
 				);
 				if (friend) {
 					if (remaining.length > 0) {

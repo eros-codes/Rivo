@@ -15,6 +15,7 @@ import {
 	moveToContacts,
 } from "./chat-logic.js";
 import { emitMessageSeen } from "./socket.js";
+import { safeSrc, mountAvatar } from "../../../utils/dom.js";
 
 let _dom = {};
 
@@ -201,8 +202,13 @@ export function executeBulkForward(friend, sourceName) {
 	cancelSelection();
 	_dom.forwardDialog.close();
 
-	_dom.chatProfilePic.src =
-		friend.profilePics[0] || "/assets/images/profile.jpeg";
+	mountAvatar(_dom.chatProfilePic, {
+		name: friend.name,
+		nickname: friend.nickname,
+		profilePics: friend.profilePics,
+		className: 'chat-profile-picture',
+		isOnline: friend.isOnline,
+	});
 	_dom.chatName.textContent = friend.nickname || friend.name;
 	openChat(true);
 	injectMessages(friend.id);

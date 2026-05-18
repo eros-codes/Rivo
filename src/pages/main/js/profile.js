@@ -9,6 +9,7 @@ import {
 } from "./chat-logic.js";
 import { createContactCard } from "../../../components/contact-cards/contact-card.js";
 import { createActiveChatCard } from "../../../components/active-chats/active-chats.js";
+import { safeSrc, mountAvatar } from "../../../utils/dom.js";
 import {
 	updateContact,
 	deleteContact as apiDeleteContact,
@@ -50,9 +51,14 @@ function formatLastSeen(isoString) {
 
 // ─── Open profile ─────────────────────────────────────────────────────────────
 export async function openProfile(friend) {
-	_dom.detailPictures.forEach(
-		(el) =>
-			(el.src = friend.profilePics[0] || "/assets/images/profile.jpeg"),
+	_dom.detailPictures.forEach((el) =>
+		mountAvatar(el, {
+			name: friend.name,
+			nickname: friend.nickname,
+			profilePics: friend.profilePics,
+			className: el.className || "contact-profile",
+			isOnline: friend.isOnline,
+		}),
 	);
 	_dom.detailNames.forEach(
 		(el) => (el.textContent = friend.nickname || friend.name),
@@ -88,16 +94,18 @@ export async function openProfile(friend) {
 					);
 					// also refresh picture/name if they were missing
 					if (
-						(!friend.profilePics ||
-							friend.profilePics.length === 0) &&
+						(!friend.profilePics || friend.profilePics.length === 0) &&
 						found.profilePics
 					) {
 						friend.profilePics = found.profilePics;
-						_dom.detailPictures.forEach(
-							(el) =>
-								(el.src =
-									friend.profilePics[0] ||
-									"/assets/images/profile.jpeg"),
+						_dom.detailPictures.forEach((el) =>
+							mountAvatar(el, {
+								name: friend.name,
+								nickname: friend.nickname,
+								profilePics: friend.profilePics,
+								className: el.className || "contact-profile",
+								isOnline: friend.isOnline,
+							}),
 						);
 					}
 					if (!friend.name && found.name) {

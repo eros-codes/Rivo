@@ -1,3 +1,7 @@
 node_modules
 .env
 dist
+# Ignore DB dumps and temporary SQL files
+*.dump
+rivo-backup-*.dump
+tmp_migs.sql

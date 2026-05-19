@@ -2,9 +2,15 @@ import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
 import prisma from "../prisma.js";
 import push from "../utils/push.js";
+import { generateDEK, encryptMessage, wrapDEK, unwrapDEK, decryptMessage } from "../utils/encryption.js";
 
 export function initSocket(httpServer) {
 	const allowedOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"]);
+	// Configure ping settings so the server detects sudden network
+	// failures (e.g., phone powered off) more quickly than the default.
+	const pingInterval = parseInt(process.env.SOCKET_PING_INTERVAL || "5000", 10);
+	const pingTimeout = parseInt(process.env.SOCKET_PING_TIMEOUT || "5000", 10);
+
 	const io = new Server(httpServer, {
 		cors: {
 			origin: (origin, cb) => {
@@ -13,6 +19,8 @@ export function initSocket(httpServer) {
 			},
 			credentials: true,
 		},
+		pingInterval,
+		pingTimeout,
 	});
 
 	const MAX_MESSAGE_LENGTH = parseInt(process.env.MAX_MESSAGE_LENGTH || "2000");
@@ -135,16 +143,40 @@ export function initSocket(httpServer) {
 					return callback?.({ error: "Forbidden" });
 				}
 
+				// Encrypt message before persisting. Do NOT store plaintext.
+				const plaintext = text.trim();
+				const dek = generateDEK();
+				const { ciphertext, iv, authTag } = encryptMessage(plaintext, dek);
+				const keyId = "v1"; // KEK version
+				const wrappedDek = wrapDEK(dek, keyId);
+
+				// encrypt replyToText and forwardedText (store as JSON string) using same DEK
+				let replyToTextEncrypted = null;
+				let forwardedTextEncrypted = null;
+				if (replyToText && typeof replyToText === 'string' && replyToText.trim()) {
+					const r = encryptMessage(replyToText.trim(), dek);
+					replyToTextEncrypted = JSON.stringify({ c: r.ciphertext, iv: r.iv, t: r.authTag });
+				}
+				if (forwardedText && typeof forwardedText === 'string' && forwardedText.trim()) {
+					const f = encryptMessage(forwardedText.trim(), dek);
+					forwardedTextEncrypted = JSON.stringify({ c: f.ciphertext, iv: f.iv, t: f.authTag });
+				}
+
 				const message = await prisma.message.create({
 					data: {
 						conversationId,
 						senderId: socket.userId,
-						text: text.trim(),
+						text: null,
+						ciphertext,
+						iv,
+						auth_tag: authTag,
+						wrapped_dek: wrappedDek,
+						key_id: keyId,
 						...(replyToId && { replyToId }),
 						...(replyToName && { replyToName }),
-						...(replyToText && { replyToText }),
+						...(replyToTextEncrypted && { replyToText: replyToTextEncrypted }),
+						...(forwardedTextEncrypted && { forwardedText: forwardedTextEncrypted }),
 						...(forwardedFrom && { forwardedFrom }),
-						...(forwardedText && { forwardedText }),
 					},
 					include: {
 						sender: {
@@ -163,26 +195,38 @@ export function initSocket(httpServer) {
 					data: { lastMessageAt: message.createdAt },
 				});
 
+				// Build sanitized payload to broadcast (do not send ciphertext/wrapped_dek)
+				const safe = {
+					id: message.id,
+					conversationId: message.conversationId,
+					sender: message.sender,
+					senderId: message.senderId,
+					text: plaintext,
+					isSeen: message.isSeen,
+					isEdited: message.isEdited,
+					isPinned: message.isPinned,
+					isDeleted: message.isDeleted,
+					replyToId: message.replyToId,
+					replyToName: message.replyToName,
+					forwardedFrom: message.forwardedFrom,
+					createdAt: message.createdAt,
+				};
+
 				// Self-conversation (Saved Messages) — skip unread increment
 				const isSelfConversation =
-					(await prisma.conversationMember.count({
-						where: { conversationId },
-					})) === 1;
+					(await prisma.conversationMember.count({ where: { conversationId } })) === 1;
 				if (isSelfConversation) {
-					socket
-						.to(`conversation:${conversationId}`)
-						.emit("message:new", message);
-					return callback?.({ success: true, message });
+					socket.to(`conversation:${conversationId}`).emit("message:new", safe);
+					return callback?.({ success: true, message: safe });
 				}
-				
+
 				const recipientContacts = await prisma.contact.findMany({
 					where: { conversationId, ownerId: { not: socket.userId } },
 					select: { id: true, ownerId: true },
 				});
 
 				// Use in-memory map of users present in conversation to avoid expensive fetchSockets()
-				const usersInRoom =
-					convoOnline.get(conversationId) || new Set();
+				const usersInRoom = convoOnline.get(conversationId) || new Set();
 
 				const toUpdateIds = recipientContacts
 					.filter((c) => !usersInRoom.has(c.ownerId))
@@ -198,24 +242,20 @@ export function initSocket(httpServer) {
 						.catch((e) => console.error("update unread failed", e));
 				}
 
-				socket
-					.to(`conversation:${conversationId}`)
-					.emit("message:new", message);
+				socket.to(`conversation:${conversationId}`).emit("message:new", safe);
 
 				// Also deliver the message directly to connected sockets belonging to
 				// recipients who are not actively joined to the conversation room
 				// (handles case where a user was just added to contacts server-side).
 				try {
-					const recipientUserIds = Array.from(
-						new Set(recipientContacts.map((c) => c.ownerId)),
-					);
+					const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
 					for (const uid of recipientUserIds) {
 						if (usersInRoom.has(uid)) continue;
 						const sidSet = userSockets.get(uid) || new Set();
 						for (const sid of sidSet) {
 							const s = io.sockets.sockets.get(sid);
 							if (s) {
-								s.emit("message:new", message);
+								s.emit("message:new", safe);
 							}
 						}
 					}
@@ -231,7 +271,7 @@ export function initSocket(httpServer) {
 							// fire-and-forget: suppress push errors to avoid noisy logs
 							push.sendNotificationToUser(uid, {
 								title: message.sender?.name || 'New message',
-								body: typeof message.text === 'string' ? message.text.slice(0, 200) : '',
+								body: 'New message',
 								data: { conversationId: conversationId },
 							}).catch(() => {
 								/* push error suppressed */
@@ -241,13 +281,10 @@ export function initSocket(httpServer) {
 						// push notify failed (suppressed)
 					}
 				} catch (e) {
-					console.error(
-						"deliver direct message to offline-room sockets failed",
-						e,
-					);
+					console.error("deliver direct message to offline-room sockets failed", e);
 				}
 
-				callback?.({ success: true, message });
+				callback?.({ success: true, message: safe });
 			} catch (err) {
 				console.error(err);
 				callback?.({ error: "Server error" });
@@ -269,20 +306,32 @@ export function initSocket(httpServer) {
 					return callback?.({ error: "Forbidden" });
 				}
 
+				// Encrypt edited text and update encrypted columns
+				const plaintext = text.trim();
+				const dek = generateDEK();
+				const { ciphertext, iv, authTag } = encryptMessage(plaintext, dek);
+				const keyId = "v1";
+				const wrappedDek = wrapDEK(dek, keyId);
+
 				const updated = await prisma.message.update({
 					where: { id: messageId },
-					data: { text: text.trim(), isEdited: true },
-				});
-
-				// Emit edit to room
-				socket.to(`conversation:${message.conversationId}`).emit(
-					"message:edited",
-					{
-						messageId,
-						text: updated.text,
+					data: {
+						text: null,
+						ciphertext,
+						iv,
+						auth_tag: authTag,
+						wrapped_dek: wrappedDek,
+						key_id: keyId,
 						isEdited: true,
 					},
-				);
+				});
+
+				// Emit edit to room with plaintext only
+				socket.to(`conversation:${message.conversationId}`).emit("message:edited", {
+					messageId,
+					text: plaintext,
+					isEdited: true,
+				});
 
 				// Also deliver edited event directly to connected sockets of recipients
 				try {
@@ -298,7 +347,7 @@ export function initSocket(httpServer) {
 						for (const sid of sidSet) {
 							const s = io.sockets.sockets.get(sid);
 							if (s) {
-								s.emit('message:edited', { messageId, text: updated.text, isEdited: true });
+								s.emit('message:edited', { messageId, text: plaintext, isEdited: true });
 							}
 						}
 					}

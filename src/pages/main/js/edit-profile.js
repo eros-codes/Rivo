@@ -1,6 +1,8 @@
 /* global Cropper */
 import { updateMe, uploadAvatar, deleteAvatar } from "./api.js";
 import { safeSrc, mountAvatar, refreshUserAvatars } from "../../../utils/dom.js";
+import { isValidUsername } from "../../auth/js/auth-validate.js";
+import { showToast } from "./ui.js";
 let _dom = {};
 let _currentUser = null;
 let _cropper = null;
@@ -210,8 +212,15 @@ async function _handleSave() {
 	const username = _dom.editUsernameInput.value.trim();
 	const bio = _dom.editBioInput.value.trim();
 
-	if (!name) {
+	if (!name || name.length < 2) {
+		showToast("Name must be at least 2 characters");
 		_dom.editNameInput.focus();
+		return;
+	}
+
+	if (username && !isValidUsername(username)) {
+		showToast("Username must be 3-20 characters, letters, numbers, or underscores only.");
+		_dom.editUsernameInput.focus();
 		return;
 	}
 

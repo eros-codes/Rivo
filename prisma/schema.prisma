@@ -76,7 +76,14 @@ model Message {
   conversationId Int
   sender         User         @relation(fields: [senderId], references: [id])
   senderId       Int
-  text           String
+  // legacy plaintext (nullable during migration)
+  text           String?
+  // encrypted fields (DEK/KEK envelope encryption)
+  ciphertext     String?
+  iv             String?
+  auth_tag       String?
+  wrapped_dek    String?
+  key_id         String?
   isSeen         Boolean      @default(false)
   isEdited       Boolean      @default(false)
   isPinned       Boolean      @default(false)

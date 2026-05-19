@@ -67,6 +67,7 @@ router.post("/login", async (req, res) => {
         return res.status(400).json({ error: "All fields are required" });
     }
 
+
     try {
         const user = await prisma.user.findFirst({
             where: {
@@ -75,13 +76,13 @@ router.post("/login", async (req, res) => {
         });
 
         if (!user) {
-            return res.status(401).json({ error: "Invalid credentials" });
+            return res.status(401).json({ error: "User not found" });
         }
 
         const match = await bcrypt.compare(password, user.passwordHash);
 
         if (!match) {
-            return res.status(401).json({ error: "Invalid credentials" });
+            return res.status(401).json({ error: "Incorrect password" });
         }
 
         const token = jwt.sign(

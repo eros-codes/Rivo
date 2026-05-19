@@ -6,6 +6,7 @@ import { createServer } from "http";
 import { resolve } from "path";
 import { existsSync } from "fs";
 import { initSocket } from "./socket/index.js";
+import { initKeyStore } from "./utils/encryption.js";
 import * as Sentry from "@sentry/node";
 
 import authRoutes from "./routes/auth.js";
@@ -81,6 +82,8 @@ function csrfProtection(req, res, next) {
 app.use(csrfProtection);
 app.use(express.static("public"));
 app.use("/public", express.static("public"));
+app.use("/components", express.static("src/components"));
+app.use("/utils", express.static("src/utils"));
 
 if (process.env.NODE_ENV !== "production") {
 	// Expose source and node_modules only in development for local debugging
@@ -184,7 +187,22 @@ if (process.env.SENTRY_DSN) {
 }
 
 // ─── Socket.io ────────────────────────────────────────────────────────────────
-initSocket(httpServer);
+(async () => {
+	try {
+		await initKeyStore();
+	} catch (e) {
+		console.error("failed to initialize keystore:", e && e.message ? e.message : e);
+		// If the application is configured to use Vault and we cannot initialize,
+		// it's safer to stop startup than to run without KEKs.
+		if ((process.env.SECRET_PROVIDER || "").toLowerCase() === "vault") {
+			console.error("SECRET_PROVIDER=vault but keystore initialization failed — aborting startup.");
+			process.exit(1);
+		} else {
+			console.warn('KEK not configured. For development, run `npm run gen-kek` to generate a base64 KEK and add it to your .env as KEK_V1=<base64>');
+		}
+	}
+	initSocket(httpServer);
+})();
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;

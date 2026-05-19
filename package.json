@@ -9,11 +9,15 @@
     "dev": "nodemon server/index.js",
     "start": "npm run build && node server/index.js",
     "server": "nodemon server/index.js",
+    "mock-vault": "node server/scripts/mock_vault_server.js",
+    "push-keks": "node server/scripts/push_keks_to_vault.js",
+    "insert-test-message": "node server/scripts/insert_persistent_message.js",
+    "rotate-keys": "node server/scripts/rotate_keys.js",
+    "verify-rotation": "node server/scripts/verify_decrypted_after_rotation.js",
+    "test:enc": "node server/scripts/test_message_encryption.js",
     "test:integration": "node tests/integration/socket-flow.js",
-    "lint": "eslint \"src/**\" \"server/**\" --ext .js",
-    "migrate:avatars": "node scripts/migrate-avatar-urls.js",
-    "build:landing": "node scripts/copy-landing.js",
-    "build": "node scripts/copy-landing.js"
+    "gen-kek": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"",
+    "lint": "eslint \"src/**\" \"server/**\" --ext .js"
   },
   "author": "",
   "license": "ISC",
@@ -26,8 +30,8 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "helmet": "^6.1.1",
     "express-rate-limit": "^6.7.0",
+    "helmet": "^6.1.1",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
     "prisma": "^6.19.3",
@@ -36,6 +40,7 @@
     "web-push": "^3.5.0"
   },
   "devDependencies": {
+    "esbuild": "^0.28.0",
     "eslint": "^8.50.0",
     "nodemon": "^3.1.14"
   },

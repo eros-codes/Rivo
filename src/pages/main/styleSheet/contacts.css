@@ -97,15 +97,6 @@ pointer-events: none;
 	background-position: center;
 }
 
-/* Accent variants for initial-letter avatars (picked deterministically by JS) */
-.initial-accent-0 { background-image: linear-gradient(135deg, rgba(255,255,255,0.7), rgba(255,255,255,0)), linear-gradient(135deg,#fa5f1a,#ff8c42); }
-.initial-accent-1 { background-image: linear-gradient(135deg, rgba(255,255,255,0.7), rgba(255,255,255,0)), linear-gradient(135deg,#9b59b6,#8e44ad); }
-.initial-accent-2 { background-image: linear-gradient(135deg, rgba(255,255,255,0.7), rgba(255,255,255,0)), linear-gradient(135deg,#3498db,#2980b9); }
-.initial-accent-3 { background-image: linear-gradient(135deg, rgba(255,255,255,0.7), rgba(255,255,255,0)), linear-gradient(135deg,#2ecc71,#27ae60); }
-.initial-accent-4 { background-image: linear-gradient(135deg, rgba(255,255,255,0.7), rgba(255,255,255,0)), linear-gradient(135deg,#f1c40f,#f39c12); }
-.initial-accent-5 { background-image: linear-gradient(135deg, rgba(255,255,255,0.7), rgba(255,255,255,0)), linear-gradient(135deg,#e74c3c,#c0392b); }
-.initial-accent-6 { background-image: linear-gradient(135deg, rgba(255,255,255,0.7), rgba(255,255,255,0)), linear-gradient(135deg,#1abc9c,#16a085); }
-.initial-accent-7 { background-image: linear-gradient(135deg, rgba(255,255,255,0.7), rgba(255,255,255,0)), linear-gradient(135deg,#95a5a6,#7f8c8d); }
 .online-contact {
 	border: 0.3rem solid var(--online);
 }

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { unwrapDEK, decryptMessage } from "../utils/encryption.js";
 import prisma from "../prisma.js";
 import { requireAuth } from "../middleware/auth.js";
 
@@ -64,6 +65,31 @@ router.get("/", requireAuth, async (req, res) => {
 			}
 			return cc;
 		});
+
+		// Attempt to decrypt the latest message for each contact so the
+		// client can display a readable preview in contact lists.
+		// If decryption fails, fall back to a generic placeholder.
+		for (const cc of sanitized) {
+			try {
+				const conv = cc.conversation;
+				if (!conv || !Array.isArray(conv.messages) || conv.messages.length === 0) continue;
+				const m = conv.messages[0];
+				// prefer plaintext if present
+				if (m.text) continue;
+				if (m.ciphertext && m.wrapped_dek) {
+					try {
+						const dek = unwrapDEK(m.wrapped_dek, m.key_id || "v1");
+						m.text = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
+					} catch (e) {
+						m.text = "Message unavailable";
+					}
+				} else {
+					m.text = m.text || "";
+				}
+			} catch (e) {
+				// do not fail the entire request for one contact
+			}
+		}
 
 		// Auto-create saved messages for existing users
 		const hasSaved = contacts.some((c) => c.isSaved);

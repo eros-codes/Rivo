@@ -140,6 +140,17 @@
 	border: 2px solid var(--online);
 }
 
+/* Prevent the large "online-contact" avatar border from showing
+   inside the chat header, header uses its own `.chat-profile.online` rule. */
+.chat-profile .online-contact {
+	border: none;
+	box-shadow: none;
+}
+.chat-profile .initial-avatar.online-contact {
+	border: none;
+	box-shadow: none;
+}
+
 .chat-typing-status {
 	font-size: 0.75rem;
 	color: var(--chat-time);

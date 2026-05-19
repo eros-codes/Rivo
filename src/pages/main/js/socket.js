@@ -84,6 +84,26 @@ export function initSocket(
 		_showStatus("Connecting...");
 	});
 
+	// Proactively disconnect when the page is being unloaded or hidden
+	// so the server receives the disconnect event faster (helps presence).
+	if (typeof window !== "undefined") {
+		window.addEventListener("beforeunload", () => {
+			try {
+				socket?.disconnect();
+			} catch (e) {
+				/* ignore */
+			}
+		});
+
+		window.addEventListener("pagehide", () => {
+			try {
+				socket?.disconnect();
+			} catch (e) {
+				/* ignore */
+			}
+		});
+	}
+
 	return socket;
 }
 

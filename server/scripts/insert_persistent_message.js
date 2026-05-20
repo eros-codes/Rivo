@@ -8,7 +8,7 @@ dotenv.config();
 
 async function main() {
   // ensure KEK availability (dev fallback)
-  if (!process.env.KEK_V1 && !(process.env.SECRET_PROVIDER || "").toLowerCase() === "vault") {
+  if (!process.env.KEK_V1 && (process.env.SECRET_PROVIDER || "").toLowerCase() !== "vault") {
     console.warn("No KEK_V1 set; generating ephemeral KEK_V1 for test");
     process.env.KEK_V1 = crypto.randomBytes(32).toString("base64");
   }

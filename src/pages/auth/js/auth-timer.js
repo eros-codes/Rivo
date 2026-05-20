@@ -1,33 +1,18 @@
-let _sentCode = null;
 let _resendTimerInterval = null;
 
-export function getSentCode() {
-	return _sentCode;
-}
-
-export function sendCode(email) {
-	_sentCode = Math.floor(Math.random() * 900000 + 100000);
-	// Do not reveal the raw verification code in alerts for production.
-	// Show a brief, non-sensitive message and log the code to console
-	// for local/dev debugging only.
-	try {
-		let masked = "your email";
-		if (email && typeof email === "string") {
-			const at = email.indexOf("@");
-			if (at > 2) masked = email.slice(0, 2) + "..." + email.slice(at);
-			else if (at > 0) masked = email[0] + "..." + email.slice(at);
-		}
-		alert(`A verification code has been sent to ${masked}`);
-		// dev-only: print full code to console for debugging
-		// (remove or disable in production)
-		// eslint-disable-next-line no-console
-		console.log("[dev] verification code:", _sentCode, "email:", email ?? "(unknown)");
-	} catch (e) {
-		// fallback: at least log the code
-		// eslint-disable-next-line no-console
-		console.log("[dev] verification code:", _sentCode);
+export async function sendCode(email) {
+	if (!email || typeof email !== 'string') throw new Error('email required');
+	const res = await fetch('/api/auth/send-code', {
+		method: 'POST',
+		credentials: 'include',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email }),
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({}));
+		throw new Error(err.error || 'Failed to send code');
 	}
-	return { code: _sentCode };
+	return res.json();
 }
 
 export function startResendTimer(codeResendTimer) {

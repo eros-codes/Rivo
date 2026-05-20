@@ -67,6 +67,7 @@ export function createAvatarElement({ name, nickname, profilePics, className = "
 
   const displayName = (nickname || name || "").trim();
   const initial = displayName ? displayName[0].toUpperCase() : "?";
+  const isDeletedAccount = displayName && displayName.toLowerCase() === 'deleted account';
 
   // Determine whether a real profile picture was provided. Treat known
   // placeholder filenames (profile-light/profile-dark) as "no picture"
@@ -85,7 +86,8 @@ export function createAvatarElement({ name, nickname, profilePics, className = "
 
   const div = document.createElement("div");
   div.className = `${className} initial-avatar ${isOnline ? "online-contact" : ""}`.trim();
-  div.textContent = initial;
+  // For deleted accounts we want only the accent color (no initial letter)
+  div.textContent = isDeletedAccount ? "" : initial;
 
   // deterministic accent gradient based on name
   const grads = [
@@ -109,6 +111,7 @@ export function createAvatarElement({ name, nickname, profilePics, className = "
   // fully in CSS as you requested.
   const accentIndex = seed % grads.length;
   div.classList.add(`initial-accent-${accentIndex}`);
+  if (isDeletedAccount) div.classList.add('deleted-account-avatar');
 
   return div;
 }

@@ -3,9 +3,16 @@ import jwt from "jsonwebtoken";
 import prisma from "../prisma.js";
 import push from "../utils/push.js";
 import { generateDEK, encryptMessage, wrapDEK, unwrapDEK, decryptMessage } from "../utils/encryption.js";
+import { parseIntSafe, MAX_MESSAGE_LENGTH } from "../utils/validators.js";
 
 export function initSocket(httpServer) {
-	const allowedOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"]);
+	const allowedOrigins = new Set([
+		"http://localhost:3000",
+		"http://127.0.0.1:3000",
+		"https://rivo.ir",
+		"https://www.rivo.ir",
+		"https://chat.rivo.ir",
+	]);
 	// Configure ping settings so the server detects sudden network
 	// failures (e.g., phone powered off) more quickly than the default.
 	const pingInterval = parseInt(process.env.SOCKET_PING_INTERVAL || "5000", 10);
@@ -23,12 +30,15 @@ export function initSocket(httpServer) {
 		pingTimeout,
 	});
 
-	const MAX_MESSAGE_LENGTH = parseInt(process.env.MAX_MESSAGE_LENGTH || "2000");
 	// Map<conversationId, Set<userId>> of users currently in each conversation room
 	const convoOnline = new Map();
 
 	// Map<userId, Set<socketId>> for quick targeting of a user's connected sockets
 	const userSockets = new Map();
+
+	// Map<userId, Timeout> used to debounce marking users offline
+	const offlineTimers = new Map();
+	const OFFLINE_GRACE_MS = parseInt(process.env.OFFLINE_GRACE_MS || "7000", 10);
 
 	// Simple per-socket rate limiter: Map<socketId, Array<timestamp>>
 	const sendRate = new Map();
@@ -88,6 +98,12 @@ export function initSocket(httpServer) {
 			const us = userSockets.get(socket.userId) || new Set();
 			us.add(socket.id);
 			userSockets.set(socket.userId, us);
+
+			// If there was a pending offline timer for this user, clear it.
+			if (offlineTimers.has(socket.userId)) {
+				clearTimeout(offlineTimers.get(socket.userId));
+				offlineTimers.delete(socket.userId);
+			}
 			// init rate tracking for this socket
 			sendRate.set(socket.id, []);
 			socket.broadcast.emit("user:online", { userId: socket.userId });
@@ -109,6 +125,9 @@ export function initSocket(httpServer) {
 				forwardedFrom,
 				forwardedText,
 			} = data;
+
+			const convId = parseIntSafe(conversationId);
+			if (!convId) return callback?.({ error: "Invalid conversationId" });
 
 			// Basic message validation / DoS prevention
 			if (!text || typeof text !== "string" || !text.trim() || text.trim().length > MAX_MESSAGE_LENGTH) {
@@ -134,7 +153,7 @@ export function initSocket(httpServer) {
 
 				const member = await prisma.conversationMember.findFirst({
 					where: {
-						conversationId,
+						conversationId: convId,
 						userId: socket.userId,
 					},
 				});
@@ -164,7 +183,7 @@ export function initSocket(httpServer) {
 
 				const message = await prisma.message.create({
 					data: {
-						conversationId,
+						conversationId: convId,
 						senderId: socket.userId,
 						text: null,
 						ciphertext,
@@ -191,7 +210,7 @@ export function initSocket(httpServer) {
 				});
 
 				await prisma.conversation.update({
-					where: { id: conversationId },
+					where: { id: convId },
 					data: { lastMessageAt: message.createdAt },
 				});
 
@@ -214,19 +233,19 @@ export function initSocket(httpServer) {
 
 				// Self-conversation (Saved Messages) — skip unread increment
 				const isSelfConversation =
-					(await prisma.conversationMember.count({ where: { conversationId } })) === 1;
+					(await prisma.conversationMember.count({ where: { conversationId: convId } })) === 1;
 				if (isSelfConversation) {
-					socket.to(`conversation:${conversationId}`).emit("message:new", safe);
+					socket.to(`conversation:${convId}`).emit("message:new", safe);
 					return callback?.({ success: true, message: safe });
 				}
 
 				const recipientContacts = await prisma.contact.findMany({
-					where: { conversationId, ownerId: { not: socket.userId } },
+					where: { conversationId: convId, ownerId: { not: socket.userId } },
 					select: { id: true, ownerId: true },
 				});
 
 				// Use in-memory map of users present in conversation to avoid expensive fetchSockets()
-				const usersInRoom = convoOnline.get(conversationId) || new Set();
+				const usersInRoom = convoOnline.get(convId) || new Set();
 
 				const toUpdateIds = recipientContacts
 					.filter((c) => !usersInRoom.has(c.ownerId))
@@ -242,7 +261,7 @@ export function initSocket(httpServer) {
 						.catch((e) => console.error("update unread failed", e));
 				}
 
-				socket.to(`conversation:${conversationId}`).emit("message:new", safe);
+				socket.to(`conversation:${convId}`).emit("message:new", safe);
 
 				// Also deliver the message directly to connected sockets belonging to
 				// recipients who are not actively joined to the conversation room
@@ -272,7 +291,7 @@ export function initSocket(httpServer) {
 							push.sendNotificationToUser(uid, {
 								title: message.sender?.name || 'New message',
 								body: 'New message',
-								data: { conversationId: conversationId },
+								data: { conversationId: convId },
 							}).catch(() => {
 								/* push error suppressed */
 							});
@@ -294,12 +313,14 @@ export function initSocket(httpServer) {
 		// ─── Edit message ──────────────────────────────────────────────────────
 		socket.on("message:edit", async (data, callback) => {
 			const { messageId, text } = data;
+			const msgId = parseIntSafe(messageId);
+			if (!msgId) return callback?.({ error: "Invalid messageId" });
 			try {
 			if (!text || typeof text !== "string" || !text.trim() || text.trim().length > MAX_MESSAGE_LENGTH) {
 				return callback?.({ error: "Invalid data" });
 			}
 				const message = await prisma.message.findUnique({
-					where: { id: messageId },
+					where: { id: msgId },
 				});
 
 				if (!message || message.senderId !== socket.userId) {
@@ -314,7 +335,7 @@ export function initSocket(httpServer) {
 				const wrappedDek = wrapDEK(dek, keyId);
 
 				const updated = await prisma.message.update({
-					where: { id: messageId },
+					where: { id: msgId },
 					data: {
 						text: null,
 						ciphertext,
@@ -328,7 +349,7 @@ export function initSocket(httpServer) {
 
 				// Emit edit to room with plaintext only
 				socket.to(`conversation:${message.conversationId}`).emit("message:edited", {
-					messageId,
+					messageId: msgId,
 					text: plaintext,
 					isEdited: true,
 				});
@@ -347,7 +368,7 @@ export function initSocket(httpServer) {
 						for (const sid of sidSet) {
 							const s = io.sockets.sockets.get(sid);
 							if (s) {
-								s.emit('message:edited', { messageId, text: plaintext, isEdited: true });
+								s.emit('message:edited', { messageId: msgId, text: plaintext, isEdited: true });
 							}
 						}
 					}
@@ -365,10 +386,12 @@ export function initSocket(httpServer) {
 		// ─── Delete message ────────────────────────────────────────────────────
 		socket.on("message:delete", async (data, callback) => {
 			const { messageId } = data;
+			const msgId = parseIntSafe(messageId);
+			if (!msgId) return callback?.({ error: "Invalid messageId" });
 
 			try {
 				const message = await prisma.message.findUnique({
-					where: { id: messageId },
+					where: { id: msgId },
 				});
 
 				if (!message || message.senderId !== socket.userId) {
@@ -376,7 +399,7 @@ export function initSocket(httpServer) {
 				}
 
 				await prisma.message.update({
-					where: { id: messageId },
+					where: { id: msgId },
 					data: { isDeleted: true },
 				});
 
@@ -404,7 +427,7 @@ export function initSocket(httpServer) {
 				io.to(`conversation:${message.conversationId}`).emit(
 					"message:deleted",
 					{
-						messageId,
+						messageId: msgId,
 					},
 				);
 
@@ -422,7 +445,7 @@ export function initSocket(httpServer) {
 						for (const sid of sidSet) {
 							const s = io.sockets.sockets.get(sid);
 							if (s) {
-								s.emit('message:deleted', { messageId });
+								s.emit('message:deleted', { messageId: msgId });
 							}
 						}
 					}
@@ -439,9 +462,11 @@ export function initSocket(httpServer) {
 
 		// ─── Pin/Unpin message ─────────────────────────────────────────────────
 		socket.on("message:pin", async ({ messageId }, callback) => {
+			const msgId = parseIntSafe(messageId);
+			if (!msgId) return callback?.({ error: "Invalid messageId" });
 			try {
 				const message = await prisma.message.findUnique({
-					where: { id: messageId },
+					where: { id: msgId },
 				});
 				if (!message) return callback?.({ error: "Not found" });
 
@@ -454,14 +479,14 @@ export function initSocket(httpServer) {
 				if (!member) return callback?.({ error: "Forbidden" });
 
 				const updated = await prisma.message.update({
-					where: { id: messageId },
+					where: { id: msgId },
 					data: { isPinned: !message.isPinned },
 				});
 
 				socket.to(`conversation:${message.conversationId}`).emit(
 					"message:pinned",
 					{
-						messageId,
+						messageId: msgId,
 						isPinned: updated.isPinned,
 					},
 				);
@@ -480,7 +505,7 @@ export function initSocket(httpServer) {
 						for (const sid of sidSet) {
 							const s = io.sockets.sockets.get(sid);
 							if (s) {
-								s.emit('message:pinned', { messageId, isPinned: updated.isPinned });
+								s.emit('message:pinned', { messageId: msgId, isPinned: updated.isPinned });
 							}
 						}
 					}
@@ -496,32 +521,34 @@ export function initSocket(httpServer) {
 
 		// ─── Typing ────────────────────────────────────────────────────────────
 		socket.on("typing:start", ({ conversationId }) => {
+			const convId = parseIntSafe(conversationId);
+			if (!convId) return;
 			// ensure sender is a member of the conversation before emitting
 			(async () => {
 				try {
 					const member = await prisma.conversationMember.findFirst({
-						where: { conversationId, userId: socket.userId },
+						where: { conversationId: convId, userId: socket.userId },
 					});
 					if (!member) return;
-					socket.to(`conversation:${conversationId}`).emit("typing:start", {
+					socket.to(`conversation:${convId}`).emit("typing:start", {
 						userId: socket.userId,
-						conversationId,
+						conversationId: convId,
 					});
 
 					// also deliver typing start to connected sockets not joined to the room
 					try {
 						const recipientContacts = await prisma.contact.findMany({
-							where: { conversationId, ownerId: { not: socket.userId } },
+							where: { conversationId: convId, ownerId: { not: socket.userId } },
 							select: { ownerId: true },
 						});
-						const usersInRoom = convoOnline.get(conversationId) || new Set();
+						const usersInRoom = convoOnline.get(convId) || new Set();
 						const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
 						for (const uid of recipientUserIds) {
 							if (usersInRoom.has(uid)) continue;
 							const sidSet = userSockets.get(uid) || new Set();
 							for (const sid of sidSet) {
 								const s = io.sockets.sockets.get(sid);
-								if (s) s.emit('typing:start', { userId: socket.userId, conversationId });
+								if (s) s.emit('typing:start', { userId: socket.userId, conversationId: convId });
 							}
 						}
 					} catch (e) {
@@ -534,32 +561,34 @@ export function initSocket(httpServer) {
 		});
 
 		socket.on("typing:stop", ({ conversationId }) => {
+			const convId = parseIntSafe(conversationId);
+			if (!convId) return;
 			// ensure sender is a member of the conversation before emitting
 			(async () => {
 				try {
 					const member = await prisma.conversationMember.findFirst({
-						where: { conversationId, userId: socket.userId },
+						where: { conversationId: convId, userId: socket.userId },
 					});
 					if (!member) return;
-					socket.to(`conversation:${conversationId}`).emit("typing:stop", {
+					socket.to(`conversation:${convId}`).emit("typing:stop", {
 						userId: socket.userId,
-						conversationId,
+						conversationId: convId,
 					});
 
 					// also deliver typing stop to connected sockets not joined to the room
 					try {
 						const recipientContacts = await prisma.contact.findMany({
-							where: { conversationId, ownerId: { not: socket.userId } },
+							where: { conversationId: convId, ownerId: { not: socket.userId } },
 							select: { ownerId: true },
 						});
-						const usersInRoom = convoOnline.get(conversationId) || new Set();
+						const usersInRoom = convoOnline.get(convId) || new Set();
 						const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
 						for (const uid of recipientUserIds) {
 							if (usersInRoom.has(uid)) continue;
 							const sidSet = userSockets.get(uid) || new Set();
 							for (const sid of sidSet) {
 								const s = io.sockets.sockets.get(sid);
-								if (s) s.emit('typing:stop', { userId: socket.userId, conversationId });
+								if (s) s.emit('typing:stop', { userId: socket.userId, conversationId: convId });
 							}
 						}
 					} catch (e) {
@@ -592,20 +621,48 @@ export function initSocket(httpServer) {
 
 				const remaining = userSockets.get(socket.userId);
 				if (!remaining || remaining.size === 0) {
-					const updated = await prisma.user.update({
-						where: { id: socket.userId },
-						data: {
-							isOnline: false,
-							lastSeen,
-						},
-						select: { privacyOnline: true },
-					});
-
-					socket.broadcast.emit("user:offline", {
-						userId: socket.userId,
-						lastSeen,
-						privacyOnline: updated.privacyOnline,
-					});
+					// Schedule a debounced offline update to avoid flapping on
+					// transient disconnects (e.g., mobile network handoffs).
+					if (offlineTimers.has(socket.userId)) {
+						// already scheduled
+					} else {
+						const timer = setTimeout(async () => {
+							try {
+								const still = userSockets.get(socket.userId);
+								if (!still || still.size === 0) {
+									const updated = await prisma.user.update({
+										where: { id: socket.userId },
+										data: {
+											isOnline: false,
+											lastSeen,
+										},
+										select: { privacyOnline: true },
+									});
+									try {
+										io.emit("user:offline", {
+											userId: socket.userId,
+											lastSeen,
+											privacyOnline: updated.privacyOnline,
+										});
+									} catch (e) {
+										/* ignore broadcast failures */
+									}
+								}
+							} catch (e) {
+								console.error('deferred disconnect update failed', e);
+								try {
+									io.emit("user:offline", {
+										userId: socket.userId,
+										lastSeen,
+										privacyOnline: null,
+									});
+								} catch (_) { /* ignore */ }
+							} finally {
+								offlineTimers.delete(socket.userId);
+							}
+						}, OFFLINE_GRACE_MS);
+						offlineTimers.set(socket.userId, timer);
+					}
 				} else {
 					// user still has other active sockets; do not mark offline
 				}
@@ -649,10 +706,12 @@ export function initSocket(httpServer) {
 
 		// ─── Message seen ───────────────────────────────────────────────────────
 		socket.on("message:seen", async ({ conversationId }, callback) => {
+			const convId = parseIntSafe(conversationId);
+			if (!convId) return callback?.({ success: true, marked: [] });
 			try {
 				const member = await prisma.conversationMember.findFirst({
 					where: {
-						conversationId,
+						conversationId: convId,
 						userId: socket.userId,
 					},
 				});
@@ -660,14 +719,14 @@ export function initSocket(httpServer) {
 
 				// Only allow marking messages as seen if this socket explicitly
 				// joined the conversation (prevents other tabs/sockets from auto-seeing)
-				if (!socket.joinedConversations || !socket.joinedConversations.has(conversationId)) {
+				if (!socket.joinedConversations || !socket.joinedConversations.has(convId)) {
 					return callback?.({ success: true, marked: [] });
 				}
 
 				// find message ids that will be marked as seen (messages sent by others to this socket)
 				const toMark = await prisma.message.findMany({
 					where: {
-						conversationId,
+						conversationId: convId,
 						senderId: { not: socket.userId },
 						isSeen: false,
 					},
@@ -682,7 +741,7 @@ export function initSocket(httpServer) {
 
 					await prisma.contact.updateMany({
 						where: {
-							conversationId,
+							conversationId: convId,
 							ownerId: socket.userId,
 						},
 						data: { unreadCount: 0 },
@@ -690,9 +749,9 @@ export function initSocket(httpServer) {
 
 					// notify other participants only when there are messages actually marked as seen
 					socket
-						.to(`conversation:${conversationId}`)
+						.to(`conversation:${convId}`)
 						.emit("message:seen", {
-							conversationId,
+							conversationId: convId,
 							messageIds: toMark.map((m) => m.id),
 							seenBy: socket.userId,
 						});
@@ -709,20 +768,22 @@ export function initSocket(httpServer) {
 		});
 
 		socket.on("conversation:join", async ({ conversationId }) => {
+			const convId = parseIntSafe(conversationId);
+			if (!convId) return;
 			try {
 				const member = await prisma.conversationMember.findFirst({
 					where: {
-						conversationId,
+						conversationId: convId,
 						userId: socket.userId,
 					},
 					});
 					if (!member) return;
-					socket.join(`conversation:${conversationId}`);
+					socket.join(`conversation:${convId}`);
 					socket.joinedConversations = socket.joinedConversations || new Set();
-					socket.joinedConversations.add(conversationId);
-					const set = convoOnline.get(conversationId) || new Set();
+					socket.joinedConversations.add(convId);
+					const set = convoOnline.get(convId) || new Set();
 					set.add(socket.userId);
-					convoOnline.set(conversationId, set);
+					convoOnline.set(convId, set);
 			} catch (e) {
 				console.error("conversation:join error", e);
 			}
@@ -730,11 +791,13 @@ export function initSocket(httpServer) {
 
 		// Allow clients to explicitly leave a conversation room when they close it.
 		socket.on("conversation:leave", async ({ conversationId }) => {
+			const convId = parseIntSafe(conversationId);
+			if (!convId) return;
 			try {
-				if (!socket.joinedConversations || !socket.joinedConversations.has(conversationId)) return;
-				socket.leave(`conversation:${conversationId}`);
-				socket.joinedConversations.delete(conversationId);
-				const set = convoOnline.get(conversationId);
+				if (!socket.joinedConversations || !socket.joinedConversations.has(convId)) return;
+				socket.leave(`conversation:${convId}`);
+				socket.joinedConversations.delete(convId);
+				const set = convoOnline.get(convId);
 				if (set) {
 					// If the user has other sockets, only remove their presence if
 					// none of the other sockets remain joined to this conversation.
@@ -743,15 +806,15 @@ export function initSocket(httpServer) {
 					for (const sid of otherSids) {
 						if (sid === socket.id) continue;
 						const s = io.sockets.sockets.get(sid);
-						if (s && s.joinedConversations && s.joinedConversations.has(conversationId)) {
+						if (s && s.joinedConversations && s.joinedConversations.has(convId)) {
 							stillPresent = true;
 							break;
 						}
 					}
 					if (!stillPresent) {
 						set.delete(socket.userId);
-						if (set.size === 0) convoOnline.delete(conversationId);
-						else convoOnline.set(conversationId, set);
+						if (set.size === 0) convoOnline.delete(convId);
+						else convoOnline.set(convId, set);
 					}
 				}
 			} catch (e) {

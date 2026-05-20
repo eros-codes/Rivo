@@ -192,11 +192,14 @@ stats.forEach((el) => {
 			duration: 1.5,
 			ease: "power2.out",
 			onUpdate() {
-				el.innerHTML =
-					Math.round(this.targets()[0].val) +
-					"<span>" +
-					suffix +
-					"</span>";
+				const val = Math.round(this.targets()[0].val);
+				// update text and suffix safely without using innerHTML
+				while (el.firstChild) el.removeChild(el.firstChild);
+				el.appendChild(document.createTextNode(String(val)));
+				const span = document.createElement('span');
+				span.className = 'stat-suffix';
+				span.textContent = suffix;
+				el.appendChild(span);
 			},
 		},
 	);
@@ -333,7 +336,10 @@ gsap.to(".blob-2", {
 		d.msgs.forEach((m) => {
 			const div = document.createElement("div");
 			div.className = "pm pm-" + (m.out ? "out" : "in");
-			div.innerHTML = `<p class="pm-text">${m.text}</p>`;
+			const p = document.createElement('p');
+			p.className = 'pm-text';
+			p.textContent = m.text || '';
+			div.appendChild(p);
 			pmMsgs.appendChild(div);
 		});
 

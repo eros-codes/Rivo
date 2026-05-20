@@ -1,5 +1,5 @@
 {
-  "name": "Rivo",
+  "name": "rivo",
   "version": "1.0.0",
   "type": "module",
   "description": "Conversations, uninterrupted",
@@ -7,7 +7,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon server/index.js",
-    "start": "npm run build && node server/index.js",
+    "start": "node server/index.js",
     "server": "nodemon server/index.js",
     "mock-vault": "node server/scripts/mock_vault_server.js",
     "push-keks": "node server/scripts/push_keks_to_vault.js",
@@ -16,8 +16,9 @@
     "verify-rotation": "node server/scripts/verify_decrypted_after_rotation.js",
     "test:enc": "node server/scripts/test_message_encryption.js",
     "test:integration": "node tests/integration/socket-flow.js",
-    "gen-kek": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"",
-    "lint": "eslint \"src/**\" \"server/**\" --ext .js"
+    "gen-kek": "node server/scripts/gen_kek.js",
+    "lint": "eslint \"src/**\" \"server/**\" --ext .js",
+    "prepare": "node -e \"require('fs').copyFileSync('node_modules/socket.io-client/dist/socket.io.esm.min.js', 'public/js/socket.io.esm.min.js')\""
   },
   "author": "",
   "license": "ISC",
@@ -37,7 +38,9 @@
     "prisma": "^6.19.3",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
-    "web-push": "^3.5.0"
+    "nodemailer": "^6.9.3",
+    "web-push": "^3.5.0",
+    "sharp": "^0.32.1"
   },
   "devDependencies": {
     "esbuild": "^0.28.0",

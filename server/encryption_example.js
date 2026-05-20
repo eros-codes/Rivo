@@ -1,7 +1,7 @@
 "use strict";
 
-const crypto = require("crypto");
-const { generateDEK, encryptMessage, wrapDEK, unwrapDEK, decryptMessage } = require("./utils/encryption");
+import crypto from "node:crypto";
+import { generateDEK, encryptMessage, wrapDEK, unwrapDEK, decryptMessage } from "./utils/encryption.js";
 
 // Demo: if no KEK set in env, create an ephemeral one for the demo only.
 if (!process.env.KEK_V1) {

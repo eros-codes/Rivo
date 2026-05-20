@@ -11,20 +11,7 @@
     <link rel="apple-touch-icon" href="/assets/icons/Icon-180.png">
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/icons/Favicon-32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/assets/icons/Favicon-16.png">
-    <script>
-      const accent = localStorage.getItem("rivo-accent");
-      if (accent) {
-        document.documentElement.style.setProperty("--accent", accent);
-        // circles
-        const d = (hex, p) => {
-          const n = parseInt(hex.replace("#", ""), 16);
-          const c = v => Math.max(0, v - Math.round(2.55 * p)).toString(16).padStart(2, "0");
-          return `#${c(n >> 16)}${c((n >> 8) & 255)}${c(n & 255)}`;
-        };
-        document.documentElement.style.setProperty("--accent-gradient-top", `radial-gradient(circle at top, ${d(accent, 8)}, ${accent})`);
-        document.documentElement.style.setProperty("--accent-gradient-bottom", `radial-gradient(circle at right, ${d(accent, 8)}, ${accent})`);
-      }
-    </script>
+    <script src="auth-accent.js"></script>
   </head>
   <body class="login-body">
     <div class="container">
@@ -37,6 +24,7 @@
           type="text"
           id="login-username"
           name="login-username"
+          autocomplete="username"
           required
           class="form-input"
           minlength="6"
@@ -48,6 +36,7 @@
             type="password"
             id="login-password"
             name="login-password"
+            autocomplete="current-password"
             required
             minlength="8"
             class="form-input password-input"
@@ -87,6 +76,7 @@
           type="text"
           id="name"
           name="last-name"
+          autocomplete="name"
           required
           class="form-input"
           placeholder="Your name"
@@ -96,6 +86,7 @@
           type="email"
           id="email"
           name="email"
+          autocomplete="email"
           required
           class="form-input"
           placeholder="you@example.com"
@@ -105,6 +96,7 @@
           type="text"
           id="username"
           name="username"
+          autocomplete="username"
           required
           class="form-input"
           placeholder="your_username"
@@ -165,11 +157,14 @@
         </div>
         <input type="hidden" name="code" id="code-hidden" value="" maxlength="6"/>
         <input type="submit" value="Verify" class="form-submit" />
-        <button class="timer" id="code-resend-timer">1:00</button>
+        <button type="button" class="timer" id="code-resend-timer">1:00</button>
         <a href="#" class="go-back" id="back-to-signup">Back</a>
       </form>
 
       <form action="post" class="form password">
+        <!-- Hidden username field to help password managers and accessibility -->
+        <input type="text" id="password-username" name="username" autocomplete="username"
+          style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true" tabindex="-1" />
         <h1 class="form-title">Set Your Password</h1>
         <label for="password" class="form-label">Password</label>
         <div class="password-wrapper">
@@ -177,6 +172,7 @@
             type="password"
             id="password"
             name="password"
+            autocomplete="new-password"
             class="form-input password-input"
             placeholder="8 or more characters"
             minlength="8"
@@ -201,6 +197,7 @@
             type="password"
             id="confirm-password"
             name="confirm-password"
+            autocomplete="new-password"
             class="form-input password-input"
             placeholder="Re-enter your password"
             minlength="8"
@@ -230,6 +227,7 @@
           type="text"
           name="comfirm"
           id="comfirm"
+          autocomplete="username"
           class="form-input"
           placeholder="Email or Username"
           required

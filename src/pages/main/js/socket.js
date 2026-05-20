@@ -1,4 +1,4 @@
-import { io } from "/node_modules/socket.io-client/dist/socket.io.esm.min.js";
+import { io } from "/js/socket.io.esm.min.js";
 
 let socket = null;
 
@@ -27,6 +27,7 @@ export function initSocket(
 	onTypingStop,
 	onMessagePinned,
 	onUserUpdated,
+	onContactRemoved,
 ) {
 	socket = io({
 		withCredentials: true,
@@ -65,6 +66,14 @@ export function initSocket(
 			onUserUpdated?.(user);
 		} catch (e) {
 			/* ignore handler errors */
+		}
+	});
+
+	socket.on("contact:removed", (payload) => {
+		try {
+			onContactRemoved?.(payload);
+		} catch (e) {
+			/* ignore */
 		}
 	});
 

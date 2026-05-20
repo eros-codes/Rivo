@@ -1,12 +1,14 @@
 import express from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import dotenv from "dotenv";
 import { createServer } from "http";
 import { resolve } from "path";
 import { existsSync } from "fs";
 import { initSocket } from "./socket/index.js";
-import { initKeyStore } from "./utils/encryption.js";
+import { initKeyStore, wrapDEK, generateDEK } from "./utils/encryption.js";
 import * as Sentry from "@sentry/node";
 
 import authRoutes from "./routes/auth.js";
@@ -37,6 +39,61 @@ const allowedOrigins = new Set([
 	"https://www.rivo.ir",
 	"https://chat.rivo.ir",
 ]);
+// Security headers
+// Use Helmet for common security headers. CSP and HSTS are applied only in production
+app.use(helmet());
+try {
+    app.use(helmet.hsts({ maxAge: 31536000, includeSubDomains: true, preload: true }));
+} catch (e) {
+    console.warn('HSTS setup failed', e);
+}
+
+// Ensure CSP allows blob: for images (some browsers use blob: URLs for uploads)
+app.use((req, res, next) => {
+	// Skip static asset requests and avoid running more than once per request
+	if (req.path && (req.path.startsWith('/assets') || req.path.startsWith('/fonts') || req.path.startsWith('/icons'))) return next();
+	if (res.locals && res.locals.__csp_augmented) return next();
+	res.locals = res.locals || {};
+	res.locals.__csp_augmented = true;
+
+	const existing = res.getHeader && res.getHeader('Content-Security-Policy');
+	if (existing) {
+		try {
+			let updated = String(existing);
+			// ensure img-src contains blob:
+			updated = updated.replace(/img-src\s+([^;]+)/, (m, p1) => {
+				if (p1.includes('blob:')) return m;
+				return `img-src ${p1} blob:`;
+			});
+			// ensure connect-src contains blob:
+			if (/connect-src\s+[^;]+/.test(updated)) {
+				updated = updated.replace(/connect-src\s+([^;]+)/, (m, p1) => {
+					if (p1.includes('blob:')) return m;
+					return `connect-src ${p1} blob:`;
+				});
+			} else {
+				// add connect-src with sensible defaults
+				updated = updated.replace(/(default-src\s+'self';?)/, `$1 connect-src 'self' blob: wss: ws:;`);
+			}
+			res.setHeader('Content-Security-Policy', updated);
+		} catch (e) {
+			// if anything goes wrong, fall back to a permissive but safe CSP including connect-src blob
+			res.setHeader('Content-Security-Policy', "default-src 'self'; base-uri 'self'; connect-src 'self' blob: wss: ws:; script-src 'self'; script-src-attr 'none'; style-src 'self' https: 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' https: data:; form-action 'self'; frame-ancestors 'self'; object-src 'none'; upgrade-insecure-requests");
+		}
+	} else {
+		res.setHeader('Content-Security-Policy', "default-src 'self'; base-uri 'self'; connect-src 'self' blob: wss: ws:; script-src 'self'; script-src-attr 'none'; style-src 'self' https: 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' https: data:; form-action 'self'; frame-ancestors 'self'; object-src 'none'; upgrade-insecure-requests");
+	}
+	next();
+});
+
+// Rate limiter for auth endpoints to mitigate brute-force attacks
+const authLimiter = rateLimit({
+	windowMs: (Number(process.env.AUTH_RATE_WINDOW_MINUTES) || 15) * 60 * 1000,
+	max: Number(process.env.AUTH_RATE_MAX) || 10,
+	standardHeaders: true,
+	legacyHeaders: false,
+});
+
 app.use(
 	cors({
 		origin: (origin, callback) => {
@@ -63,6 +120,9 @@ const csrfExcluded = new Set([
 	"/api/auth/login",
 	"/api/auth/register",
 	"/api/auth/reset-password",
+	// Allow unauthenticated verification flows
+	"/api/auth/send-code",
+	"/api/auth/verify-code",
 ]);
 
 function csrfProtection(req, res, next) {
@@ -146,7 +206,7 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
-app.use("/api/auth", authRoutes);
+app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/contacts", contactRoutes);
 app.use("/api/conversations", conversationRoutes);
@@ -199,6 +259,24 @@ if (process.env.SENTRY_DSN) {
 			process.exit(1);
 		} else {
 			console.warn('KEK not configured. For development, run `npm run gen-kek` to generate a base64 KEK and add it to your .env as KEK_V1=<base64>');
+		}
+	}
+
+	// Quick runtime KEK sanity check: attempt to wrap a test DEK. This will
+	// surface missing/invalid KEKs early. In development, the ALLOW_EPHEMERAL_KEK
+	// opt-in can allow an ephemeral KEK to be generated; in production this will
+	// fail and we warn/abort.
+	try {
+		wrapDEK(generateDEK());
+	} catch (e) {
+		console.error("KEK sanity check failed:", e && e.message ? e.message : e);
+		if ((process.env.SECRET_PROVIDER || "").toLowerCase() === "vault") {
+			console.error("SECRET_PROVIDER=vault but KEK unwrap/wrap failed — aborting startup.");
+			process.exit(1);
+		} else {
+			console.warn(
+				'KEK not configured or invalid. For development, run `npm run gen-kek` and add KEK_V1 to your .env. To allow an ephemeral dev-only KEK, set `ALLOW_EPHEMERAL_KEK=1` (do NOT use in production).',
+			);
 		}
 	}
 	initSocket(httpServer);

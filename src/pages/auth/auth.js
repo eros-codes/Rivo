@@ -1,7 +1,6 @@
 import { showForm, showError, clearError } from "./js/auth-ui.js";
 import { isValidEmail, isValidUsername } from "./js/auth-validate.js";
 import {
-	getSentCode,
 	sendCode,
 	startResendTimer,
 	clearResendTimer,
@@ -24,6 +23,7 @@ document.addEventListener("DOMContentLoaded", function () {
 	const signupForm = document.querySelector(".form.signup");
 	const signupName = document.getElementById("name");
 	const signupEmail = document.getElementById("email");
+	const signupBtn = document.getElementById("signup-btn");
 	const signupUsername = document.getElementById("username");
 	const showLogIn = document.getElementById("show-login");
 
@@ -42,7 +42,30 @@ document.addEventListener("DOMContentLoaded", function () {
 
 	const allForms = document.querySelectorAll(".form");
 
+	function setFormControlsDisabled(form, disabled) {
+		if (!form) return;
+		const controls = form.querySelectorAll('input,button,select,textarea');
+		controls.forEach((el) => {
+			if (!el) return;
+			// keep hidden inputs enabled
+			if (el.type && el.type.toLowerCase() === 'hidden') return;
+			try {
+				el.disabled = Boolean(disabled);
+				if (disabled) {
+					el.classList.add('sending');
+					el.setAttribute('aria-disabled', 'true');
+				} else {
+					el.classList.remove('sending');
+					el.removeAttribute('aria-disabled');
+				}
+			} catch (e) {
+				/* ignore */
+			}
+		});
+	}
+
 	let forgotPass = false;
+	let _verificationEmail = null;
 
 	// ─── Auto-fill remembered user ────────────────────────────────────────────
 	const remembered = localStorage.getItem("rememberedUser");
@@ -130,7 +153,8 @@ document.addEventListener("DOMContentLoaded", function () {
 				// Server sets HttpOnly cookie for auth; persist only non-sensitive user info.
 				// Keep `user` in localStorage for UI; ensure no JWT/token is stored anywhere.
 				localStorage.setItem("user", JSON.stringify(data.user));
-				window.location.href = "/chat/main.html";
+				// Redirect to chat app root
+				window.location.href = "/chat";
 			} catch {
 				showError(loginUsername, "Connection error");
 			}
@@ -145,14 +169,18 @@ document.addEventListener("DOMContentLoaded", function () {
 		if (showSignUp) {
 			showSignUp.addEventListener("click", () => {
 				showForm(allForms, signupForm);
+				// reset signup form state when revealing the signup form
+				setFormControlsDisabled(signupForm, false);
 			});
 		}
 	}
 
 	// ─── Sign up form ─────────────────────────────────────────────────────────
 	if (signupForm) {
-		signupForm.addEventListener("submit", (e) => {
+		signupForm.addEventListener("submit", async (e) => {
 			e.preventDefault();
+			// disable entire signup form immediately to prevent double-clicks
+			setFormControlsDisabled(signupForm, true);
 			let valid = true;
 
 			if (
@@ -182,11 +210,22 @@ document.addEventListener("DOMContentLoaded", function () {
 				clearError(signupUsername);
 			}
 
-			if (!valid) return;
+			if (!valid) {
+				setFormControlsDisabled(signupForm, false);
+				return;
+			}
 
 			forgotPass = false;
 			clearCodeInputs(verifyForm);
-			sendCode(signupEmail.value.trim());
+			try {
+				await sendCode(signupEmail.value.trim());
+				_verificationEmail = signupEmail.value.trim();
+			} catch (err) {
+				showError(signupEmail, err.message || 'Failed to send code');
+				// re-enable entire form so user can retry
+				setFormControlsDisabled(signupForm, false);
+				return;
+			}
 			startResendTimer(codeResendTimer);
 			showForm(allForms, verifyForm);
 			const firstDigit = verifyForm.querySelector(".code-digit");
@@ -244,7 +283,7 @@ document.addEventListener("DOMContentLoaded", function () {
 			});
 		});
 
-		verifyForm.addEventListener("submit", function (e) {
+		verifyForm.addEventListener("submit", async function (e) {
 			e.preventDefault();
 			const code = Array.from(codeDigits)
 				.map((i) => i.value || "")
@@ -258,51 +297,75 @@ document.addEventListener("DOMContentLoaded", function () {
 				if (target) {
 					showError(target, "Please enter the full 6-digit code.");
 					if (typeof target.focus === "function") target.focus();
-				} else {
-					alert("Please enter the full code.");
 				}
 				return;
 			}
 
 			if (codeHidden) codeHidden.value = code;
 
-			if (String(getSentCode()) === code) {
+			try {
+				const res = await fetch('/api/auth/verify-code', {
+					method: 'POST',
+					credentials: 'include',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ email: _verificationEmail, code }),
+				});
+				if (!res.ok) {
+					const err = await res.json().catch(() => ({}));
+					const target = codeDigits[0] || codeHidden || verifyForm.querySelector('input');
+					if (target) {
+						showError(target, err.error || 'The code is incorrect. Please try again.');
+						clearCodeInputs(verifyForm);
+						if (typeof target.focus === 'function') target.focus();
+					}
+					return;
+				}
+				// Verified successfully
 				clearCodeInputs(verifyForm);
 				showForm(allForms, passwordForm);
 				if (passwordInput) passwordInput.focus();
-			} else {
-				const target =
-					codeDigits[0] ||
-					codeHidden ||
-					verifyForm.querySelector("input");
-				if (target) {
-					showError(
-						target,
-						"The code is incorrect. Please try again.",
-					);
-					clearCodeInputs(verifyForm);
-					if (typeof target.focus === "function") target.focus();
-				} else {
-					alert("The code is incorrect. Please try again.");
-				}
+			} catch (err) {
+				showError(codeDigits[0] || codeHidden || verifyForm.querySelector('input'), 'Connection error');
 			}
 		});
 
 		if (codeResendTimer) {
-			codeResendTimer.addEventListener("click", () => {
+			codeResendTimer.addEventListener("click", async () => {
 				if (codeResendTimer.classList.contains("disabled")) return;
-				clearCodeInputs(verifyForm);
-				sendCode(forgotInput.value.trim());
-				startResendTimer(codeResendTimer);
+					clearCodeInputs(verifyForm);
+
+				// Prefer the stored verification email; fall back to visible inputs.
+				const candidate = _verificationEmail || (forgotInput && forgotInput.value && forgotInput.value.trim()) || (signupEmail && signupEmail.value && signupEmail.value.trim());
+						const target = verifyForm ? (verifyForm.querySelector('.code-digit') || verifyForm.querySelector('input')) : null;
+						// Clear any existing verification error when user explicitly resends the code
+						if (target) clearError(target);
+
+				if (!candidate) {
+					if (target) showError(target, 'No email available to resend the code');
+					return;
+				}
+
+				try {
+					await sendCode(candidate);
+					// Update stored email in case it was missing
+					_verificationEmail = candidate;
+					startResendTimer(codeResendTimer);
+				} catch (err) {
+					if (target) showError(target, err.message || 'Failed to resend code');
+				}
 			});
 		}
 
 		if (backToSignUp) {
 			backToSignUp.addEventListener("click", () => {
 				clearResendTimer();
-				forgotPass
-					? showForm(allForms, forgotForm)
-					: showForm(allForms, signupForm);
+				if (forgotPass) {
+					showForm(allForms, forgotForm);
+				} else {
+					showForm(allForms, signupForm);
+					// ensure signup form enabled when returning
+					setFormControlsDisabled(signupForm, false);
+				}
 			});
 		}
 	}
@@ -384,7 +447,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
 	// ─── Forgot password form ─────────────────────────────────────────────────
 	if (forgotForm) {
-		forgotForm.addEventListener("submit", function (e) {
+		forgotForm.addEventListener("submit", async function (e) {
 			e.preventDefault();
 
 			if (
@@ -401,7 +464,13 @@ document.addEventListener("DOMContentLoaded", function () {
 
 			forgotPass = true;
 			clearCodeInputs(verifyForm);
-			sendCode();
+			try {
+				await sendCode(forgotInput.value.trim());
+				_verificationEmail = forgotInput.value.trim();
+			} catch (err) {
+				showError(forgotInput, err.message || 'Failed to send code');
+				return;
+			}
 			startResendTimer(codeResendTimer);
 			showForm(allForms, verifyForm);
 			const firstDigit = verifyForm?.querySelector(".code-digit");

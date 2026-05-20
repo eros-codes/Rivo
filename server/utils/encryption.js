@@ -14,6 +14,7 @@ const WRAP_ALGO = "aes-256-gcm";
 let _vaultCache = null;
 let _vaultCacheTs = 0;
 const _vaultCacheTtl = Number(process.env.VAULT_CACHE_TTL || 60) * 1000;
+let _vaultRefreshInterval = null;
 
 function _decodeKey(str) {
   if (!str) throw new Error("empty key string");
@@ -64,6 +65,17 @@ function _getKekBuffer(keyId = "v1") {
         throw new Error(`invalid KEK in env ${name}: ${err.message}`);
       }
     }
+  }
+  // In development, allow an explicit opt-in to generate an ephemeral KEK.
+  // This is destructive across restarts and MUST NOT be enabled in production.
+  const allowEphemeral = (process.env.ALLOW_EPHEMERAL_KEK || "").toLowerCase();
+  // Prevent accidental use of ephemeral KEK in production
+  if (process.env.NODE_ENV === "production" && (allowEphemeral === "1" || allowEphemeral === "true")) {
+    throw new Error("ALLOW_EPHEMERAL_KEK must not be used in production");
+  }
+  if (process.env.NODE_ENV === "development" && (allowEphemeral === "1" || allowEphemeral === "true")) {
+    console.warn(`No KEK found (tried: ${candidateNames.join(", ")}). Generating ephemeral KEK because ALLOW_EPHEMERAL_KEK is set. This KEK will be lost on restart.`);
+    return crypto.randomBytes(DEK_LENGTH);
   }
   throw new Error(`no KEK found (tried: ${candidateNames.join(", ")})`);
 }
@@ -216,6 +228,20 @@ async function initKeyStore() {
     if (data && typeof data === "object") {
       _vaultCache = data;
       _vaultCacheTs = Date.now();
+      // schedule periodic refresh to avoid cache expiry gaps
+      try {
+        const refreshMs = Math.max(1000, Math.floor(_vaultCacheTtl * 0.8));
+        if (_vaultRefreshInterval) clearInterval(_vaultRefreshInterval);
+        _vaultRefreshInterval = setInterval(() => {
+          refreshKeyStore().catch((e) => {
+            // Log but do not crash the process
+            // eslint-disable-next-line no-console
+            console.error('vault refresh failed', e && e.message ? e.message : e);
+          });
+        }, refreshMs);
+      } catch (e) {
+        // ignore interval setup failures
+      }
       return;
     }
     throw new Error("empty secret data from vault");
@@ -225,4 +251,22 @@ async function initKeyStore() {
   }
 }
 
-export { generateDEK, encryptMessage, wrapDEK, unwrapDEK, decryptMessage, initKeyStore };
+// Attempt to refresh the in-memory vault cache by fetching secrets again.
+// This helps avoid a situation where the short TTL expires and code falls back
+// to env vars (which may be absent when SECRET_PROVIDER=vault).
+async function refreshKeyStore() {
+  const provider = (process.env.SECRET_PROVIDER || "env").toLowerCase();
+  if (provider !== "vault") return;
+  try {
+    const data = await _fetchVaultSecrets();
+    if (data && typeof data === "object") {
+      _vaultCache = data;
+      _vaultCacheTs = Date.now();
+    }
+  } catch (e) {
+    // propagate error to caller; caller should log but must not crash
+    throw e;
+  }
+}
+
+export { generateDEK, encryptMessage, wrapDEK, unwrapDEK, decryptMessage, initKeyStore, refreshKeyStore };

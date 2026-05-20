@@ -8,11 +8,14 @@ const router = Router();
 
 // ─── Get messages of a conversation ──────────────────────────────────────────
 router.get("/:conversationId", requireAuth, async (req, res) => {
-	const conversationId = parseInt(req.params.conversationId);
+	const conversationId = parseIntSafe(req.params.conversationId);
+	if (!conversationId) return res.status(400).json({ error: "Invalid conversationId" });
 	// pagination params
-	const limit = parseInt(req.query.limit) || 50;
+	const MAX_FETCH_LIMIT = parseInt(process.env.MAX_FETCH_LIMIT || "200", 10);
+	let limit = parseInt(req.query.limit, 10) || 50;
+	if (limit > MAX_FETCH_LIMIT) limit = MAX_FETCH_LIMIT;
 	const before = req.query.before ? new Date(req.query.before) : null;
-	const beforeId = req.query.beforeId ? parseInt(req.query.beforeId) : null;
+	const beforeId = req.query.beforeId ? parseIntSafe(req.query.beforeId) : null;
 
 	try {
 		// check that user is member of this conversation
@@ -193,7 +196,7 @@ router.post("/", requireAuth, async (req, res) => {
 	try {
 		const member = await prisma.conversationMember.findFirst({
 			where: {
-				conversationId,
+				conversationId: convId,
 				userId: req.userId,
 			},
 		});
@@ -222,7 +225,7 @@ router.post("/", requireAuth, async (req, res) => {
 
 		const message = await prisma.message.create({
 			data: {
-				conversationId,
+				conversationId: convId,
 				senderId: req.userId,
 				// keep legacy text column null during migration
 				text: null,
@@ -251,7 +254,7 @@ router.post("/", requireAuth, async (req, res) => {
 
 		// lastMessageAt conversation رو آپدیت کن
 		await prisma.conversation.update({
-			where: { id: conversationId },
+			where: { id: convId },
 			data: { lastMessageAt: message.createdAt },
 		});
 

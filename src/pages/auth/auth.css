@@ -125,6 +125,20 @@
 .form-submit:hover {
     background-color: #000;
 }
+
+/* Sending / disabled state for submit buttons — slightly brighter to indicate action */
+.form-submit.sending,
+.form-submit[disabled] {
+    filter: brightness(1.06);
+    cursor: wait;
+    pointer-events: none;
+    opacity: 0.98;
+    box-shadow: 0 6px 18px rgba(11,116,255,0.06);
+}
+.form-submit.sending:hover,
+.form-submit[disabled]:hover {
+    background-color: var(--header-color);
+}
 .signup > span {
     display: flex;
     gap: 0.75rem;

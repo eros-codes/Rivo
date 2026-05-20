@@ -741,11 +741,19 @@ function assertStatus (response, dataSource) {
 }
 
 async function getETag (dataSource) {
-  const response = await fetch(dataSource, { method: 'HEAD' });
-  assertStatus(response, dataSource);
-  const eTag = response.headers.get('etag');
-  warnETag(eTag);
-  return eTag
+  try {
+    const response = await fetch(dataSource, { method: 'HEAD' });
+    if (Math.floor(response.status / 100) !== 2) {
+      // HEAD not supported or non-2xx response — fall back to full GET later
+      return null
+    }
+    const eTag = response.headers.get('etag');
+    warnETag(eTag);
+    return eTag
+  } catch (err) {
+    // Network error or other issue - fall back to full GET later
+    return null
+  }
 }
 
 async function getETagAndData (dataSource) {

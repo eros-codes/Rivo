@@ -587,6 +587,9 @@
 					</div>
 				</div>
 				<form class="settings-change-password-form" id="settings-change-password-form" style="display: none" novalidate>
+					<!-- Hidden username field for password managers / accessibility -->
+					<input type="text" id="settings-username" name="username" autocomplete="username" 
+						style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true" tabindex="-1" />
 					<div class="settings-change-password-field">
 						<label>Your password must be at least 8 characters long.</label>
 						<div class="password-wrapper">

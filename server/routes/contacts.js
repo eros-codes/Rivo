@@ -91,6 +91,29 @@ router.get("/", requireAuth, async (req, res) => {
 			}
 		}
 
+		// Strip sensitive encrypted fields from message previews and only
+		// return a safe preview object for the client to display.
+		for (const cc of sanitized) {
+			try {
+				const conv = cc.conversation;
+				if (!conv || !Array.isArray(conv.messages) || conv.messages.length === 0) continue;
+				const m = conv.messages[0];
+				const preview = {
+					id: m.id,
+					conversationId: m.conversationId,
+					senderId: m.senderId,
+					text: m.text || null,
+					createdAt: m.createdAt,
+					isDeleted: m.isDeleted,
+					isEdited: m.isEdited,
+					isPinned: m.isPinned,
+				};
+				conv.messages = [preview];
+			} catch (e) {
+				/* ignore preview sanitization errors */
+			}
+		}
+
 		// Auto-create saved messages for existing users
 		const hasSaved = contacts.some((c) => c.isSaved);
 		if (!hasSaved) {
@@ -141,7 +164,6 @@ router.get("/", requireAuth, async (req, res) => {
 		}
 
 		return res.json(sanitized);
-		return res.json(sanitized);
 	} catch (err) {
 		console.error(err);
 		return res.status(500).json({ error: "Server error" });
@@ -182,6 +204,45 @@ router.post("/", requireAuth, async (req, res) => {
 
 		if (existing) {
 			return res.status(409).json({ error: "Contact already exists" });
+		}
+
+		// If the target user already has us as a contact, reuse their
+		// conversation and only create our side. This prevents creating
+		// duplicate contact rows for the target user when re-adding.
+		const reciprocal = await prisma.contact.findFirst({
+			where: {
+				ownerId: targetUser.id,
+				contactId: req.userId,
+			},
+		});
+
+		if (reciprocal) {
+			const contact = await prisma.contact.create({
+				data: {
+					ownerId: req.userId,
+					contactId: targetUser.id,
+					conversationId: reciprocal.conversationId,
+					nickname: name || null,
+				},
+				include: {
+					contact: {
+						select: {
+							id: true,
+							name: true,
+							username: true,
+							profilePics: true,
+							bio: true,
+							isOnline: true,
+							lastSeen: true,
+							privacyOnline: true,
+							privacyEmail: true,
+							privacyProfile: true,
+						},
+					},
+				},
+			});
+
+			return res.status(201).json(contact);
 		}
 
 		// Create conversation and contacts inside a single transaction so
@@ -292,7 +353,58 @@ router.delete("/:id", requireAuth, async (req, res) => {
 			return res.status(404).json({ error: "Contact not found" });
 		}
 
-		await prisma.contact.delete({ where: { id: contactId } });
+		// Delete the contact and any reciprocal contact entries for the
+		// other user. Use a transaction to avoid partial deletes.
+		await prisma.$transaction(async (tx) => {
+			await tx.contact.delete({ where: { id: contactId } });
+			await tx.contact.deleteMany({
+				where: { ownerId: contact.contactId, contactId: req.userId },
+			});
+		});
+
+		// If the conversation no longer has contacts, remove it to avoid
+		// leaving orphaned conversations around.
+		try {
+			const remaining = await prisma.contact.findFirst({
+				where: { conversationId: contact.conversationId },
+			});
+			if (!remaining && contact.conversationId) {
+				await prisma.conversation.delete({
+					where: { id: contact.conversationId },
+				});
+			}
+		} catch (e) {
+			// ignore cleanup failures
+		}
+
+		// Notify affected connected clients via socket.io so UIs update in real-time.
+		try {
+			const io = globalThis.__rivo_io;
+			if (io) {
+				// Emit to sockets belonging to the removed contact (the other user)
+				for (const s of io.sockets.sockets.values()) {
+					try {
+						if (s && s.userId === contact.contactId) {
+							s.emit("contact:removed", {
+								contactUserId: req.userId,
+								conversationId: contact.conversationId,
+							});
+						}
+						// Also inform the requester's other sockets so multiple tabs stay in sync
+						if (s && s.userId === req.userId) {
+							s.emit("contact:removed", {
+								contactUserId: contact.contactId,
+								conversationId: contact.conversationId,
+							});
+						}
+					} catch (e) {
+						/* ignore per-socket failures */
+					}
+				}
+			}
+		} catch (e) {
+			console.error("emit contact removed failed", e);
+		}
 
 		return res.json({ success: true });
 	} catch (err) {

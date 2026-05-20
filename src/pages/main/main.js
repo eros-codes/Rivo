@@ -815,6 +815,18 @@ document.addEventListener("DOMContentLoaded", async function () {
 			if (normalized.conversationId) {
 				emitMessageSeen(normalized.conversationId);
 			}
+
+			// Ensure the send input and unblock action reflect the contact's
+			// blocked state immediately after adding.
+			if (normalized.isBlocked) {
+				messageContainer.style.display = "none";
+				const _ub = unblockActionBtn[0];
+				if (_ub) _ub.style.display = "flex";
+			} else {
+				messageContainer.style.display = "flex";
+				const _ub = unblockActionBtn[0];
+				if (_ub) _ub.style.display = "none";
+			}
 		},
 	);
 
@@ -1012,6 +1024,30 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}
 		},
 		_handleUserUpdated
+	,
+		// contact removed handler
+		(payload) => {
+			try {
+				const partnerUserId = payload?.contactUserId || payload?.userId || payload?.contactId;
+				if (!partnerUserId) return;
+				const idx = contacts.findIndex((c) => c.contactId === partnerUserId);
+				if (idx === -1) return;
+				const removed = contacts.splice(idx, 1)[0];
+				// remove DOM card if present
+				const card = document.querySelector(`[data-user-id="${removed.id}"]`);
+				if (card) card.remove();
+				updateContactsEmptyState();
+				// if this conversation is currently open, close it
+				if (state.contactUserId === removed.id) {
+					try { closeChat(); } catch (e) { /* ignore */ }
+				}
+				updateTotalUnreadCount();
+				sortActiveChats();
+				sortContacts();
+			} catch (e) {
+				/* ignore handler errors */
+			}
+		}
 	);
 
 	// Rejoin active conversation after socket reconnect and emit leave on unload

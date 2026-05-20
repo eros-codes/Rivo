@@ -26,6 +26,7 @@ model User {
   ownedContacts  Contact[] @relation("owner")
   contacts       Contact[] @relation("contact")
   messages       Message[]
+  pushSubscriptions PushSubscription[]
   conversations  ConversationMember[]
 }
 
@@ -95,4 +96,17 @@ model Message {
   forwardedText  String?
   createdAt      DateTime     @default(now())
   @@index([conversationId])
+}
+
+model PushSubscription {
+  id        Int      @id @default(autoincrement())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  lastUsed  DateTime?
+  @@index([userId])
 }

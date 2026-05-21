@@ -6,13 +6,18 @@ import { generateDEK, encryptMessage, wrapDEK, unwrapDEK, decryptMessage } from 
 import { parseIntSafe, MAX_MESSAGE_LENGTH } from "../utils/validators.js";
 
 export function initSocket(httpServer) {
-	const allowedOrigins = new Set([
+	const defaultOrigins = [
 		"http://localhost:3000",
 		"http://127.0.0.1:3000",
 		"https://rivo.ir",
 		"https://www.rivo.ir",
 		"https://chat.rivo.ir",
-	]);
+	];
+	const allowedOrigins = new Set(
+		(process.env.ALLOWED_ORIGINS
+			? process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
+			: defaultOrigins)
+	);
 	// Configure ping settings so the server detects sudden network
 	// failures (e.g., phone powered off) more quickly than the default.
 	const pingInterval = parseInt(process.env.SOCKET_PING_INTERVAL || "5000", 10);
@@ -85,15 +90,34 @@ export function initSocket(httpServer) {
 
 	// ─── Connection ───────────────────────────────────────────────────────────
 	io.on("connection", async (socket) => {
+		// Do not auto-join conversation rooms on connect. Clients should
+		// explicitly join a conversation when the user opens that chat.
+		socket.joinedConversations = new Set();
+
+		// Lightweight per-socket membership cache to avoid repeated DB hits
+		socket._memberCache = new Map();
+		// Per-conversation typing timestamps to throttle typing events
+		socket._lastTyping = new Map();
+		async function _isMember(convId) {
+			const key = String(convId);
+			if (socket._memberCache.has(key)) return socket._memberCache.get(key);
+			try {
+				const member = await prisma.conversationMember.findFirst({ where: { conversationId: convId, userId: socket.userId } });
+				const res = !!member;
+				socket._memberCache.set(key, res);
+				return res;
+			} catch (e) {
+				console.error('membership check failed', e);
+				return false;
+			}
+		}
+
 		try {
 			// connection logged (suppressed in production)
 			await prisma.user.update({
 				where: { id: socket.userId },
 				data: { isOnline: true },
 			});
-			// Do not auto-join conversation rooms on connect. Clients should
-			// explicitly join a conversation when the user opens that chat.
-			socket.joinedConversations = new Set();
 			// track this socket under the user's connected sockets
 			const us = userSockets.get(socket.userId) || new Set();
 			us.add(socket.id);
@@ -151,14 +175,7 @@ export function initSocket(httpServer) {
 					console.error("rate limit check failed", e);
 				}
 
-				const member = await prisma.conversationMember.findFirst({
-					where: {
-						conversationId: convId,
-						userId: socket.userId,
-					},
-				});
-
-				if (!member) {
+				if (!(await _isMember(convId))) {
 					return callback?.({ error: "Forbidden" });
 				}
 
@@ -470,13 +487,7 @@ export function initSocket(httpServer) {
 				});
 				if (!message) return callback?.({ error: "Not found" });
 
-				const member = await prisma.conversationMember.findFirst({
-					where: {
-						conversationId: message.conversationId,
-						userId: socket.userId,
-					},
-				});
-				if (!member) return callback?.({ error: "Forbidden" });
+				if (!(await _isMember(message.conversationId))) return callback?.({ error: "Forbidden" });
 
 				const updated = await prisma.message.update({
 					where: { id: msgId },
@@ -526,10 +537,13 @@ export function initSocket(httpServer) {
 			// ensure sender is a member of the conversation before emitting
 			(async () => {
 				try {
-					const member = await prisma.conversationMember.findFirst({
-						where: { conversationId: convId, userId: socket.userId },
-					});
-					if (!member) return;
+					// throttle typing events per-socket per-conversation to avoid spam
+					const THROTTLE_MS = parseInt(process.env.TYPING_THROTTLE_MS || "500", 10);
+					const now = Date.now();
+					const last = socket._lastTyping.get(convId) || 0;
+					if (now - last < THROTTLE_MS) return;
+					socket._lastTyping.set(convId, now);
+					if (!(await _isMember(convId))) return;
 					socket.to(`conversation:${convId}`).emit("typing:start", {
 						userId: socket.userId,
 						conversationId: convId,
@@ -566,10 +580,13 @@ export function initSocket(httpServer) {
 			// ensure sender is a member of the conversation before emitting
 			(async () => {
 				try {
-					const member = await prisma.conversationMember.findFirst({
-						where: { conversationId: convId, userId: socket.userId },
-					});
-					if (!member) return;
+					// throttle typing stop events to avoid spam
+					const THROTTLE_MS = parseInt(process.env.TYPING_THROTTLE_MS || "500", 10);
+					const now = Date.now();
+					const last = socket._lastTyping.get(convId) || 0;
+					if (now - last < THROTTLE_MS) return;
+					socket._lastTyping.set(convId, now);
+					if (!(await _isMember(convId))) return;
 					socket.to(`conversation:${convId}`).emit("typing:stop", {
 						userId: socket.userId,
 						conversationId: convId,
@@ -709,13 +726,7 @@ export function initSocket(httpServer) {
 			const convId = parseIntSafe(conversationId);
 			if (!convId) return callback?.({ success: true, marked: [] });
 			try {
-				const member = await prisma.conversationMember.findFirst({
-					where: {
-						conversationId: convId,
-						userId: socket.userId,
-					},
-				});
-				if (!member) return; // user is not a member of this conversation
+				if (!(await _isMember(convId))) return; // user is not a member of this conversation
 
 				// Only allow marking messages as seen if this socket explicitly
 				// joined the conversation (prevents other tabs/sockets from auto-seeing)
@@ -723,44 +734,53 @@ export function initSocket(httpServer) {
 					return callback?.({ success: true, marked: [] });
 				}
 
-				// find message ids that will be marked as seen (messages sent by others to this socket)
-				const toMark = await prisma.message.findMany({
-					where: {
-						conversationId: convId,
-						senderId: { not: socket.userId },
-						isSeen: false,
-					},
-					select: { id: true },
-				});
-
-				if (toMark.length > 0) {
-					await prisma.message.updateMany({
-						where: { id: { in: toMark.map((m) => m.id) } },
-						data: { isSeen: true },
-					});
-
-					await prisma.contact.updateMany({
+				// Batch-process unseen message ids to avoid large memory spikes
+				const BATCH_SIZE = parseInt(process.env.MESSAGE_SEEN_BATCH_SIZE || "1000", 10);
+				const MAX_COLLECT = parseInt(process.env.MESSAGE_SEEN_MAX_COLLECT || "10000", 10);
+				let totalMarked = [];
+				while (true) {
+					const toMark = await prisma.message.findMany({
 						where: {
 							conversationId: convId,
-							ownerId: socket.userId,
+							senderId: { not: socket.userId },
+							isSeen: false,
 						},
-						data: { unreadCount: 0 },
+						select: { id: true },
+						take: BATCH_SIZE,
 					});
 
-					// notify other participants only when there are messages actually marked as seen
-					socket
-						.to(`conversation:${convId}`)
-						.emit("message:seen", {
-							conversationId: convId,
-							messageIds: toMark.map((m) => m.id),
-							seenBy: socket.userId,
-						});
+					if (!toMark || toMark.length === 0) break;
 
-					callback?.({ success: true, marked: toMark.map((m) => m.id) });
+					const ids = toMark.map((m) => m.id);
+					await prisma.message.updateMany({ where: { id: { in: ids } }, data: { isSeen: true } });
+
+					try {
+						await prisma.contact.updateMany({ where: { conversationId: convId, ownerId: socket.userId }, data: { unreadCount: 0 } });
+					} catch (e) {
+						console.error('update unread failed', e);
+					}
+
+					// emit per-batch so clients can update progressively
+					socket.to(`conversation:${convId}`).emit("message:seen", {
+						conversationId: convId,
+						messageIds: ids,
+						seenBy: socket.userId,
+					});
+
+					totalMarked.push(...ids);
+					if (totalMarked.length >= MAX_COLLECT) {
+						console.warn(`message:seen truncated at ${MAX_COLLECT} ids for conv=${convId} user=${socket.userId}`);
+						break;
+					}
+
+					if (toMark.length < BATCH_SIZE) break;
 				}
-			else {
-				callback?.({ success: true, marked: [] });
-			}
+
+				if (totalMarked.length > 0) {
+					callback?.({ success: true, marked: totalMarked.length <= MAX_COLLECT ? totalMarked : undefined, markedCount: totalMarked.length });
+				} else {
+					callback?.({ success: true, marked: [] });
+				}
 			} catch (err) {
 				console.error("message:seen handler error", err);
 				callback?.({ error: "Server error" });
@@ -771,13 +791,7 @@ export function initSocket(httpServer) {
 			const convId = parseIntSafe(conversationId);
 			if (!convId) return;
 			try {
-				const member = await prisma.conversationMember.findFirst({
-					where: {
-						conversationId: convId,
-						userId: socket.userId,
-					},
-					});
-					if (!member) return;
+				if (!(await _isMember(convId))) return;
 					socket.join(`conversation:${convId}`);
 					socket.joinedConversations = socket.joinedConversations || new Set();
 					socket.joinedConversations.add(convId);

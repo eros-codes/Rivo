@@ -163,27 +163,68 @@ export function refreshUserAvatars(user) {
       }
     });
 
-    // Update a few common singleton targets (edit/profile header) if present
+    // Update a few common singleton targets (edit/profile header) if present.
+    // Only refresh those elements when they correspond to the user being
+    // updated (via a data-user-id or data-wrapper-user-id attribute), or
+    // when the element has no explicit user association but the update is
+    // for the current logged-in user (e.g., edit profile UI).
     const singleTargets = [
-      ".edit-profile-avatar",
-      ".chat-profile-picture",
-      ".chat-profile",
-      ".detail-picture img",
+      { sel: ".edit-profile-avatar", allowFallbackToCurrentUser: true },
+      { sel: ".chat-profile-picture", allowFallbackToCurrentUser: false },
+      { sel: ".chat-profile", allowFallbackToCurrentUser: false },
+      { sel: ".detail-picture img", allowFallbackToCurrentUser: true },
     ];
-    singleTargets.forEach((sel) => {
-      const el = document.querySelector(sel);
-      if (!el) return;
-      try {
-        mountAvatar(el, {
-          name,
-          nickname,
-          profilePics,
-          className: el.className || "contact-profile",
-          isOnline: !!user.isOnline,
-        });
-      } catch (e) {
-        /* ignore */
-      }
+
+    // Determine current user id from localStorage, if available
+    let currentUserId = null;
+    try {
+      const stored = localStorage.getItem("user");
+      const parsed = stored ? JSON.parse(stored) : null;
+      if (parsed && parsed.id) currentUserId = String(parsed.id);
+    } catch (e) {
+      currentUserId = null;
+    }
+
+    singleTargets.forEach(({ sel, allowFallbackToCurrentUser }) => {
+      const nodes = Array.from(document.querySelectorAll(sel));
+      nodes.forEach((el) => {
+        try {
+          // Try to find an associated user id on the element or a nearby wrapper
+          let elUserId = null;
+          try {
+            if (el.dataset && el.dataset.userId) elUserId = String(el.dataset.userId);
+            else {
+              const closest = el.closest("[data-user-id], [data-wrapper-user-id]");
+              if (closest) {
+                elUserId = String(closest.dataset.userId || closest.dataset.wrapperUserId || "");
+              }
+            }
+          } catch (e) {
+            elUserId = null;
+          }
+
+          // If element is explicitly associated with a different user, skip.
+          if (elUserId) {
+            if (elUserId !== uid) return;
+          } else {
+            // No explicit association: allow only edit/profile UI to fall back
+            // to the current user. Avoid updating chat headers that lack
+            // a `data-user-id` attribute.
+            if (!allowFallbackToCurrentUser) return;
+            if (!currentUserId || currentUserId !== uid) return;
+          }
+
+          mountAvatar(el, {
+            name,
+            nickname,
+            profilePics,
+            className: el.className || "contact-profile",
+            isOnline: !!user.isOnline,
+          });
+        } catch (e) {
+          /* ignore per-element failures */
+        }
+      });
     });
   } catch (e) {
     /* ignore overall failures */

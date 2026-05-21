@@ -30,22 +30,54 @@ if (process.env.SENTRY_DSN) {
 const app = express();
 const httpServer = createServer(app);
 
+// Optionally enable trust proxy in production when behind a reverse proxy.
+// Set ENABLE_TRUST_PROXY=1 in the production environment to enable.
+try {
+	const enableTrustProxy = process.env.ENABLE_TRUST_PROXY === '1' && process.env.NODE_ENV === 'production';
+	if (enableTrustProxy) {
+		app.set('trust proxy', 1);
+		console.info('trust proxy enabled');
+	}
+} catch (e) {
+	// ignore if setting fails
+}
+
 // ─── Middleware ───────────────────────────────────────────────────────────────
 // Allow local dev and production domains (add production hosts here)
-const allowedOrigins = new Set([
+const defaultOrigins = [
 	"http://localhost:3000",
 	"http://127.0.0.1:3000",
 	"https://rivo.ir",
 	"https://www.rivo.ir",
 	"https://chat.rivo.ir",
-]);
+];
+const allowedOrigins = new Set(
+	(process.env.ALLOWED_ORIGINS
+		? process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
+		: defaultOrigins)
+);
 // Security headers
-// Use Helmet for common security headers. CSP and HSTS are applied only in production
-app.use(helmet());
-try {
-    app.use(helmet.hsts({ maxAge: 31536000, includeSubDomains: true, preload: true }));
-} catch (e) {
-    console.warn('HSTS setup failed', e);
+// Use Helmet for common security headers. Disable Helmet's default HSTS
+// here so we can enable HSTS explicitly only in production. This avoids
+// forcing HTTPS during local/IP development which breaks LAN testing.
+// Disable Helmet's default HSTS and CSP here so our custom CSP middleware
+// can apply a developer-friendly policy. We still enable HSTS explicitly
+// when `NODE_ENV === 'production'` below.
+const isProduction = process.env.NODE_ENV === 'production';
+const upgradeDirective = isProduction ? ' upgrade-insecure-requests' : '';
+// In production enable Helmet defaults (including CSP/HSTS configured below).
+// In development we skip Helmet entirely to avoid strict headers that break
+// LAN testing (HSTS/CSP upgrades, COOP/COEP behavior on insecure origins).
+if (isProduction) {
+	app.use(helmet());
+	try {
+		app.use(helmet.hsts({ maxAge: 31536000, includeSubDomains: true, preload: true }));
+	} catch (e) {
+		console.warn('HSTS setup failed', e);
+	}
+} else {
+	// development: omit Helmet to prevent automatic HTTPS upgrades and
+	// restrictive CSP headers that interfere with local/IP testing.
 }
 
 // Ensure CSP allows blob: for images (some browsers use blob: URLs for uploads)
@@ -57,31 +89,42 @@ app.use((req, res, next) => {
 	res.locals.__csp_augmented = true;
 
 	const existing = res.getHeader && res.getHeader('Content-Security-Policy');
+	// DEBUG: log existing CSP header for troubleshooting
+	try { if (existing) console.log('[CSP middleware] existing CSP header:', existing, 'path:', req.path); } catch (e) { /* ignore */ }
+	const fallbackCSP = `default-src 'self'; base-uri 'self'; connect-src 'self' blob: wss: ws:; script-src 'self'; script-src-attr 'none'; style-src 'self' https: 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' https: data:; form-action 'self'; frame-ancestors 'self'; object-src 'none';${upgradeDirective}`;
 	if (existing) {
-		try {
-			let updated = String(existing);
-			// ensure img-src contains blob:
-			updated = updated.replace(/img-src\s+([^;]+)/, (m, p1) => {
-				if (p1.includes('blob:')) return m;
-				return `img-src ${p1} blob:`;
-			});
-			// ensure connect-src contains blob:
-			if (/connect-src\s+[^;]+/.test(updated)) {
-				updated = updated.replace(/connect-src\s+([^;]+)/, (m, p1) => {
+		const existingStr = String(existing || '');
+		// If an upstream middleware (or default Helmet config) set a very
+		// restrictive CSP like "default-src 'none'", treat that as no
+		// usable policy and replace it with our fallback.
+		if (existingStr.includes("default-src 'none'")) {
+			res.setHeader('Content-Security-Policy', fallbackCSP);
+		} else {
+			try {
+				let updated = existingStr;
+				// ensure img-src contains blob:
+				updated = updated.replace(/img-src\s+([^;]+)/, (m, p1) => {
 					if (p1.includes('blob:')) return m;
-					return `connect-src ${p1} blob:`;
+					return `img-src ${p1} blob:`;
 				});
-			} else {
-				// add connect-src with sensible defaults
-				updated = updated.replace(/(default-src\s+'self';?)/, `$1 connect-src 'self' blob: wss: ws:;`);
+				// ensure connect-src contains blob:
+				if (/connect-src\s+[^;]+/.test(updated)) {
+					updated = updated.replace(/connect-src\s+([^;]+)/, (m, p1) => {
+						if (p1.includes('blob:')) return m;
+						return `connect-src ${p1} blob:`;
+					});
+				} else {
+					// add connect-src with sensible defaults
+					updated = updated.replace(/(default-src\s+'self';?)/, `$1 connect-src 'self' blob: wss: ws:;`);
+				}
+				res.setHeader('Content-Security-Policy', updated);
+			} catch (e) {
+				// if anything goes wrong, fall back to a permissive but safe CSP including connect-src blob
+				res.setHeader('Content-Security-Policy', fallbackCSP);
 			}
-			res.setHeader('Content-Security-Policy', updated);
-		} catch (e) {
-			// if anything goes wrong, fall back to a permissive but safe CSP including connect-src blob
-			res.setHeader('Content-Security-Policy', "default-src 'self'; base-uri 'self'; connect-src 'self' blob: wss: ws:; script-src 'self'; script-src-attr 'none'; style-src 'self' https: 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' https: data:; form-action 'self'; frame-ancestors 'self'; object-src 'none'; upgrade-insecure-requests");
 		}
 	} else {
-		res.setHeader('Content-Security-Policy', "default-src 'self'; base-uri 'self'; connect-src 'self' blob: wss: ws:; script-src 'self'; script-src-attr 'none'; style-src 'self' https: 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' https: data:; form-action 'self'; frame-ancestors 'self'; object-src 'none'; upgrade-insecure-requests");
+		res.setHeader('Content-Security-Policy', fallbackCSP);
 	}
 	next();
 });

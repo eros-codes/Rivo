@@ -15,15 +15,24 @@ const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS || DEFAULT_BCRYPT_ROUNDS)
 // Simple verification TTL
 const VERIFICATION_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-// In-memory store for verification codes
+// In-memory store for verification codes (keys are normalized emails)
 const verificationCodes = new Map();
 const verificationTimers = new Map();
+
+// Verified emails cache: when a user successfully verifies a code we keep a
+// short-lived marker allowing `/register` to proceed. Keys are normalized emails.
+const verifiedEmails = new Map();
+const verifiedEmailTimers = new Map();
 
 // Per-email rate limiting for verification sends
 const VERIFICATION_SEND_WINDOW_MS = (Number(process.env.VERIFICATION_SEND_WINDOW_MINUTES) || 60) * 60 * 1000; // default 60 minutes
 const VERIFICATION_SEND_LIMIT = Number(process.env.VERIFICATION_SEND_LIMIT) || 5; // default 5 sends per window
-// memory fallback counter: Map<email, { count, timer }>
+// memory fallback counter: Map<normalizedEmail, { count, timer }>
 const _sendCounts = new Map();
+
+function _normEmail(email) {
+    return String(email || '').toLowerCase().trim();
+}
 
 function _maskEmail(email) {
     try {
@@ -36,38 +45,42 @@ function _maskEmail(email) {
 }
 
 async function _incrementSendCount(email) {
-    // Memory-only implementation for send-count
-    const entry = _sendCounts.get(email) || { count: 0, timer: null };
+    // Memory-only implementation for send-count; normalize email key
+    const key = _normEmail(email);
+    const entry = _sendCounts.get(key) || { count: 0, timer: null };
     entry.count += 1;
     if (!entry.timer) {
-        entry.timer = setTimeout(() => _sendCounts.delete(email), VERIFICATION_SEND_WINDOW_MS);
+        entry.timer = setTimeout(() => _sendCounts.delete(key), VERIFICATION_SEND_WINDOW_MS);
     }
-    _sendCounts.set(email, entry);
+    _sendCounts.set(key, entry);
     return entry.count;
 }
 
 function _clearVerificationInMemory(email) {
     try {
-        verificationCodes.delete(email);
-        const t = verificationTimers.get(email);
+        const key = _normEmail(email);
+        verificationCodes.delete(key);
+        const t = verificationTimers.get(key);
         if (t) clearTimeout(t);
-        verificationTimers.delete(email);
+        verificationTimers.delete(key);
     } catch (e) { /* ignore */ }
 }
 
 // Verification store uses in-memory storage only
 
 async function _storeVerification(email, code) {
-    // store in-memory only
-    verificationCodes.set(email, { code, expiresAt: Date.now() + VERIFICATION_TTL_MS });
-    if (verificationTimers.has(email)) {
-        clearTimeout(verificationTimers.get(email));
+    // store in-memory only under normalized email
+    const key = _normEmail(email);
+    verificationCodes.set(key, { code, expiresAt: Date.now() + VERIFICATION_TTL_MS });
+    if (verificationTimers.has(key)) {
+        clearTimeout(verificationTimers.get(key));
     }
-    verificationTimers.set(email, setTimeout(() => _clearVerificationInMemory(email), VERIFICATION_TTL_MS));
+    verificationTimers.set(key, setTimeout(() => _clearVerificationInMemory(key), VERIFICATION_TTL_MS));
 }
 
 async function _getVerification(email) {
-    return verificationCodes.get(email) || null;
+    const key = _normEmail(email);
+    return verificationCodes.get(key) || null;
 }
 
 async function _clearVerification(email) {
@@ -180,7 +193,17 @@ router.post('/verify-code', async (req, res) => {
         const entry = await _getVerification(email);
         if (!entry) return res.status(400).json({ error: 'Invalid or expired code' });
         if (String(entry.code) !== String(code)) return res.status(400).json({ error: 'Invalid code' });
-        // valid: clear stored code and return success
+        // valid: mark email as recently verified (short-lived) so /register can proceed
+        try {
+            const key = _normEmail(email);
+            verifiedEmails.set(key, Date.now() + VERIFICATION_TTL_MS);
+            if (verifiedEmailTimers.has(key)) clearTimeout(verifiedEmailTimers.get(key));
+            verifiedEmailTimers.set(key, setTimeout(() => verifiedEmails.delete(key), VERIFICATION_TTL_MS));
+        } catch (e) {
+            // don't fail verification on marker set failures
+            console.warn('failed to set verifiedEmails marker', e && e.message ? e.message : e);
+        }
+        // clear stored code and return success
         await _clearVerification(email);
         console.info(`verify-code success: ${_maskEmail(email)} ip=${req.ip}`);
         return res.json({ success: true });
@@ -199,6 +222,12 @@ router.post("/register", async (req, res) => {
     }
 
     try {
+        // Require prior email verification (short-lived marker set by /verify-code)
+        const normEmail = _normEmail(email);
+        const verifiedUntil = verifiedEmails.get(normEmail);
+        if (!verifiedUntil || verifiedUntil < Date.now()) {
+            return res.status(403).json({ error: 'Email not verified' });
+        }
 		const existing = await prisma.user.findFirst({
 			where: {
 				OR: [{ email }, { username }],
@@ -214,9 +243,12 @@ router.post("/register", async (req, res) => {
 
         const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
-		const user = await prisma.user.create({
+        const user = await prisma.user.create({
 			data: { name, email, username, passwordHash },
 		});
+
+        // consume verified marker so it can't be reused
+        try { verifiedEmails.delete(normEmail); if (verifiedEmailTimers.has(normEmail)) { clearTimeout(verifiedEmailTimers.get(normEmail)); verifiedEmailTimers.delete(normEmail); } } catch (e) { /* ignore */ }
         
 		// ─── Auto-create Saved Messages ───────────────────────────────────────────
 		await prisma.$transaction(async (tx) => {

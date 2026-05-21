@@ -216,6 +216,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 					className: 'chat-profile-picture',
 					isOnline: friend.isOnline,
 				});
+				try {
+					const chatProfileWrapper = document.querySelector('.chat-profile');
+					if (chatProfileWrapper) chatProfileWrapper.setAttribute('data-user-id', String(friend.id));
+				} catch (e) { /* ignore */ }
 				chatName.textContent = friend.nickname || friend.name;
 				closeSettings();
 				openChat(true);
@@ -671,6 +675,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 				className: 'chat-profile-picture',
 				isOnline: contact.isOnline,
 			});
+			try {
+				const chatProfileWrapper = document.querySelector('.chat-profile');
+				if (chatProfileWrapper) chatProfileWrapper.setAttribute('data-user-id', String(contact.id));
+			} catch (e) { /* ignore */ }
 			chatName.textContent = contact.nickname || contact.name;
 			openChat(true);
 			if (contact.conversationId) {
@@ -808,6 +816,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 				className: 'chat-profile-picture',
 				isOnline: normalized.isOnline,
 			});
+			try {
+				const chatProfileWrapper = document.querySelector('.chat-profile');
+				if (chatProfileWrapper) chatProfileWrapper.setAttribute('data-user-id', String(normalized.id));
+			} catch (e) { /* ignore */ }
 			chatName.textContent = normalized.nickname || normalized.name;
 
 			state.contactUserId = normalized.id;
@@ -1455,6 +1467,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 					className: 'chat-profile-picture',
 					isOnline: friend.isOnline,
 				});
+				try {
+					const chatProfileWrapper = document.querySelector('.chat-profile');
+					if (chatProfileWrapper) chatProfileWrapper.setAttribute('data-user-id', String(friend.id));
+				} catch (e) { /* ignore */ }
 			}
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
@@ -1552,6 +1568,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 							className: 'chat-profile-picture',
 							isOnline: friend.isOnline,
 						});
+						try {
+							const chatProfileWrapper = document.querySelector('.chat-profile');
+							if (chatProfileWrapper) chatProfileWrapper.setAttribute('data-user-id', String(friend.id));
+						} catch (e) { /* ignore */ }
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 
@@ -1964,6 +1984,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 							className: 'chat-profile-picture',
 							isOnline: friend.isOnline,
 						});
+						try {
+							const chatProfileWrapper = document.querySelector('.chat-profile');
+							if (chatProfileWrapper) chatProfileWrapper.setAttribute('data-user-id', String(friend.id));
+						} catch (e) { /* ignore */ }
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 			if (friend.isBlocked) {
@@ -2362,6 +2386,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 								className: 'chat-profile-picture',
 								isOnline: friend.isOnline,
 							});
+							try {
+								const chatProfileWrapper = document.querySelector('.chat-profile');
+								if (chatProfileWrapper) chatProfileWrapper.setAttribute('data-user-id', String(friend.id));
+							} catch (e) { /* ignore */ }
 							chatName.textContent =
 								friend.nickname || friend.name;
 							openChat(true);

@@ -11,8 +11,10 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
 	const conversationId = parseIntSafe(req.params.conversationId);
 	if (!conversationId) return res.status(400).json({ error: "Invalid conversationId" });
 	// pagination params
-	const MAX_FETCH_LIMIT = parseInt(process.env.MAX_FETCH_LIMIT || "200", 10);
-	let limit = parseInt(req.query.limit, 10) || 50;
+	const MAX_FETCH_LIMIT = parseInt(process.env.MAX_FETCH_LIMIT || "100", 10);
+	const DEFAULT_LIMIT = parseInt(process.env.DEFAULT_FETCH_LIMIT || "50", 10);
+	let limit = parseInt(req.query.limit, 10) || DEFAULT_LIMIT;
+	if (limit < 1) limit = 1;
 	if (limit > MAX_FETCH_LIMIT) limit = MAX_FETCH_LIMIT;
 	const before = req.query.before ? new Date(req.query.before) : null;
 	const beforeId = req.query.beforeId ? parseIntSafe(req.query.beforeId) : null;

@@ -11,6 +11,9 @@ import fs from "fs";
 import sharp from "sharp";
 
 const router = Router();
+// Consistent bcrypt rounds across codepaths
+const DEFAULT_BCRYPT_ROUNDS = process.env.NODE_ENV === 'production' ? 12 : 10;
+const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS || DEFAULT_BCRYPT_ROUNDS);
 const storage = multer.diskStorage({
 	destination: (req, file, cb) => {
 		const dir = path.join(process.cwd(), "public", "assets", "images", "user-profiles");
@@ -120,9 +123,9 @@ router.patch("/me", requireAuth, async (req, res) => {
 			...(name && { name }),
 			...(username && { username }),
 			...(bio !== undefined && { bio }),
-			...(privacyOnline && { privacyOnline }),
-			...(privacyEmail && { privacyEmail }),
-			...(privacyProfile && { privacyProfile }),
+			...(privacyOnline !== undefined && { privacyOnline }),
+			...(privacyEmail !== undefined && { privacyEmail }),
+			...(privacyProfile !== undefined && { privacyProfile }),
 		};
 
 		// if client explicitly cleared profilePics, set it to an empty array
@@ -220,7 +223,7 @@ router.delete("/me", requireAuth, async (req, res) => {
 		const anonEmail = `deleted_user_${req.userId}_${now}@deleted.rivo`;
 		const randomSecret = crypto.randomBytes(32).toString('hex');
 		console.info('delete-account: hashing random secret');
-		const hashed = await bcrypt.hash(randomSecret, 10);
+		const hashed = await bcrypt.hash(randomSecret, BCRYPT_ROUNDS);
 		console.info('delete-account: hashing complete');
 
 		// Build operations. Delete push subscriptions separately so a missing
@@ -287,7 +290,7 @@ router.patch("/me/password", requireAuth, async (req, res) => {
 		const match = await bcrypt.compare(currentPassword, user.passwordHash);
 		if (!match) return res.status(401).json({ error: "Wrong password" });
 
-		const hashed = await bcrypt.hash(newPassword, 10);
+		const hashed = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
 		await prisma.user.update({ where: { id: req.userId }, data: { passwordHash: hashed, passwordChangedAt: new Date() } });
 
 		// Password changed — tokens issued before `passwordChangedAt` will be rejected.
@@ -335,8 +338,11 @@ router.post("/me/avatar", requireAuth, upload.single("avatar"), async (req, res)
 		try {
 			// Write to a temporary file first to avoid "Cannot use same file for input and output"
 			const tempOut = outPath + '.tmp-' + Date.now();
-			// Debug: log paths to help diagnose any input/output collisions
-			console.debug('avatar processing paths', { filePath, outPath, tempOut });
+			// Debug: log paths to help diagnose any input/output collisions.
+			// Disabled by default; set AVATAR_DEBUG=1 to enable in dev only.
+			if (process.env.AVATAR_DEBUG) {
+				console.debug('avatar processing paths', { filePath, outPath, tempOut });
+			}
 			await sharp(filePath)
 				.rotate()
 				.resize({ width: 1024, height: 1024, fit: 'inside' })

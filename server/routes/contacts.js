@@ -8,8 +8,20 @@ const router = Router();
 // ─── Get all contacts ─────────────────────────────────────────────────────────
 router.get("/", requireAuth, async (req, res) => {
 	try {
+		// pagination for contacts: prevent returning unbounded contact lists
+		const MAX_FETCH_LIMIT = parseInt(process.env.MAX_FETCH_LIMIT || "100", 10);
+		const DEFAULT_LIMIT = parseInt(process.env.CONTACTS_DEFAULT_LIMIT || "50", 10);
+		let limit = parseInt(req.query.limit, 10) || DEFAULT_LIMIT;
+		if (limit < 1) limit = 1;
+		if (limit > MAX_FETCH_LIMIT) limit = MAX_FETCH_LIMIT;
+		const beforeId = req.query.beforeId ? parseInt(req.query.beforeId, 10) : null;
+
+		const whereClause = { ownerId: req.userId };
+		if (beforeId) whereClause.id = { lt: beforeId };
+
 		const contacts = await prisma.contact.findMany({
-			where: { ownerId: req.userId },
+			where: whereClause,
+			take: limit,
 			include: {
 				contact: {
 					select: {

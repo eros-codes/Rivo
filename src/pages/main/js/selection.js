@@ -189,6 +189,7 @@ export function executeBulkForward(friend, sourceName) {
 	if (prevFriend && prevFriend.id !== friend.id) {
 		if (
 			!prevFriend.isPinned &&
+			!prevFriend.isSaved &&
 			prevFriend.unreadCount === 0 &&
 			prevFriend.lastMessageSeen !== false
 		) {

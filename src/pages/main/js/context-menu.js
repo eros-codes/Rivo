@@ -231,6 +231,7 @@ export function deleteMessage(msg, index) {
 
 					if (
 						!friend.isPinned &&
+						!friend.isSaved &&
 						friend.unreadCount === 0 &&
 						friend.lastMessageSeen === true
 					) {

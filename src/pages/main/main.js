@@ -162,6 +162,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 					if (
 						!prevFriend.isPinned &&
+						!prevFriend.isSaved &&
 						prevFriend.unreadCount === 0 &&
 						prevFriend.lastMessageSeen !== false
 					) {
@@ -643,6 +644,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 		state.contactUserId = userId;
 		const friend = contacts.find((c) => c.id === userId);
 		if (!friend) return;
+		// Do not allow actions that would move or modify the Saved Messages card
+		if (friend.isSaved) return;
 
 		if (action === "pin") {
 			friend.isPinned = !friend.isPinned;
@@ -1436,6 +1439,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 				// local-only `isInChat` removed; nothing to persist
 				if (
 					!prevFriend.isPinned &&
+					!prevFriend.isSaved &&
 					prevFriend.unreadCount === 0 &&
 					prevFriend.lastMessageSeen !== false
 				) {
@@ -1560,6 +1564,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 				// local-only `isInChat` removed
 				if (
 					!prevFriend.isPinned &&
+					!prevFriend.isSaved &&
 					prevFriend.unreadCount === 0 &&
 					prevFriend.lastMessageSeen !== false
 				) {
@@ -2142,6 +2147,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 				sortContacts();
 				if (
 					!friend.isPinned &&
+					!friend.isSaved &&
 					friend.unreadCount === 0 &&
 					friend.lastMessageSeen === true
 				) {

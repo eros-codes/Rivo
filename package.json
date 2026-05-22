@@ -18,7 +18,7 @@
     "test:integration": "node tests/integration/socket-flow.js",
     "gen-kek": "node server/scripts/gen_kek.js",
     "lint": "eslint \"src/**\" \"server/**\" --ext .js",
-    "prepare": "node -e \"require('fs').copyFileSync('node_modules/socket.io-client/dist/socket.io.esm.min.js', 'public/js/socket.io.esm.min.js')\""
+    "prepare": "node -e \"(async()=>{const fs=await import('node:fs');fs.copyFileSync('node_modules/socket.io-client/dist/socket.io.esm.min.js','public/js/socket.io.esm.min.js');})().catch(e=>{console.error(e);process.exit(1)})\""
   },
   "author": "",
   "license": "ISC",

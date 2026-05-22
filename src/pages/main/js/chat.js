@@ -1003,7 +1003,7 @@ export function handleMessagesSeen(
 	// If any messages were marked as seen, mark the contact's last message as seen
 	if (anyMarked && seenBy !== null && seenBy !== _currentUserId()) {
 		contact.lastMessageSeen = true;
-		if (!contact.isPinned && contact.unreadCount === 0) {
+		if (!contact.isPinned && !contact.isSaved && contact.unreadCount === 0) {
 			moveToContacts(contact);
 			sortContacts();
 		}

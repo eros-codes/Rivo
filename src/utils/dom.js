@@ -248,6 +248,28 @@ export function mountAvatar(containerOrImg, { name, nickname, profilePics, class
     elClassList.contains('edit-profile-avatar')
   );
 
+  // If the caller passed an <img> or an existing avatar-like element, we may be
+  // operating inside a wrapper that previously displayed the "saved" icon.
+  // Ensure any saved-icon decoration is removed from the wrapper before
+  // inserting a real avatar so the header border/color styles don't leak.
+  try {
+    const wrapper = isImg ? containerOrImg.parentElement : containerOrImg;
+    if (wrapper && wrapper.classList && wrapper.classList.contains('saved-icon')) {
+      wrapper.classList.remove('saved-icon');
+      const existingSaved = wrapper.querySelector('.saved-icon-svg');
+      if (existingSaved) existingSaved.remove();
+      // If an inner avatar node was hidden via inline style earlier, restore it
+      try {
+        const hidden = wrapper.querySelector('img[style*="display: none"], .contact-profile[style*="display: none"], .initial-avatar[style*="display: none"]');
+        if (hidden && hidden.style) hidden.style.display = '';
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  } catch (e) {
+    /* ignore wrapper cleanup errors */
+  }
+
   if (isImg || isAvatarLike) {
     try {
       const avatar = createAvatarElement({ name, nickname, profilePics, className, isOnline });

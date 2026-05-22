@@ -299,6 +299,28 @@ export function initSocket(httpServer) {
 				});
 
 				// Build sanitized payload to broadcast (do not send ciphertext/wrapped_dek)
+				// Decrypt replyToText (if any) using the same DEK used for this message
+				let replyToTextPlain = null;
+				if (replyToText && typeof replyToText === 'string' && replyToText.trim()) {
+					replyToTextPlain = replyToText.trim();
+				} else if (message.replyToText) {
+					try {
+						const parsed = JSON.parse(message.replyToText);
+						if (parsed && parsed.c && parsed.iv && parsed.t) {
+							try {
+								replyToTextPlain = decryptMessage(parsed.c, parsed.iv, parsed.t, dek);
+							} catch (e) {
+								console.error('failed to decrypt replyToText', message.id, e && e.message ? e.message : e);
+								replyToTextPlain = 'Message unavailable';
+							}
+						} else {
+							replyToTextPlain = message.replyToText;
+						}
+					} catch (e) {
+						replyToTextPlain = message.replyToText;
+					}
+				}
+
 				const safe = {
 					id: message.id,
 					conversationId: message.conversationId,
@@ -311,6 +333,7 @@ export function initSocket(httpServer) {
 					isDeleted: message.isDeleted,
 					replyToId: message.replyToId,
 					replyToName: message.replyToName,
+					replyToText: replyToTextPlain,
 					forwardedFrom: message.forwardedFrom,
 					createdAt: message.createdAt,
 				};

@@ -296,7 +296,7 @@ app.use((req, res, next) => {
 	// Serve chat app
 	if (host === "chat.rivo.ir") {
 		const publicChat = resolve("public/chat/index.html");
-		const srcChat = resolve("src/pages/chat/index.html");
+		const srcChat = resolve("src/pages/main/index.html");
 		if (existsSync(publicChat)) return res.sendFile(publicChat);
 		if (existsSync(srcChat)) return res.sendFile(srcChat);
 		return res.status(404).send("Not found");

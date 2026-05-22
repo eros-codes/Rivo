@@ -488,7 +488,9 @@ export async function receiveMessage(message) {
 						lastMessageSeen: (() => {
 							const lastMsg = raw.conversation?.messages?.[0];
 							if (!lastMsg) return true;
-							return lastMsg.isSeen === true;
+							// Treat missing/undefined isSeen as seen. Only explicit false
+							// means the last message is unseen.
+							return lastMsg.isSeen !== false;
 						})(),
 					};
 

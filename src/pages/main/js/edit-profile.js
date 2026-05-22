@@ -98,10 +98,19 @@ export function initEditProfile(dom) {
 					} catch (e) {
 						stored = {};
 					}
-					localStorage.setItem(
-						"user",
-						JSON.stringify({ ...stored, profilePics: [res.url] }),
-					);
+					const newStored = {
+						id: stored.id || (_currentUser && _currentUser.id) || null,
+						name: (_currentUser && _currentUser.name) || stored.name || "",
+						username: (_currentUser && _currentUser.username) || stored.username || "",
+						nickname: (_currentUser && (_currentUser.nickname || _currentUser.username)) || stored.nickname || "",
+						profilePics: (_currentUser && _currentUser.profilePics) || [res.url] || stored.profilePics || [],
+						isSaved: stored.isSaved || false,
+						isOnline: stored.isOnline || false,
+						conversationId: stored.conversationId || null,
+						bio: (_currentUser && _currentUser.bio) || stored.bio || "",
+						email: stored.email || "",
+					};
+					localStorage.setItem("user", JSON.stringify(newStored));
 					_dom.avatarCropDialog.close();
 					// update avatars across the UI immediately
 					try { refreshUserAvatars(_currentUser); } catch (e) { /* ignore */ }
@@ -147,10 +156,19 @@ export function initEditProfile(dom) {
 		} catch (e) {
 			stored = {};
 		}
-		localStorage.setItem(
-			"user",
-			JSON.stringify({ ...stored, profilePics: [] }),
-		);
+		const newStored = {
+			id: stored.id || (_currentUser && _currentUser.id) || null,
+			name: (_currentUser && _currentUser.name) || stored.name || "",
+			username: (_currentUser && _currentUser.username) || stored.username || "",
+			nickname: (_currentUser && (_currentUser.nickname || _currentUser.username)) || stored.nickname || "",
+			profilePics: [],
+			isSaved: stored.isSaved || false,
+			isOnline: stored.isOnline || false,
+			conversationId: stored.conversationId || null,
+			bio: (_currentUser && _currentUser.bio) || stored.bio || "",
+			email: stored.email || "",
+		};
+		localStorage.setItem("user", JSON.stringify(newStored));
 	});
 }
 
@@ -233,17 +251,26 @@ async function _handleSave() {
 			_currentUser.bio = updated.bio;
 		}
 
-		// session رو هم آپدیت کن
+		// update stored user (only allowed fields)
 		let stored = {};
 		try {
 			stored = JSON.parse(localStorage.getItem("user") || "{}");
 		} catch (e) {
 			stored = {};
 		}
-		localStorage.setItem(
-			"user",
-			JSON.stringify({ ...stored, ...updated }),
-		);
+		const newStored = {
+			id: stored.id || (_currentUser && _currentUser.id) || null,
+			name: updated.name || (_currentUser && _currentUser.name) || stored.name || "",
+			username: updated.username || (_currentUser && _currentUser.username) || stored.username || "",
+			nickname: updated.username || (_currentUser && (_currentUser.nickname || _currentUser.username)) || stored.nickname || "",
+			profilePics: (_currentUser && _currentUser.profilePics) || stored.profilePics || [],
+			isSaved: stored.isSaved || false,
+			isOnline: stored.isOnline || false,
+			conversationId: stored.conversationId || null,
+			bio: updated.bio || (_currentUser && _currentUser.bio) || stored.bio || "",
+			email: stored.email || "",
+		};
+		localStorage.setItem("user", JSON.stringify(newStored));
 
 		closeEditProfile();
 	} catch {

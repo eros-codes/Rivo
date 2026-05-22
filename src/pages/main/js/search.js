@@ -20,7 +20,9 @@ export function initSearch(dom) {
 }
 
 export function runSearch(query) {
-	if (!query) {
+	const q = String(query || "").trim().toLowerCase();
+	// require a minimal query to avoid expensive full scans
+	if (!q || q.length < 2) {
 		_dom.mainContent.style.display = "";
 		_dom.searchResults.style.display = "none";
 		return;
@@ -29,8 +31,8 @@ export function runSearch(query) {
 	_dom.mainContent.style.display = "none";
 	_dom.searchResults.style.display = "flex";
 
-	_renderContactResults(query);
-	_renderMessageResults(query);
+	_renderContactResults(q);
+	_renderMessageResults(q);
 }
 
 // ─── Contacts ─────────────────────────────────────────────────────────────────
@@ -38,9 +40,10 @@ function _renderContactResults(query) {
 	const list = _dom.searchContactsList;
 	list.textContent = "";
 
+	const MAX_CONTACT_RESULTS = 50;
 	const matched = contacts.filter((c) =>
 		(c.nickname || c.name).toLowerCase().includes(query),
-	);
+	).slice(0, MAX_CONTACT_RESULTS);
 
 	if (matched.length === 0) {
 		const p = document.createElement("p");
@@ -75,15 +78,21 @@ function _renderMessageResults(query) {
 	list.textContent = "";
 
 	let found = false;
-
-	contacts.forEach((contact) => {
+	const MAX_MESSAGE_RESULTS = 50;
+	let resultsCount = 0;
+	// stop scanning once we reach max results
+	outer: for (let ci = 0; ci < contacts.length; ci++) {
+		const contact = contacts[ci];
 		const msgs = messages[contact.id];
-		if (!msgs) return;
+		if (!msgs) continue;
 
-		msgs.forEach((msg, idx) => {
-			if (!msg.text || !msg.text.toLowerCase().includes(query)) return;
+		for (let idx = 0; idx < msgs.length; idx++) {
+			const msg = msgs[idx];
+			if (!msg.text) continue;
+			if (!msg.text.toLowerCase().includes(query)) continue;
 
 			found = true;
+			resultsCount++;
 
 			const wrapper = document.createElement("div");
 			wrapper.className = "search-message-result";
@@ -111,8 +120,10 @@ function _renderMessageResults(query) {
 			});
 
 			list.appendChild(wrapper);
-		});
-	});
+
+			if (resultsCount >= MAX_MESSAGE_RESULTS) break outer;
+		}
+	}
 
 	if (!found) {
 		const p = document.createElement("p");

@@ -15,24 +15,42 @@ export function initInAppNotification() {
   _container.id = 'in-app-notif-wrap';
   _container.className = 'in-app-notif-wrap';
 
-  _container.innerHTML = `
-    <div id="in-app-notif" class="in-app-notif" aria-hidden="true" role="button" tabindex="0">
-      <div class="notif-card">
-        <div class="notif-avatar"></div>
-        <div class="notif-body">
-          <div class="notif-title"></div>
-          <div class="notif-text"></div>
-        </div>
-      </div>
-    </div>
-  `;
+  // build DOM structure with createElement to avoid injecting HTML strings
+  const notif = document.createElement('div');
+  notif.id = 'in-app-notif';
+  notif.className = 'in-app-notif';
+  notif.setAttribute('aria-hidden', 'true');
+  notif.setAttribute('role', 'button');
+  notif.tabIndex = 0;
+
+  const card = document.createElement('div');
+  card.className = 'notif-card';
+
+  const avatar = document.createElement('div');
+  avatar.className = 'notif-avatar';
+
+  const body = document.createElement('div');
+  body.className = 'notif-body';
+
+  const title = document.createElement('div');
+  title.className = 'notif-title';
+
+  const text = document.createElement('div');
+  text.className = 'notif-text';
+
+  body.appendChild(title);
+  body.appendChild(text);
+  card.appendChild(avatar);
+  card.appendChild(body);
+  notif.appendChild(card);
+  _container.appendChild(notif);
 
   document.body.appendChild(_container);
 
-  _notif = _container.querySelector('#in-app-notif');
-  _avatar = _container.querySelector('.notif-avatar');
-  _title = _container.querySelector('.notif-title');
-  _text = _container.querySelector('.notif-text');
+  _notif = notif;
+  _avatar = avatar;
+  _title = title;
+  _text = text;
 
   // Click opens chat (handled by main via custom event)
   _notif.addEventListener('click', (e) => {

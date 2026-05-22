@@ -98,7 +98,7 @@ pointer-events: none;
 }
 
 .online-contact {
-	border: 2px solid var(--online);
+	outline: 3px solid var(--online);
 	box-shadow: 0 0 0 3px rgba(0,0,0,0.02) inset;
 }
 .contact-name {

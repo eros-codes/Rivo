@@ -16,7 +16,8 @@ router.post('/subscribe', requireAuth, async (req, res) => {
   const sub = req.body;
   if (!sub || !sub.endpoint) return res.status(400).json({ error: 'Invalid subscription' });
   try {
-    push.addSubscription(req.userId, sub);
+    const ok = await push.addSubscription(req.userId, sub);
+    if (!ok) return res.status(500).json({ error: 'Failed to save subscription' });
     return res.json({ success: true });
   } catch (e) {
     // subscribe failed (suppressed)
@@ -29,7 +30,8 @@ router.post('/unsubscribe', requireAuth, async (req, res) => {
   const { endpoint } = req.body || {};
   if (!endpoint) return res.status(400).json({ error: 'Missing endpoint' });
   try {
-    push.removeSubscriptionByEndpoint(req.userId, endpoint);
+    const ok = await push.removeSubscriptionByEndpoint(req.userId, endpoint);
+    if (!ok) return res.status(500).json({ error: 'Failed to remove subscription' });
     return res.json({ success: true });
   } catch (e) {
     // unsubscribe failed (suppressed)

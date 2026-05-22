@@ -151,8 +151,20 @@ document.addEventListener("DOMContentLoaded", function () {
 				}
 
 				// Server sets HttpOnly cookie for auth; persist only non-sensitive user info.
-				// Keep `user` in localStorage for UI; ensure no JWT/token is stored anywhere.
-				localStorage.setItem("user", JSON.stringify(data.user));
+				// Store a minimal, sanitized user object in localStorage (no tokens)
+				const safeUser = {
+					id: data.user?.id,
+					name: data.user?.name || "",
+					username: data.user?.username || "",
+					nickname: data.user?.nickname || data.user?.username || "",
+					profilePics: data.user?.profilePics || [],
+					isSaved: data.user?.isSaved || false,
+					isOnline: data.user?.isOnline || false,
+					conversationId: data.user?.conversationId || null,
+					bio: data.user?.bio || "",
+					email: data.user?.email || "",
+				};
+				localStorage.setItem("user", JSON.stringify(safeUser));
 				// Redirect to chat app root
 				window.location.href = "/chat";
 			} catch {

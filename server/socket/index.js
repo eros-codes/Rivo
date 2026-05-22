@@ -45,13 +45,91 @@ export function initSocket(httpServer) {
 	const offlineTimers = new Map();
 	const OFFLINE_GRACE_MS = parseInt(process.env.OFFLINE_GRACE_MS || "7000", 10);
 
-	// Simple per-socket rate limiter: Map<socketId, Array<timestamp>>
-	const sendRate = new Map();
-	const RATE_LIMIT_WINDOW_MS = parseInt(process.env.SOCKET_RATE_WINDOW_MS || "10000"); // 10s
-	const RATE_LIMIT_MAX = parseInt(process.env.SOCKET_RATE_MAX || "20"); // max messages per window
+	// Connection attempts limiter by IP to prevent handshake floods
+	const connectionAttempts = new Map(); // Map<ip, Array<timestamp>>
+	const CONNECTION_ATTEMPT_WINDOW_MS = parseInt(process.env.SOCKET_CONN_ATTEMPT_WINDOW_MS || "60000", 10);
+	const CONNECTION_ATTEMPT_MAX = parseInt(process.env.SOCKET_CONN_ATTEMPT_MAX || "30", 10);
 
-	// ─── Auth middleware ───────────────────────────────────────────────────────
+	// Simple per-user rate limiter: Map<userId, Array<timestamp>>
+	const sendRate = new Map();
+	const RATE_LIMIT_WINDOW_MS = parseInt(process.env.SOCKET_RATE_WINDOW_MS || "10000", 10); // 10s
+	const RATE_LIMIT_MAX = parseInt(process.env.SOCKET_RATE_MAX || "20", 10); // max messages per window
+
+	// In-memory caches to reduce repeated DB calls (best-effort with short TTL)
+	const membershipCache = new Map(); // key `${convId}:${userId}` => { res, ts }
+	const MEMBERSHIP_CACHE_TTL_MS = parseInt(process.env.MEMBERSHIP_CACHE_TTL_MS || "30000", 10);
+	const recipientsCache = new Map(); // key convId => { data: [{id, ownerId}], ts }
+	const RECIPIENTS_CACHE_TTL_MS = parseInt(process.env.RECIPIENTS_CACHE_TTL_MS || "30000", 10);
+
+	// Periodic cleanup for connectionAttempts to avoid memory growth
+	setInterval(() => {
+		const now = Date.now();
+		for (const [ip, arr] of connectionAttempts.entries()) {
+			const recent = arr.filter((t) => now - t < CONNECTION_ATTEMPT_WINDOW_MS);
+			if (recent.length === 0) connectionAttempts.delete(ip);
+			else connectionAttempts.set(ip, recent);
+		}
+	}, Math.max(10000, Math.floor(CONNECTION_ATTEMPT_WINDOW_MS / 4)));
+
+	function _getClientIpFromSocket(sock) {
+		try {
+			const fwd = sock.handshake.headers && sock.handshake.headers['x-forwarded-for'];
+			if (fwd) return String(fwd).split(',')[0].trim();
+			return sock.handshake.address || '';
+		} catch (e) {
+			return '';
+		}
+	}
+
+	async function isMemberCached(convId, userId) {
+		const key = `${convId}:${userId}`;
+		const now = Date.now();
+		const cached = membershipCache.get(key);
+		if (cached && now - cached.ts < MEMBERSHIP_CACHE_TTL_MS) return cached.res;
+		try {
+			const member = await prisma.conversationMember.findFirst({ where: { conversationId: convId, userId } });
+			const res = !!member;
+			membershipCache.set(key, { res, ts: now });
+			return res;
+		} catch (e) {
+			console.error('membership check failed', e);
+			return false;
+		}
+	}
+
+	async function getRecipientsCached(convId) {
+		const now = Date.now();
+		const cached = recipientsCache.get(convId);
+		if (cached && now - cached.ts < RECIPIENTS_CACHE_TTL_MS) return cached.data;
+		try {
+			const rows = await prisma.contact.findMany({ where: { conversationId: convId }, select: { id: true, ownerId: true } });
+			recipientsCache.set(convId, { data: rows, ts: now });
+			return rows;
+		} catch (e) {
+			console.error('failed to fetch recipients for conv', convId, e);
+			return [];
+		}
+	}
+
+	// ─── Auth & connection-rate middleware ───────────────────────────────────
 	io.use(async (socket, next) => {
+		// Prevent handshake floods by IP
+		try {
+			const ip = _getClientIpFromSocket(socket) || '';
+			const now = Date.now();
+			const arr = connectionAttempts.get(ip) || [];
+			const minTs = now - CONNECTION_ATTEMPT_WINDOW_MS;
+			const recent = arr.filter((t) => t > minTs);
+			recent.push(now);
+			connectionAttempts.set(ip, recent);
+			if (recent.length > CONNECTION_ATTEMPT_MAX) {
+				console.warn('socket connection rate limited ip=', ip);
+				return next(new Error('RateLimit'));
+			}
+		} catch (e) {
+			// Do not fail auth on rate-check errors
+		}
+
 		// Enforce cookie-only JWT for socket auth. Expect `token` cookie in handshake headers.
 		const cookieHeader = socket.handshake.headers?.cookie || "";
 		const token = cookieHeader.match(/token=([^;]+)/)?.[1];
@@ -79,6 +157,8 @@ export function initSocket(httpServer) {
 			}
 
 			socket.userId = userId;
+			// Ensure per-user rate state exists (do not overwrite existing history)
+			if (!sendRate.has(userId)) sendRate.set(userId, []);
 			next();
 		} catch (err) {
 			if (err && err.name === "TokenExpiredError") {
@@ -94,22 +174,10 @@ export function initSocket(httpServer) {
 		// explicitly join a conversation when the user opens that chat.
 		socket.joinedConversations = new Set();
 
-		// Lightweight per-socket membership cache to avoid repeated DB hits
-		socket._memberCache = new Map();
 		// Per-conversation typing timestamps to throttle typing events
 		socket._lastTyping = new Map();
 		async function _isMember(convId) {
-			const key = String(convId);
-			if (socket._memberCache.has(key)) return socket._memberCache.get(key);
-			try {
-				const member = await prisma.conversationMember.findFirst({ where: { conversationId: convId, userId: socket.userId } });
-				const res = !!member;
-				socket._memberCache.set(key, res);
-				return res;
-			} catch (e) {
-				console.error('membership check failed', e);
-				return false;
-			}
+			return await isMemberCached(convId, socket.userId);
 		}
 
 		try {
@@ -128,8 +196,7 @@ export function initSocket(httpServer) {
 				clearTimeout(offlineTimers.get(socket.userId));
 				offlineTimers.delete(socket.userId);
 			}
-			// init rate tracking for this socket
-			sendRate.set(socket.id, []);
+			// per-user rate tracking initialized in auth middleware; nothing else to do here
 			socket.broadcast.emit("user:online", { userId: socket.userId });
 		} catch (err) {
 			console.error("Connection error", err);
@@ -159,14 +226,14 @@ export function initSocket(httpServer) {
 			}
 
 			try {
-				// Rate limiting: simple sliding window per-socket
+				// Rate limiting: per-user sliding window
 				try {
 					const now = Date.now();
-					const arrival = sendRate.get(socket.id) || [];
+					const arrival = sendRate.get(socket.userId) || [];
 					const minTs = now - RATE_LIMIT_WINDOW_MS;
 					const recent = arrival.filter((t) => t > minTs);
 					recent.push(now);
-					sendRate.set(socket.id, recent);
+					sendRate.set(socket.userId, recent);
 					if (recent.length > RATE_LIMIT_MAX) {
 						return callback?.({ error: "Rate limit exceeded" });
 					}
@@ -256,10 +323,8 @@ export function initSocket(httpServer) {
 					return callback?.({ success: true, message: safe });
 				}
 
-				const recipientContacts = await prisma.contact.findMany({
-					where: { conversationId: convId, ownerId: { not: socket.userId } },
-					select: { id: true, ownerId: true },
-				});
+				const allRecipients = await getRecipientsCached(convId);
+				const recipientContacts = allRecipients.filter((c) => c.ownerId !== socket.userId);
 
 				// Use in-memory map of users present in conversation to avoid expensive fetchSockets()
 				const usersInRoom = convoOnline.get(convId) || new Set();
@@ -373,10 +438,8 @@ export function initSocket(httpServer) {
 
 				// Also deliver edited event directly to connected sockets of recipients
 				try {
-					const recipientContacts = await prisma.contact.findMany({
-						where: { conversationId: message.conversationId, ownerId: { not: socket.userId } },
-						select: { ownerId: true },
-					});
+					const allRecipients = await getRecipientsCached(message.conversationId);
+					const recipientContacts = allRecipients.filter((c) => c.ownerId !== socket.userId);
 					const usersInRoom = convoOnline.get(message.conversationId) || new Set();
 					const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
 					for (const uid of recipientUserIds) {
@@ -425,10 +488,8 @@ export function initSocket(httpServer) {
 				// used when messages are sent.
 				try {
 					if (!message.isSeen) {
-						const recipientContacts = await prisma.contact.findMany({
-							where: { conversationId: message.conversationId, ownerId: { not: socket.userId } },
-							select: { id: true },
-						});
+						const allRecipients = await getRecipientsCached(message.conversationId);
+						const recipientContacts = allRecipients.filter((c) => c.ownerId !== socket.userId);
 						if (recipientContacts.length > 0) {
 							await prisma.contact.updateMany({
 								where: { id: { in: recipientContacts.map((c) => c.id) }, unreadCount: { gt: 0 } },
@@ -450,10 +511,8 @@ export function initSocket(httpServer) {
 
 				// Also deliver delete event directly to connected sockets of recipients
 				try {
-					const recipientContacts = await prisma.contact.findMany({
-						where: { conversationId: message.conversationId, ownerId: { not: socket.userId } },
-						select: { ownerId: true },
-					});
+					const allRecipients = await getRecipientsCached(message.conversationId);
+					const recipientContacts = allRecipients.filter((c) => c.ownerId !== socket.userId);
 					const usersInRoom = convoOnline.get(message.conversationId) || new Set();
 					const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
 					for (const uid of recipientUserIds) {
@@ -504,10 +563,8 @@ export function initSocket(httpServer) {
 
 				// Also deliver pinned event directly to connected sockets of recipients
 				try {
-					const recipientContacts = await prisma.contact.findMany({
-						where: { conversationId: message.conversationId, ownerId: { not: socket.userId } },
-						select: { ownerId: true },
-					});
+					const allRecipients = await getRecipientsCached(message.conversationId);
+					const recipientContacts = allRecipients.filter((c) => c.ownerId !== socket.userId);
 					const usersInRoom = convoOnline.get(message.conversationId) || new Set();
 					const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
 					for (const uid of recipientUserIds) {
@@ -551,10 +608,8 @@ export function initSocket(httpServer) {
 
 					// also deliver typing start to connected sockets not joined to the room
 					try {
-						const recipientContacts = await prisma.contact.findMany({
-							where: { conversationId: convId, ownerId: { not: socket.userId } },
-							select: { ownerId: true },
-						});
+						const allRecipients = await getRecipientsCached(convId);
+						const recipientContacts = allRecipients.filter((c) => c.ownerId !== socket.userId);
 						const usersInRoom = convoOnline.get(convId) || new Set();
 						const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
 						for (const uid of recipientUserIds) {
@@ -594,10 +649,8 @@ export function initSocket(httpServer) {
 
 					// also deliver typing stop to connected sockets not joined to the room
 					try {
-						const recipientContacts = await prisma.contact.findMany({
-							where: { conversationId: convId, ownerId: { not: socket.userId } },
-							select: { ownerId: true },
-						});
+						const allRecipients = await getRecipientsCached(convId);
+						const recipientContacts = allRecipients.filter((c) => c.ownerId !== socket.userId);
 						const usersInRoom = convoOnline.get(convId) || new Set();
 						const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
 						for (const uid of recipientUserIds) {
@@ -692,8 +745,13 @@ export function initSocket(httpServer) {
 					privacyOnline: null,
 				});
 			} finally {
-				// cleanup per-socket rate tracking
-				sendRate.delete(socket.id);
+				// cleanup per-user rate tracking if no sockets remain for this user
+				try {
+					const remaining = userSockets.get(socket.userId);
+					if (!remaining || remaining.size === 0) sendRate.delete(socket.userId);
+				} catch (e) {
+					// ignore
+				}
 
 				// cleanup in-memory convo presence for this socket; only remove the
 				// user from a conversation if no other connected socket for this

@@ -171,7 +171,7 @@
 	font-size: 0.8rem;
 }
 .online-active-chat {
-	border: 0.2rem solid var(--online);
+	outline: 0.2rem solid var(--online);
 }
 
 /* Ensure active-chat avatar shows an online ring. This selector is
@@ -179,7 +179,7 @@
    `.online-contact` rule and doesn't affect other avatar locations. */
 .active-chat .active-chat-profile.online,
 .active-chat .active-chat-profile.online-contact {
-	border: 0.2rem solid var(--online);
+	outline: 0.2rem solid var(--online);
 	box-shadow: var(--light-shadow);
 }
 

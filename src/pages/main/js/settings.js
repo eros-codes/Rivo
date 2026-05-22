@@ -181,10 +181,25 @@ export function initSettings(dom, currentUser) {
 	];
 
 	function _applyAndSaveAccent(color) {
-		applyAccentColor(color);
-		localStorage.setItem("rivo-accent", color);
+		if (typeof color !== "string") {
+			console.warn("_applyAndSaveAccent: invalid color", color);
+			showToast("Invalid color");
+			return;
+		}
+		const normalized = color.trim();
+		if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(normalized)) {
+			console.warn("_applyAndSaveAccent: accent not a valid hex color, ignoring", normalized);
+			showToast("Invalid color");
+			return;
+		}
+		applyAccentColor(normalized);
+		try {
+			localStorage.setItem("rivo-accent", normalized);
+		} catch (e) {
+			console.warn("Failed to persist accent to localStorage", e);
+		}
 		if (_dom.settingsAccentValue) {
-			_dom.settingsAccentValue.style.background = color;
+			_dom.settingsAccentValue.style.background = normalized;
 			_dom.settingsAccentValue.style.width = "16px";
 			_dom.settingsAccentValue.style.height = "16px";
 			_dom.settingsAccentValue.style.borderRadius = "50%";
@@ -194,7 +209,7 @@ export function initSettings(dom, currentUser) {
 		_dom.settingsAccentPanel
 			?.querySelectorAll(".accent-swatch")
 			.forEach((s) => {
-				s.classList.toggle("active", s.dataset.color === color);
+				s.classList.toggle("active", s.dataset.color === normalized);
 			});
 	}
 

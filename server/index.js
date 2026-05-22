@@ -183,6 +183,32 @@ function csrfProtection(req, res, next) {
 }
 
 app.use(csrfProtection);
+// Global HTTP rate limiter to mitigate abuse (configurable via env)
+const enableHttpRateLimiter = (process.env.ENABLE_HTTP_RATE_LIMITER || "1") === "1";
+if (enableHttpRateLimiter) {
+	const HTTP_RATE_WINDOW_MS = Number(process.env.HTTP_RATE_WINDOW_MS || 60000);
+	const HTTP_RATE_MAX = Number(process.env.HTTP_RATE_MAX || 600);
+	app.use(
+		rateLimit({
+			windowMs: HTTP_RATE_WINDOW_MS,
+			max: HTTP_RATE_MAX,
+			standardHeaders: true,
+			legacyHeaders: false,
+			// skip static/socket/diag endpoints to avoid accidental blocking
+			skip: (req) => {
+				const p = req.path || "";
+				return (
+					p.startsWith("/public") ||
+					p.startsWith("/src") ||
+					p.startsWith("/node_modules") ||
+					p.startsWith("/socket.io") ||
+					p.startsWith("/__diag")
+				);
+			},
+			handler: (req, res) => res.status(429).json({ error: "Too many requests" }),
+		}),
+	);
+}
 app.use(express.static("public"));
 app.use("/public", express.static("public"));
 app.use("/components", express.static("src/components"));

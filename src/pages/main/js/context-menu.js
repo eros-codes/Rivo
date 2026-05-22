@@ -215,8 +215,9 @@ export function deleteMessage(msg, index) {
 						friend.lastMessage = lastMsg.text;
 						friend.lastMessageTime = lastMsg.time;
 						friend.lastMessageDate = lastMsg.date || "";
+						// Only explicit `false` means unseen.
 						friend.lastMessageSeen = lastMsg.user
-							? lastMsg.isSeen === true
+							? lastMsg.isSeen !== false
 							: true;
 					} else {
 						friend.lastMessage = "";

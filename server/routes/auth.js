@@ -12,8 +12,8 @@ const router = Router();
 const DEFAULT_BCRYPT_ROUNDS = process.env.NODE_ENV === 'production' ? 12 : 10;
 const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS || DEFAULT_BCRYPT_ROUNDS);
 
-// Simple verification TTL
-const VERIFICATION_TTL_MS = 10 * 60 * 1000; // 10 minutes
+// Simple verification TTL (configurable via VERIFICATION_TTL_MINUTES)
+const VERIFICATION_TTL_MS = (Number(process.env.VERIFICATION_TTL_MINUTES) || 10) * 60 * 1000; // minutes -> ms
 
 // In-memory store for verification codes (keys are normalized emails)
 const verificationCodes = new Map();

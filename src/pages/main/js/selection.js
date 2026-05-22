@@ -118,10 +118,11 @@ export function handleBulkDelete() {
 		);
 		if (remaining.length > 0) {
 			const lastMsg = remaining.at(-1);
-			friend.lastMessage = lastMsg.text;
-			friend.lastMessageTime = lastMsg.time;
-			friend.lastMessageDate = lastMsg.date || "";
-			friend.lastMessageSeen = lastMsg.user ? lastMsg.isSeen === true : true;
+				friend.lastMessage = lastMsg.text;
+				friend.lastMessageTime = lastMsg.time;
+				friend.lastMessageDate = lastMsg.date || "";
+				// Only mark unseen when lastMsg.isSeen === false explicitly.
+				friend.lastMessageSeen = lastMsg.user ? lastMsg.isSeen !== false : true;
 		} else {
 			friend.lastMessage = "";
 			friend.lastMessageTime = "";

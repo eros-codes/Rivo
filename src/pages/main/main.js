@@ -260,10 +260,23 @@ document.addEventListener("DOMContentLoaded", async function () {
 	if (!currentUser || !currentUser.id) {
 		try {
 			const me = await getMe();
-			if (me && me.id) {
-				localStorage.setItem("user", JSON.stringify(me));
-				currentUser = me;
-			} else {
+				if (me && me.id) {
+					// store only non-sensitive fields
+					const safeUser = {
+						id: me.id,
+						name: me.name || "",
+						username: me.username || "",
+						nickname: me.nickname || me.username || "",
+						profilePics: me.profilePics || [],
+						isSaved: me.isSaved || false,
+						isOnline: me.isOnline || false,
+						conversationId: me.conversationId || null,
+						bio: me.bio || "",
+						email: me.email || "",
+					};
+					localStorage.setItem("user", JSON.stringify(safeUser));
+					currentUser = safeUser;
+				} else {
 				window.location.href = "../auth/auth.html";
 				return;
 			}
@@ -512,6 +525,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 	// ─── other variables ─────────────────────────────────────────────────────
 	let _typingTimeout = null;
 	let _suppressNextClick = false;
+	// client-side throttle for typing emits (ms)
+	let _lastTypingEmit = 0;
+	const TYPING_CLIENT_THROTTLE_MS = 800;
+	// search debounce
+	let _searchDebounce = null;
+	let _lastSearchQuery = "";
 
 	// ─── Init all modules ─────────────────────────────────────────────────────
 	initToast({ toaster, messageContainer, toastMessage, toastIcon, undoBtn });
@@ -861,7 +880,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			if (state.contactUserId && Number(state.contactUserId) === Number(user.id)) {
 				const friend = contacts.find((c) => c.id === Number(user.id));
 				if (friend && typeof chatName !== 'undefined' && chatName) {
-					chatName.textContent = friend.nickname || friend.name || "";
+					chatName.textContent = friend.nickname || friend.name;
 				}
 			}
 		} catch (e) {
@@ -964,8 +983,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 					friend.lastMessage = lastMsg.text;
 					friend.lastMessageTime = lastMsg.time;
 					friend.lastMessageDate = lastMsg.date || "";
+					// Only explicit false means unseen
 					friend.lastMessageSeen = lastMsg.user
-						? lastMsg.isSeen === true
+						? lastMsg.isSeen !== false
 						: true;
 				} else {
 					friend.lastMessage = "";
@@ -1104,7 +1124,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 	function updateContactsEmptyState() {
 		const empty = document.getElementById("contacts-empty");
 		if (!empty) return;
-		empty.style.display = contacts.length === 0 ? "flex" : "none";
+		// Show placeholder when there are no contacts
+		empty.style.display = (Array.isArray(contacts) && contacts.length > 0) ? "none" : "flex";
 	}
 
 	function _onContactAction(action, userId) {
@@ -1263,7 +1284,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 				lastMessageSeen: (() => {
 					const lastMsg = c.conversation?.messages?.[0];
 					if (!lastMsg) return true;
-					return lastMsg.isSeen === true;
+					// Treat missing/undefined `isSeen` as already seen. Only
+					// mark as unseen when `isSeen === false` explicitly.
+					return lastMsg.isSeen !== false;
 				})(),
 				_previousContainer: "contacts",
 			});
@@ -1333,7 +1356,19 @@ document.addEventListener("DOMContentLoaded", async function () {
 			if (searchbar.classList.contains("open")) searchInput.focus();
 		});
 		searchInput.addEventListener("input", () => {
-			runSearch(searchInput.value.trim().toLowerCase());
+			const q = searchInput.value.trim().toLowerCase();
+			// avoid duplicate queries
+			if (q === _lastSearchQuery) return;
+			clearTimeout(_searchDebounce);
+			_searchDebounce = setTimeout(() => {
+				_lastSearchQuery = q;
+				// require minimal query length to avoid expensive scans
+				if (!q || q.length < 2) {
+					runSearch("");
+					return;
+				}
+				runSearch(q);
+			}, 250);
 		});
 	}
 
@@ -1643,13 +1678,25 @@ document.addEventListener("DOMContentLoaded", async function () {
 			// transition to finish so scrollHeight reflects the final value.
 			if (wasNearBottom) scrollChatToBottomAfterPadding();
 
-			// typing emit
+			// typing emit (client-side throttled)
 			const _contact = contacts.find((c) => c.id === state.contactUserId);
 			if (_contact?.conversationId) {
-				emitTypingStart(_contact.conversationId);
+				const now = Date.now();
+				if (now - _lastTypingEmit > TYPING_CLIENT_THROTTLE_MS) {
+					try {
+						emitTypingStart(_contact.conversationId);
+					} catch (e) {
+						/* ignore */
+					}
+					_lastTypingEmit = now;
+				}
 				clearTimeout(_typingTimeout);
 				_typingTimeout = setTimeout(() => {
-					emitTypingStop(_contact.conversationId);
+					try {
+						emitTypingStop(_contact.conversationId);
+					} catch (e) {
+						/* ignore */
+					}
 				}, 2000);
 			}
 		});
@@ -2080,8 +2127,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 					friend.lastMessage = lastMsg.text;
 					friend.lastMessageTime = lastMsg.time;
 					friend.lastMessageDate = lastMsg.date || "";
+					// Only explicit false means unseen
 					friend.lastMessageSeen = lastMsg.user
-						? lastMsg.isSeen === true
+						? lastMsg.isSeen !== false
 						: true;
 				} else {
 					friend.lastMessage = "";
@@ -2340,7 +2388,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 	function _openArchivedDialog() {
 		if (!archivedDialog) return;
 
-		archivedDialogList.innerHTML = "";
+		// clear list via DOM APIs to avoid direct innerHTML usage
+		while (archivedDialogList && archivedDialogList.firstChild) {
+			archivedDialogList.removeChild(archivedDialogList.firstChild);
+		}
 
 		const archivedContacts = contacts.filter((c) => c.isArchived);
 

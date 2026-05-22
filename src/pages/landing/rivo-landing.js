@@ -332,7 +332,10 @@ gsap.to(".blob-2", {
 		pmChatAvatar.textContent = d.initial;
 		pmChatAvatar.style.background = d.color;
 
-		pmMsgs.innerHTML = "";
+		// clear messages container without using innerHTML
+		if (pmMsgs) {
+			while (pmMsgs.firstChild) pmMsgs.removeChild(pmMsgs.firstChild);
+		}
 		d.msgs.forEach((m) => {
 			const div = document.createElement("div");
 			div.className = "pm pm-" + (m.out ? "out" : "in");

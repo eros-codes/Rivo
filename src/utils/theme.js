@@ -31,9 +31,20 @@ function hexWithOpacity(hex, opacity) {
 
 // ─── Apply accent ─────────────────────────────────────────────────────────────
 export function applyAccentColor(hex) {
+	// Validate incoming hex to avoid invalid CSS injection
+	if (typeof hex !== "string") {
+		console.warn("applyAccentColor: invalid accent value", hex);
+		return;
+	}
+	const normalized = hex.trim();
+	if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(normalized)) {
+		console.warn("applyAccentColor: accent not a valid hex color, ignoring", normalized);
+		return;
+	}
+
 	const root = document.documentElement;
 	const isDark = document.body.classList.contains("dark-mode");
-	const base = isDark ? darken(hex, 8) : hex;
+	const base = isDark ? darken(normalized, 8) : normalized;
 
 	// root and body (for dark mode) to cover all elements, including those outside of root like modals
 	const targets = [root];
@@ -73,16 +84,53 @@ export function applyWallpaper(value) {
 		chatEl.style.backgroundSize = "";
 		return;
 	}
-	chatEl.style.backgroundImage = `url(${value})`;
+	// Sanitize wallpaper values. Allow only:
+	// - data:image/(png|jpeg|webp);base64,...
+	// - https?:// URLs
+	// - app-relative or absolute paths starting with `/` or `./` or `../`
+	if (typeof value !== "string") {
+		console.warn("applyWallpaper: wallpaper must be a string");
+		return;
+	}
+	const v = value.trim();
+	// disallow javascript: and other dangerous schemes
+	if (/^javascript:/i.test(v)) {
+		console.warn("applyWallpaper: rejected unsafe scheme");
+		return;
+	}
+	const isDataImage = /^data:image\/(png|jpe?g|webp);base64,/i.test(v);
+	const isHttp = /^https?:\/\//i.test(v);
+	const isRelative = /^(\/|\.\/|\.\.\/)/.test(v);
+	if (!isDataImage && !isHttp && !isRelative) {
+		console.warn("applyWallpaper: wallpaper value not allowed", v);
+		return;
+	}
+
+	// Escape double quotes to avoid breaking CSS url(...)
+	const safe = v.replace(/"/g, '\\"');
+	chatEl.style.backgroundImage = `url("${safe}")`;
 	chatEl.style.backgroundSize = "cover";
 	chatEl.style.backgroundPosition = "center";
 }
 
 // ─── Load from localStorage ───────────────────────────────────────────────────
 export function loadThemeFromStorage() {
-	const accent = localStorage.getItem("rivo-accent");
-	if (accent) applyAccentColor(accent);
+	try {
+		const accent = localStorage.getItem("rivo-accent");
+		if (accent && typeof accent === "string" && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(accent.trim())) {
+			applyAccentColor(accent.trim());
+		}
+	} catch (e) {
+		console.warn("loadThemeFromStorage: failed to read accent", e);
+	}
 
-	const wallpaper = localStorage.getItem("rivo-wallpaper");
-	if (wallpaper) applyWallpaper(wallpaper);
+	try {
+		const wallpaper = localStorage.getItem("rivo-wallpaper");
+		if (wallpaper && typeof wallpaper === "string") {
+			// Basic safety check; applyWallpaper will further validate
+			applyWallpaper(wallpaper);
+		}
+	} catch (e) {
+		console.warn("loadThemeFromStorage: failed to read wallpaper", e);
+	}
 }

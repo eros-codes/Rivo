@@ -1,4 +1,4 @@
-const MAX_MESSAGE_LENGTH = parseInt(process.env.MAX_MESSAGE_LENGTH || "2000", 10);
+const MAX_MESSAGE_LENGTH = parseInt(process.env.MAX_MESSAGE_LENGTH || "1500", 10);
 const MAX_NAME_LENGTH = parseInt(process.env.MAX_NAME_LENGTH || "255", 10);
 
 export function isNonEmptyString(v, maxLen = MAX_MESSAGE_LENGTH) {

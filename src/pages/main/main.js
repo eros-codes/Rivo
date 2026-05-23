@@ -278,13 +278,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 					localStorage.setItem("user", JSON.stringify(safeUser));
 					currentUser = safeUser;
 				} else {
-				window.location.href = "../auth/auth.html";
+						window.location.href = "/auth/auth.html";
 				return;
 			}
-		} catch (e) {
-			window.location.href = "../auth/auth.html";
-			return;
-		}
+				} catch (e) {
+					window.location.href = "/auth/auth.html";
+					return;
+				}
 	}
 
 	// Theme
@@ -873,7 +873,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 					c.profilePics = user.profilePics || [];
 					if (user.name) c.name = user.name;
 					if (user.username) c.username = user.username;
-					if (user.username) c.nickname = user.username;
+					// Do not overwrite a user's custom local `nickname` when the
+					// remote user updates their profile. `nickname` is a local-only
+					// field set by the current user and must not be clobbered.
 				}
 			}
 			// Update DOM avatars immediately
@@ -986,6 +988,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 					friend.lastMessage = lastMsg.text;
 					friend.lastMessageTime = lastMsg.time;
 					friend.lastMessageDate = lastMsg.date || "";
+					friend.lastMessageTs = lastMsg.createdAt;
 					// Only explicit false means unseen
 					friend.lastMessageSeen = lastMsg.user
 						? lastMsg.isSeen !== false
@@ -994,6 +997,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 					friend.lastMessage = "";
 					friend.lastMessageTime = "";
 					friend.lastMessageDate = "";
+					friend.lastMessageTs = 0;
 					friend.lastMessageSeen = true;
 				}
 				refreshCard(friend);
@@ -1283,6 +1287,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 							.toISOString()
 							.slice(0, 10)
 					: null,
+				lastMessageTs: c.conversation?.messages?.[0]
+					? new Date(c.conversation.messages[0].createdAt).getTime()
+					: 0,
 				unreadCount: c.unreadCount ?? 0,
 				lastMessageSeen: (() => {
 					const lastMsg = c.conversation?.messages?.[0];
@@ -1389,7 +1396,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 				// push unsubscribe failed (suppressed)
 			}
 			await apiLogout();
-			window.location.href = "../auth/auth.html";
+			window.location.href = "/auth/auth.html";
 		});
 	}
 
@@ -1952,7 +1959,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			const prevIdx = state.pinnedIndexes[prevPos];
 
 			const targetMsg = chatEl.querySelector(
-				`[data-index=${currentIdx}]`,
+				`[data-index="${currentIdx}"]`,
 			);
 			if (targetMsg) {
 				state.isProgrammaticScroll = true;

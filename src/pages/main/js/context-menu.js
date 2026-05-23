@@ -1,5 +1,5 @@
 import { state, messages, contacts, getMessageByIndex } from "./state.js";
-import { showEmptyState } from "./ui.js";
+import { showEmptyState, showToast } from "./ui.js";
 import {
 	// Scroll helper that waits for padding transition
 	scrollChatToBottomAfterPadding,
@@ -113,10 +113,6 @@ export function openContextMenu(msg, e) {
 export function closeContextMenu() {
 	_dom.messageMenu.style.opacity = 0;
 	_dom.chatOverlay.style.opacity = 0;
-	const editMsg0c = _dom.editMsg?.[0];
-	if (editMsg0c) editMsg0c.style.display = "flex";
-	const deleteMsg0c = document.querySelectorAll(".delete-message")[0];
-	if (deleteMsg0c) deleteMsg0c.style.display = "flex";
 	_dom.messageMenu.style.display = "none";
 	_dom.chatOverlay.style.display = "none";
 	if (state.selectedMsg) {
@@ -290,44 +286,71 @@ export function buildForwardedMsg(originalMsg, targetContactId) {
 }
 
 // ─── Pin / Unpin ──────────────────────────────────────────────────────────────
-export function pinMessage(pinIconSvg) {
+export async function pinMessage(pinIconSvg) {
 	const idx = Number(state.selectedMsg?.dataset.index);
-	const msg = getMessageByIndex(state.contactUserId, idx);
+	const contactId = state.contactUserId;
+	const msg = getMessageByIndex(contactId, idx);
 	const messageId = msg?.id;
-	if (messageId) {
-		emitPinMessage(messageId).catch(() => {
-			msg.isPinned = !msg.isPinned;
-			state.pinnedIndexes = messages[state.contactUserId]
-				.map((m, i) => (m.isPinned ? i : -1))
-				.filter((i) => i !== -1);
-			updatePinnedMessage();
-		});
+	if (!messageId) {
+		closeContextMenu();
+		return;
 	}
 
 	const msgEl = _dom.chatEl.querySelector(`[data-index="${idx}"]`);
-	const meta = msgEl.querySelector(".chat-message-meta");
-	const existingIcon = msgEl.querySelector(".chat-pinned-icon");
+	const meta = msgEl ? msgEl.querySelector(".chat-message-meta") : null;
+	let existingIcon = msgEl ? msgEl.querySelector(".chat-pinned-icon") : null;
 
-	if (!msg.isPinned) {
-		msg.isPinned = true;
-		if (!existingIcon) {
-			const pinSpan = document.createElement("span");
-			pinSpan.className = "chat-pinned-icon";
-			pinSpan.textContent = "";
-			const _p = parseSvg(pinIconSvg);
-			if (_p) pinSpan.appendChild(_p.cloneNode(true));
-			msg.user ? meta.prepend(pinSpan) : meta.appendChild(pinSpan);
+	try {
+		// Wait for server ack; time out if it takes too long to avoid
+		// leaving the UI in an indeterminate state.
+		const isPinned = await Promise.race([
+			emitPinMessage(messageId),
+			new Promise((_, rej) => setTimeout(() => rej(new Error("Timeout")), 5000)),
+		]);
+
+		// Apply server-approved state to model and DOM
+		if (isPinned) {
+			msg.isPinned = true;
+			existingIcon = msgEl ? msgEl.querySelector(".chat-pinned-icon") : null;
+			if (msgEl && !existingIcon && meta) {
+				const pinSpan = document.createElement("span");
+				pinSpan.className = "chat-pinned-icon";
+				pinSpan.textContent = "";
+				const _p = parseSvg(pinIconSvg);
+				if (_p) pinSpan.appendChild(_p.cloneNode(true));
+				msg.user ? meta.prepend(pinSpan) : meta.appendChild(pinSpan);
+			}
+			// update pinned indexes for the conversation we acted on,
+			// but avoid clobbering the global `state.pinnedIndexes` for
+			// a different conversation that may now be visible.
+			if (contactId === state.contactUserId) {
+				state.pinnedIndexes = (messages[contactId] || [])
+					.map((m, i) => (m.isPinned ? i : -1))
+					.filter(i => i !== -1)
+					.sort((a,b)=>a-b);
+			}
+		} else {
+			msg.isPinned = false;
+			if (msgEl) {
+				const existing = msgEl.querySelector(".chat-pinned-icon");
+				if (existing) existing.remove();
+			}
+			if (contactId === state.contactUserId) {
+				state.pinnedIndexes = (messages[contactId] || [])
+					.map((m, i) => (m.isPinned ? i : -1))
+					.filter(i => i !== -1)
+					.sort((a,b)=>a-b);
+			}
 		}
-		state.pinnedIndexes.push(idx);
-		state.pinnedIndexes.sort((a, b) => a - b);
-	} else {
-		msg.isPinned = false;
-		if (existingIcon) existingIcon.remove();
-		state.pinnedIndexes = state.pinnedIndexes.filter((i) => i !== idx);
-	}
 
-	updatePinnedMessage();
-	closeContextMenu();
+		// Refresh the pinned banner for the conversation we updated.
+		updatePinnedMessage(contactId);
+	} catch (e) {
+		console.error('pinMessage failed', e);
+		showToast('Failed to update pin');
+	} finally {
+		closeContextMenu();
+	}
 }
 
 // ─── Edit ─────────────────────────────────────────────────────────────────────

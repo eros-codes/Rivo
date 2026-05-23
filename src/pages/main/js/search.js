@@ -41,9 +41,14 @@ function _renderContactResults(query) {
 	list.textContent = "";
 
 	const MAX_CONTACT_RESULTS = 50;
-	const matched = contacts.filter((c) =>
-		(c.nickname || c.name).toLowerCase().includes(query),
-	).slice(0, MAX_CONTACT_RESULTS);
+	const matched = contacts
+		.filter(
+			(c) =>
+				!c.isArchived &&
+				!c.isBlocked &&
+				(c.nickname || c.name).toLowerCase().includes(query),
+		)
+		.slice(0, MAX_CONTACT_RESULTS);
 
 	if (matched.length === 0) {
 		const p = document.createElement("p");

@@ -30,6 +30,9 @@ const VERIFICATION_SEND_LIMIT = Number(process.env.VERIFICATION_SEND_LIMIT) || 5
 // memory fallback counter: Map<normalizedEmail, { count, timer }>
 const _sendCounts = new Map();
 
+// Per-email verification attempts allowed before requiring a new code
+const VERIFICATION_MAX_ATTEMPTS = Number(process.env.VERIFICATION_MAX_ATTEMPTS || 5);
+
 function _normEmail(email) {
     return String(email || '').toLowerCase().trim();
 }
@@ -71,7 +74,7 @@ function _clearVerificationInMemory(email) {
 async function _storeVerification(email, code) {
     // store in-memory only under normalized email
     const key = _normEmail(email);
-    verificationCodes.set(key, { code, expiresAt: Date.now() + VERIFICATION_TTL_MS });
+    verificationCodes.set(key, { code, expiresAt: Date.now() + VERIFICATION_TTL_MS, attempts: 0 });
     if (verificationTimers.has(key)) {
         clearTimeout(verificationTimers.get(key));
     }
@@ -89,7 +92,7 @@ async function _clearVerification(email) {
 
 async function _sendEmail({ to, subject, text, html }) {
     // Lazy-create and cache transporter to avoid recreating per-request
-    if (!global._rivo_smtp_transporter) global._rivo_smtp_transporter = null;
+    if (typeof globalThis._rivo_smtp_transporter === 'undefined') globalThis._rivo_smtp_transporter = null;
     function _createTransporter() {
         const host = process.env.SMTP_HOST;
         const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined;
@@ -107,10 +110,11 @@ async function _sendEmail({ to, subject, text, html }) {
         return tr;
     }
 
-    let transporter = global._rivo_smtp_transporter;
+    let transporter = globalThis._rivo_smtp_transporter;
     if (!transporter) {
         transporter = _createTransporter();
-        global._rivo_smtp_transporter = transporter;
+        // cache immediately to avoid concurrent creators
+        globalThis._rivo_smtp_transporter = transporter;
         // attempt a verify in background (non-fatal)
         transporter.verify().then(() => {
             console.info('SMTP verified');
@@ -192,7 +196,26 @@ router.post('/verify-code', async (req, res) => {
     try {
         const entry = await _getVerification(email);
         if (!entry) return res.status(400).json({ error: 'Invalid or expired code' });
-        if (String(entry.code) !== String(code)) return res.status(400).json({ error: 'Invalid code' });
+
+        // Enforce attempt limits per-email to prevent offline brute-force.
+        const attempts = entry.attempts || 0;
+        if (attempts >= VERIFICATION_MAX_ATTEMPTS) {
+            // clear code and require a new send
+            await _clearVerification(email);
+            return res.status(429).json({ error: 'Too many attempts. Request a new verification code.' });
+        }
+
+        if (String(entry.code) !== String(code)) {
+            // increment attempts and persist in-memory
+            const key = _normEmail(email);
+            const next = { ...entry, attempts: attempts + 1 };
+            verificationCodes.set(key, next);
+            if (next.attempts >= VERIFICATION_MAX_ATTEMPTS) {
+                await _clearVerification(email);
+                return res.status(429).json({ error: 'Too many attempts. Request a new verification code.' });
+            }
+            return res.status(400).json({ error: 'Invalid code' });
+        }
         // valid: mark email as recently verified (short-lived) so /register can proceed
         try {
             const key = _normEmail(email);
@@ -240,6 +263,11 @@ router.post("/register", async (req, res) => {
 				.status(409)
 				.json({ error: `This ${field} is already taken` });
 		}
+
+        // Enforce minimum password length for registration to match change-password rules
+        if (typeof password !== 'string' || password.length < 8) {
+            return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        }
 
         const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
@@ -298,6 +326,11 @@ router.post("/login", async (req, res) => {
 
         if (!match) {
             return res.status(401).json({ error: "Invalid credentials" });
+        }
+
+        if (!process.env.JWT_SECRET) {
+            console.error('JWT_SECRET not set at login time');
+            return res.status(500).json({ error: 'Server misconfiguration' });
         }
 
         const token = jwt.sign(

@@ -163,6 +163,19 @@ async function _fetchVaultSecrets() {
 
   if (!addr || !token) throw new Error("Vault not configured (VAULT_ADDR and VAULT_TOKEN required)");
 
+  // In production, require Vault addresses to use HTTPS to avoid sending
+  // the X-Vault-Token header in cleartext over the network.
+  if (process.env.NODE_ENV === 'production') {
+    try {
+      const ua = new URL(addr);
+      if (ua.protocol !== 'https:') {
+        throw new Error('Vault must use HTTPS in production');
+      }
+    } catch (e) {
+      throw new Error(`VAULT_ADDR is invalid or insecure: ${String(e && e.message ? e.message : e)}`);
+    }
+  }
+
   const base = addr.replace(/\/$/, "");
   const v2 = `${base}/v1/${mount}/data/${path}`;
   const v1 = `${base}/v1/${mount}/${path}`;

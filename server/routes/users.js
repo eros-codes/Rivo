@@ -82,6 +82,23 @@ router.get("/me", requireAuth, async (req, res) => {
 router.patch("/me", requireAuth, async (req, res) => {
 	const { name, username, bio, profilePics, privacyOnline, privacyEmail, privacyProfile } = req.body;
 
+	// Validate lengths to prevent stored-DoS via large fields
+	if (name !== undefined) {
+		if (typeof name !== 'string' || name.trim().length === 0 || name.trim().length > 100) {
+			return res.status(400).json({ error: 'Name must be between 1 and 100 characters' });
+		}
+	}
+	if (username !== undefined) {
+		if (typeof username !== 'string' || username.trim().length === 0 || username.trim().length > 30) {
+			return res.status(400).json({ error: 'Username must be between 1 and 30 characters' });
+		}
+	}
+	if (bio !== undefined) {
+		if (typeof bio !== 'string' || bio.length > 300) {
+			return res.status(400).json({ error: 'Bio must be 300 characters or fewer' });
+		}
+	}
+
 	try {
 		if (username) {
 			const existing = await prisma.user.findFirst({
@@ -170,6 +187,9 @@ router.get("/search", requireAuth, async (req, res) => {
 	if (!q || q.trim().length < 2) {
 		return res.status(400).json({ error: "Query too short" });
 	}
+	if (q.trim().length > 50) {
+		return res.status(400).json({ error: 'Query too long' });
+	}
 
 	try {
 		const users = await prisma.user.findMany({
@@ -208,7 +228,8 @@ router.delete("/me", requireAuth, async (req, res) => {
 		});
 
 		if (!user) return res.status(404).json({ error: "User not found" });
-		console.info(`delete-account: user found id=${user.id}, username=${user.username}`);
+		// Avoid logging PII (username). Log only user id.
+		console.info(`delete-account: user found id=${user.id}`);
 
 		const match = await bcrypt.compare(password, user.passwordHash);
 		console.info(`delete-account: password compare result=${match}`);
@@ -335,9 +356,10 @@ router.post("/me/avatar", requireAuth, upload.single("avatar"), async (req, res)
 	const url = `/assets/images/user-profiles/${req.userId}${outExt}`;
 
 		// Process image, update DB, broadcast, and cleanup in a single try/catch
+		let tempOut = null;
 		try {
 			// Write to a temporary file first to avoid "Cannot use same file for input and output"
-			const tempOut = outPath + '.tmp-' + Date.now();
+			tempOut = outPath + '.tmp-' + Date.now();
 			// Debug: log paths to help diagnose any input/output collisions.
 			// Disabled by default; set AVATAR_DEBUG=1 to enable in dev only.
 			if (process.env.AVATAR_DEBUG) {
@@ -352,6 +374,9 @@ router.post("/me/avatar", requireAuth, upload.single("avatar"), async (req, res)
 			// Replace the destination atomically: remove target if it exists, then rename temp
 			try { await fs.promises.unlink(outPath); } catch (e) { /* ignore if missing */ }
 			await fs.promises.rename(tempOut, outPath);
+
+			// Best-effort: remove any leftover temp file if it still exists
+			try { await fs.promises.unlink(tempOut); } catch (e) { /* ignore */ }
 
 			// Remove the original uploaded file if it's different from the final path
 			if (outPath !== filePath) {
@@ -387,6 +412,8 @@ router.post("/me/avatar", requireAuth, upload.single("avatar"), async (req, res)
 			return res.json({ url });
 		} catch (err) {
 			console.error('avatar processing failed', err);
+			// cleanup: try to remove tempOut, uploaded file, and any partial output
+			try { if (tempOut) await fs.promises.unlink(tempOut); } catch (er) { /* ignore */ }
 			try { await fs.promises.unlink(filePath); } catch (e) { /* ignore */ }
 			try { await fs.promises.unlink(outPath); } catch (e) { /* ignore */ }
 			return res.status(500).json({ error: "Failed to process image" });

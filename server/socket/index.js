@@ -49,6 +49,10 @@ export function initSocket(httpServer) {
 	const connectionAttempts = new Map(); // Map<ip, Array<timestamp>>
 	const CONNECTION_ATTEMPT_WINDOW_MS = parseInt(process.env.SOCKET_CONN_ATTEMPT_WINDOW_MS || "60000", 10);
 	const CONNECTION_ATTEMPT_MAX = parseInt(process.env.SOCKET_CONN_ATTEMPT_MAX || "30", 10);
+	// Maximum number of timestamps to keep per-IP to avoid unbounded memory growth
+	const CONNECTION_ATTEMPT_STORE_MAX = parseInt(process.env.SOCKET_CONN_ATTEMPT_STORE_MAX || "100", 10);
+	// Maximum number of distinct IP keys to keep to avoid unbounded Map growth
+	const CONNECTION_ATTEMPT_MAP_MAX = parseInt(process.env.SOCKET_CONN_ATTEMPT_MAP_MAX || "5000", 10);
 
 	// Simple per-user rate limiter: Map<userId, Array<timestamp>>
 	const sendRate = new Map();
@@ -65,9 +69,18 @@ export function initSocket(httpServer) {
 	setInterval(() => {
 		const now = Date.now();
 		for (const [ip, arr] of connectionAttempts.entries()) {
-			const recent = arr.filter((t) => now - t < CONNECTION_ATTEMPT_WINDOW_MS);
+			let recent = arr.filter((t) => now - t < CONNECTION_ATTEMPT_WINDOW_MS);
+			if (recent.length > CONNECTION_ATTEMPT_STORE_MAX) recent = recent.slice(-CONNECTION_ATTEMPT_STORE_MAX);
 			if (recent.length === 0) connectionAttempts.delete(ip);
 			else connectionAttempts.set(ip, recent);
+		}
+
+		// If too many distinct IPs are being tracked (e.g., rotating scanners),
+		// evict the oldest entries to keep memory bounded.
+		while (connectionAttempts.size > CONNECTION_ATTEMPT_MAP_MAX) {
+			const oldest = connectionAttempts.keys().next().value;
+			if (!oldest) break;
+			connectionAttempts.delete(oldest);
 		}
 	}, Math.max(10000, Math.floor(CONNECTION_ATTEMPT_WINDOW_MS / 4)));
 
@@ -119,9 +132,18 @@ export function initSocket(httpServer) {
 			const now = Date.now();
 			const arr = connectionAttempts.get(ip) || [];
 			const minTs = now - CONNECTION_ATTEMPT_WINDOW_MS;
-			const recent = arr.filter((t) => t > minTs);
+			let recent = arr.filter((t) => t > minTs);
 			recent.push(now);
+			// Cap stored timestamps per-IP to avoid unbounded arrays
+			if (recent.length > CONNECTION_ATTEMPT_STORE_MAX) recent = recent.slice(-CONNECTION_ATTEMPT_STORE_MAX);
 			connectionAttempts.set(ip, recent);
+
+			// Cap total number of distinct IPs tracked to avoid memory exhaustion
+			while (connectionAttempts.size > CONNECTION_ATTEMPT_MAP_MAX) {
+				const oldest = connectionAttempts.keys().next().value;
+				if (!oldest) break;
+				connectionAttempts.delete(oldest);
+			}
 			if (recent.length > CONNECTION_ATTEMPT_MAX) {
 				console.warn('socket connection rate limited ip=', ip);
 				return next(new Error('RateLimit'));
@@ -320,6 +342,27 @@ export function initSocket(httpServer) {
 						replyToTextPlain = message.replyToText;
 					}
 				}
+				// Decrypt forwardedText (if any) using same DEK
+				let forwardedTextPlain = null;
+				if (forwardedText && typeof forwardedText === 'string' && forwardedText.trim()) {
+					forwardedTextPlain = forwardedText.trim();
+				} else if (message.forwardedText) {
+					try {
+						const parsedF = JSON.parse(message.forwardedText);
+						if (parsedF && parsedF.c && parsedF.iv && parsedF.t) {
+							try {
+								forwardedTextPlain = decryptMessage(parsedF.c, parsedF.iv, parsedF.t, dek);
+							} catch (e) {
+								console.error('failed to decrypt forwardedText', message.id, e && e.message ? e.message : e);
+								forwardedTextPlain = 'Message unavailable';
+							}
+						} else {
+							forwardedTextPlain = message.forwardedText;
+						}
+					} catch (e) {
+						forwardedTextPlain = message.forwardedText;
+					}
+					}
 
 				const safe = {
 					id: message.id,
@@ -334,6 +377,7 @@ export function initSocket(httpServer) {
 					replyToId: message.replyToId,
 					replyToName: message.replyToName,
 					replyToText: replyToTextPlain,
+					forwardedText: forwardedTextPlain,
 					forwardedFrom: message.forwardedFrom,
 					createdAt: message.createdAt,
 				};
@@ -819,7 +863,14 @@ export function initSocket(httpServer) {
 				const BATCH_SIZE = parseInt(process.env.MESSAGE_SEEN_BATCH_SIZE || "1000", 10);
 				const MAX_COLLECT = parseInt(process.env.MESSAGE_SEEN_MAX_COLLECT || "10000", 10);
 				let totalMarked = [];
+				const MAX_ITERATIONS = parseInt(process.env.MESSAGE_SEEN_MAX_ITERATIONS || "50", 10);
+				let _iterations = 0;
 				while (true) {
+					_iterations += 1;
+					if (_iterations > MAX_ITERATIONS) {
+						console.warn(`message:seen loop exceeded max iterations for conv=${convId} user=${socket.userId}`);
+						break;
+					}
 					const toMark = await prisma.message.findMany({
 						where: {
 							conversationId: convId,

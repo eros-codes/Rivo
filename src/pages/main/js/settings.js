@@ -110,8 +110,14 @@ export function initSettings(dom, currentUser) {
 				const reader = new FileReader();
 				reader.onload = (ev) => {
 					const base64 = ev.target.result;
-					localStorage.setItem("rivo-wallpaper", base64);
-					applyWallpaper(base64);
+					try {
+						localStorage.setItem("rivo-wallpaper", base64);
+					} catch (err) {
+						console.warn('Failed to persist wallpaper to localStorage', err);
+						showToast('Image too large to save locally');
+					}
+					// Always apply wallpaper for the current session even if saving failed
+					try { applyWallpaper(base64); } catch (e) { console.error('applyWallpaper failed', e); }
 					if (_dom.settingsWallpaperValue)
 						_dom.settingsWallpaperValue.textContent = "Custom";
 					showToast("Background updated");

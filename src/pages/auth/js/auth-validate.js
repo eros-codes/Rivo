@@ -3,5 +3,7 @@ export function isValidEmail(email) {
 }
 
 export function isValidUsername(username) {
-	return /^[a-zA-Z0-9_]{3,20}$/.test(username);
+	// Server accepts up to 30 characters; keep client in sync to avoid
+	// surprise validation failures when editing an existing longer username.
+	return /^[a-zA-Z0-9_]{3,30}$/.test(username);
 }

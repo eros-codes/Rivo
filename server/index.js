@@ -20,6 +20,21 @@ import pushRoutes from "./routes/push.js";
 
 dotenv.config();
 
+// Safety: disallow enabling ephemeral KEK in production environments.
+// An ephemeral KEK will prevent messages from being unwrapped after a restart
+// if someone accidentally sets this flag in production. Fail-fast to avoid
+// silent data-loss scenarios.
+if (process.env.NODE_ENV === 'production' && process.env.ALLOW_EPHEMERAL_KEK === '1') {
+	console.error('FATAL: ALLOW_EPHEMERAL_KEK must not be set in production');
+	process.exit(1);
+}
+
+// Critical: fail fast if JWT secret is missing. Without a secret,
+// jsonwebtoken may accept tokens signed with an empty string.
+if (!process.env.JWT_SECRET) {
+	throw new Error("JWT_SECRET not set");
+}
+
 // Initialize Sentry if DSN is provided
 if (process.env.SENTRY_DSN) {
 	try {

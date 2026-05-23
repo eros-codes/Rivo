@@ -278,22 +278,31 @@ export function updatePinCount(activeIdx) {
 }
 
 // ─── Pinned message bar ───────────────────────────────────────────────────────
-export function updatePinnedMessage() {
-	const userMessages = messages[state.contactUserId];
+export function updatePinnedMessage(contactId = state.contactUserId) {
+	const userMessages = messages[contactId];
 	if (!Array.isArray(userMessages)) return;
-	const pinnedMsg = userMessages.findLast((msg) => msg.isPinned);
+	// `findLast` is not supported in older browsers; use a compatible alternative
+	const pinnedMsg = [...userMessages].reverse().find((msg) => msg.isPinned);
 	if (pinnedMsg) {
-		_dom.pinnedMessageContainer.style.display = "flex";
-		_dom.pinnedMessageText.textContent = pinnedMsg.text;
-		_dom.pinnedMessageText.dataset.index = pinnedMsg.index;
-		_dom.chatHeader.style.borderRadius = "1rem 1rem 0 0";
+		// Only update the visible pinned banner when the provided contactId
+		// matches the currently open chat. Otherwise just ensure the model
+		// is consistent.
+		if (contactId === state.contactUserId) {
+			_dom.pinnedMessageContainer.style.display = "flex";
+			_dom.pinnedMessageText.textContent = pinnedMsg.text;
+			_dom.pinnedMessageText.dataset.index = pinnedMsg.index;
+			_dom.chatHeader.style.borderRadius = "1rem 1rem 0 0";
+		}
 	} else {
-		_dom.pinnedMessageContainer.style.display = "none";
-		_dom.pinnedMessageText.textContent = "";
-		_dom.pinnedMessageText.dataset.index = "";
-		_dom.chatHeader.style.borderRadius = "1rem";
+		if (contactId === state.contactUserId) {
+			_dom.pinnedMessageContainer.style.display = "none";
+			_dom.pinnedMessageText.textContent = "";
+			_dom.pinnedMessageText.dataset.index = "";
+			_dom.chatHeader.style.borderRadius = "1rem";
+		}
 	}
-	updatePinCount(pinnedMsg ? pinnedMsg.index : null);
+	// Only update the pinned-count UI for the currently visible chat
+	if (contactId === state.contactUserId) updatePinCount(pinnedMsg ? pinnedMsg.index : null);
 }
 
 // ─── Inject messages ──────────────────────────────────────────────────────────
@@ -552,16 +561,10 @@ export async function receiveMessage(message) {
 	if (!messages[contact.id]) messages[contact.id] = [];
 	messages[contact.id].push(normalized);
 
-	// Trim older messages if this conversation exceeds the cap
-	if (messages[contact.id].length > MAX_MESSAGES_PER_CONVERSATION) {
-		const overflow = messages[contact.id].length - MAX_MESSAGES_PER_CONVERSATION;
-		messages[contact.id] = messages[contact.id].slice(overflow);
-		// If this conversation is open, re-render to keep DOM indexes in sync
-		if (state.contactUserId === contact.id) {
-			injectMessages(contact.id);
-			scrollChatToBottom();
-		}
-	}
+	// Do not trim messages immediately on receive to avoid jarring the user
+	// (e.g., when they're reading older history). Trimming is performed
+	// when loading older messages (see `loadOlderMessages`) so that
+	// history-reading is not interrupted.
 
 	// اگه همین چت بازه نشون بده
 	if (state.contactUserId === contact.id) {

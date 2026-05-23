@@ -8,12 +8,39 @@ const router = Router();
 // ─── Get all conversations of current user ────────────────────────────────────
 router.get("/", requireAuth, async (req, res) => {
 	try {
-		const conversations = await prisma.conversation.findMany({
-			where: {
-				members: {
-					some: { userId: req.userId },
+		// Pagination: limit the number of conversations returned to avoid OOM/DoS
+		const MAX_TAKE = parseInt(process.env.MAX_CONVERSATIONS_TAKE || "100", 10);
+		const DEFAULT_TAKE = parseInt(process.env.DEFAULT_CONVERSATIONS_TAKE || "50", 10);
+		let take = parseInt(req.query.take, 10) || DEFAULT_TAKE;
+		if (take < 1) take = 1;
+		if (take > MAX_TAKE) take = MAX_TAKE;
+
+		const before = req.query.before ? new Date(req.query.before) : null;
+		const beforeId = req.query.beforeId ? parseIntSafe(req.query.beforeId) : null;
+
+		const where = {
+			members: { some: { userId: req.userId } },
+		};
+		if (before) {
+			where.AND = [
+				{
+					OR: [
+						{ lastMessageAt: { lt: before } },
+						{
+							AND: [
+								{ lastMessageAt: before },
+								{ id: { lt: beforeId || Number.MAX_SAFE_INTEGER } },
+							],
+						},
+					],
 				},
-			},
+			];
+		}
+
+		const conversations = await prisma.conversation.findMany({
+			where,
+			take,
+			orderBy: [{ lastMessageAt: "desc" }, { id: "desc" }],
 			include: {
 				members: {
 					include: {
@@ -52,7 +79,6 @@ router.get("/", requireAuth, async (req, res) => {
 					},
 				},
 			},
-			orderBy: { lastMessageAt: "desc" },
 		});
 
 		return res.json(conversations);
@@ -165,11 +191,15 @@ router.delete("/:id/messages", requireAuth, async (req, res) => {
 
         if (!member) return res.status(403).json({ error: "Forbidden" });
 
-		// Clear the conversation messages. Requesting user must be a member.
-		// Mark all messages in the conversation as deleted so they no longer
-		// appear when conversations/messages are fetched.
+		// NOTE: Previously this endpoint marked all messages in a conversation
+		// as deleted for everyone. That's a global delete which removes the
+		// other participant's history. As a safer interim measure, only mark
+		// messages authored by the requesting user as deleted. A proper
+		// per-user soft-delete requires a schema migration (e.g., a
+		// Message.deletedFor array or a ChatDeletion table) which should be
+		// implemented separately.
 		await prisma.message.updateMany({
-			where: { conversationId },
+			where: { conversationId, senderId: req.userId },
 			data: { isDeleted: true },
 		});
 

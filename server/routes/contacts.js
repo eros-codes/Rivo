@@ -119,6 +119,7 @@ router.get("/", requireAuth, async (req, res) => {
 					isDeleted: m.isDeleted,
 					isEdited: m.isEdited,
 					isPinned: m.isPinned,
+					isSeen: m.isSeen,
 				};
 				conv.messages = [preview];
 			} catch (e) {
@@ -318,6 +319,9 @@ router.patch("/:id", requireAuth, async (req, res) => {
 	// Prevent clients from setting server-controlled fields
 	const { isPinned, pinOrder, isMuted, isBlocked, nickname, isArchived } = req.body;
 
+	// Sanitize nickname to avoid stored-DoS via large nicknames
+	const safeNickname = typeof nickname === 'string' ? nickname.trim().slice(0, 100) : undefined;
+
 	try {
 		const contact = await prisma.contact.findFirst({
 			where: {
@@ -337,7 +341,7 @@ router.patch("/:id", requireAuth, async (req, res) => {
 				...(pinOrder !== undefined && { pinOrder }),
 				...(isMuted !== undefined && { isMuted }),
 				...(isBlocked !== undefined && { isBlocked }),
-				...(nickname !== undefined && { nickname }),
+				...(nickname !== undefined && { nickname: safeNickname }),
 				...(isArchived !== undefined && { isArchived }),
 			},
 		});
@@ -372,22 +376,15 @@ router.delete("/:id", requireAuth, async (req, res) => {
 			await tx.contact.deleteMany({
 				where: { ownerId: contact.contactId, contactId: req.userId },
 			});
-		});
 
-		// If the conversation no longer has contacts, remove it to avoid
-		// leaving orphaned conversations around.
-		try {
-			const remaining = await prisma.contact.findFirst({
-				where: { conversationId: contact.conversationId },
-			});
+			// If the conversation no longer has contacts, remove it inside the
+			// same transaction to avoid races where concurrent deletes both
+			// attempt to remove the conversation.
+			const remaining = await tx.contact.findFirst({ where: { conversationId: contact.conversationId } });
 			if (!remaining && contact.conversationId) {
-				await prisma.conversation.delete({
-					where: { id: contact.conversationId },
-				});
+				await tx.conversation.delete({ where: { id: contact.conversationId } });
 			}
-		} catch (e) {
-			// ignore cleanup failures
-		}
+		});
 
 		// Notify affected connected clients via socket.io so UIs update in real-time.
 		try {

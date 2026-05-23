@@ -24,7 +24,14 @@ export async function requireAuth(req, res, next) {
 				}
 			}
 		} catch (e) {
-			console.error("Auth passwordChangedAt check failed", e);
+				console.error("Auth passwordChangedAt check failed", e);
+				// Fail closed in production: do not accept tokens if we cannot
+				// verify whether the password was changed. In non-production,
+				// rethrow so developers become aware of the error.
+				if (process.env.NODE_ENV === 'production') {
+					return res.status(503).json({ error: 'Service unavailable' });
+				}
+				throw e;
 		}
 
 		req.userId = userId;

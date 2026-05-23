@@ -5,7 +5,6 @@ import { createActiveChatCard } from "../../../components/active-chats/active-ch
 let _dom = {};
 let _onContactAction = null;
 
-
 /**
 
 - @param {{ activeChatsContainer, contactsContainer, unreadMessageCount }} dom
@@ -31,7 +30,7 @@ export function moveToContacts(friend) {
 	const wrapper = activeCard?.closest(".active-chat-wrapper") ?? activeCard;
 	if (wrapper) {
 		// record that this friend was in active chats before moving
-		friend._previousContainer = 'active';
+		friend._previousContainer = "active";
 		wrapper.remove();
 		_dom.contactsContainer.appendChild(
 			createContactCard(
@@ -49,7 +48,7 @@ export function moveToActiveChats(friend) {
 	);
 	if (contactCard) {
 		// record that this friend was in contacts before moving
-		friend._previousContainer = 'contacts';
+		friend._previousContainer = "contacts";
 		contactCard.remove();
 		_dom.activeChatsContainer.appendChild(createActiveChatCard(friend));
 	} else {
@@ -68,12 +67,13 @@ export function refreshCard(friend) {
 	const contactCard = _dom.contactsContainer.querySelector(
 		`[data-user-id="${friend.id}"]`,
 	);
-	if (contactCard) contactCard.replaceWith(
-		createContactCard(
-			{ ...friend, hasMessages: !!friend.lastMessage },
-			_onContactAction,
-		),
-	);
+	if (contactCard)
+		contactCard.replaceWith(
+			createContactCard(
+				{ ...friend, hasMessages: !!friend.lastMessage },
+				_onContactAction,
+			),
+		);
 }
 
 /** Sorting the cards in the way that should be **/
@@ -96,17 +96,23 @@ export function sortActiveChats() {
 			else unpinned.push({ el, friend });
 		});
 
-	pinned.sort((a, b) => (b.friend.pinOrder ?? 0) - (a.friend.pinOrder ?? 0));
-
-	unpinned.sort((a, b) => {
-		const ta =
-			(a.friend.lastMessageDate || "") + (a.friend.lastMessageTime || "");
-		const tb =
-			(b.friend.lastMessageDate || "") + (b.friend.lastMessageTime || "");
-		return tb.localeCompare(ta);
+	pinned.sort((a, b) => {
+		const pa = a.friend.pinOrder ?? Number.MAX_SAFE_INTEGER;
+		const pb = b.friend.pinOrder ?? Number.MAX_SAFE_INTEGER;
+		if (pa !== pb) return pa - pb;
+		return (b.friend.lastMessageTs || 0) - (a.friend.lastMessageTs || 0);
 	});
 
-	[...pinned, ...saved, ...unpinned].forEach(({ el }) =>
+	unpinned.sort((a, b) => {
+		const cmp =
+			(b.friend.lastMessageTs || 0) - (a.friend.lastMessageTs || 0);
+		if (cmp !== 0) return cmp;
+		const na = (a.friend.nickname || a.friend.name || "").toLowerCase();
+		const nb = (b.friend.nickname || b.friend.name || "").toLowerCase();
+		return na.localeCompare(nb);
+	});
+
+	[...saved, ...pinned, ...unpinned].forEach(({ el }) =>
 		_dom.activeChatsContainer.appendChild(el),
 	);
 }
@@ -123,21 +129,19 @@ export function sortContacts() {
 				(c) => c.id === Number(card.dataset.userId),
 			);
 			if (!friend) return;
-			
-			if (friend.isBlocked) {
-				blocked.push({ card, friend })
-			} else if (friend.lastMessage) {
-				withMsg.push({ card, friend })
-			} else {
-				withoutMsg.push({ card, friend })
-			}
+			if (friend.isBlocked) blocked.push({ card, friend });
+			else if (friend.lastMessage) withMsg.push({ card, friend });
+			else withoutMsg.push({ card, friend });
 		});
 
-	withMsg.sort((a, b) =>
-		((b.friend.lastMessageDate || "") + (b.friend.lastMessageTime || "")).localeCompare(
-			(a.friend.lastMessageDate || "") + (a.friend.lastMessageTime || ""),
-		),
-	);
+	withMsg.sort((a, b) => {
+		const cmp =
+			(b.friend.lastMessageTs || 0) - (a.friend.lastMessageTs || 0);
+		if (cmp !== 0) return cmp;
+		const na = (a.friend.nickname || a.friend.name || "").toLowerCase();
+		const nb = (b.friend.nickname || b.friend.name || "").toLowerCase();
+		return na.localeCompare(nb);
+	});
 
 	[...withMsg, ...withoutMsg, ...blocked].forEach(({ card }) =>
 		_dom.contactsContainer.appendChild(card),

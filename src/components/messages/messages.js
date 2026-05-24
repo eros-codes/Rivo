@@ -4,6 +4,10 @@ const seenIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
 const sentIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M12 22q-2.075 0-3.9-.788t-3.175-2.137T2.788 15.9T2 12t.788-3.9t2.137-3.175T8.1 2.788T12 2t3.9.788t3.175 2.137T21.213 8.1T22 12t-.788 3.9t-2.137 3.175t-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12t-2.325-5.675T12 4T6.325 6.325T4 12t2.325 5.675T12 20m0-8"></path></svg>`;
 const pinIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path fill="currentColor" d="M15.744 4.276c1.221-2.442 4.476-2.97 6.406-1.04l6.614 6.614c1.93 1.93 1.402 5.186-1.04 6.406l-6.35 3.176a1.5 1.5 0 0 0-.753.867l-1.66 4.983a2 2 0 0 1-3.312.782l-4.149-4.15l-6.086 6.087H4v-1.415l6.086-6.085l-4.149-4.15a2 2 0 0 1 .782-3.31l4.982-1.662a1.5 1.5 0 0 0 .868-.752z"></path></svg>`;
 
+const pendingSpinnerSvg = `<svg class="msg-pending-spinner" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-dasharray="52 10" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.9s" repeatCount="indefinite"/></circle></svg>`;
+
+const failedIconSvg = `<svg class="msg-failed-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="var(--danger-color)" stroke-width="2"/><line x1="12" y1="7" x2="12" y2="13" stroke="var(--danger-color)" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="17" r="1" fill="var(--danger-color)"/></svg>`;
+
 // This file contains functions related to creating and manipulating message elements in the chat, as well as the context menu for messages.
 export function escapeHtml(str) {
 	if (!str) return "";
@@ -26,6 +30,8 @@ export function createMessage({
 	forwardedFrom = null,
 	isSeen = false,
 	isPinned = false,
+	pending = false,
+	failed = false,
 }) {
 	const message = document.createElement("div");
 
@@ -41,6 +47,8 @@ export function createMessage({
 
 	// "user ?" means that if the sender is user itself or not
 	message.className = `chat-message ${user ? "outgoing" : "incoming"}`;
+	if (pending) message.classList.add('pending');
+	if (failed) message.classList.add('failed');
 	if (typeof index !== "undefined") message.dataset.index = index; // Add index to message element for styling purposes
 	if (id) message.dataset.messageId = id;
 	if (_localId) message.dataset.localId = _localId;
@@ -123,7 +131,21 @@ export function createMessage({
 		meta.appendChild(edited);
 	}
 
-	if (user && isSeen) {
+	// Pending or failed status override the normal sent/seen icons for outgoing messages
+	if (user && pending) {
+		const status = document.createElement("span");
+		status.className = "chat-message-status";
+		const _s = parseSvg(pendingSpinnerSvg);
+		if (_s) status.appendChild(_s.cloneNode(true));
+		meta.appendChild(status);
+	} else if (user && failed) {
+		const btn = document.createElement("button");
+		btn.type = "button";
+		btn.className = "msg-failed-btn";
+		const _s = parseSvg(failedIconSvg);
+		if (_s) btn.appendChild(_s.cloneNode(true));
+		meta.appendChild(btn);
+	} else if (user && isSeen) {
 		const status = document.createElement("span");
 		status.className = "chat-message-status";
 		const _s = parseSvg(seenIcon);

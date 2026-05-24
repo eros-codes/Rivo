@@ -64,6 +64,7 @@
 html {
 	scroll-behavior: smooth;
 	overflow-x: hidden;
+	cursor: none;
 }
 body {
 	font-family: var(--font-body);
@@ -79,6 +80,7 @@ img {
 a {
 	text-decoration: none;
 	color: inherit;
+	cursor: none;
 }
 button {
 	cursor: none;
@@ -289,7 +291,7 @@ body::after {
 	padding: 6px 10px;
 	background: transparent;
 	border-radius: 8px;
-	cursor: pointer;
+	cursor: none;
 	transition: color 0.2s;
 }
 .nav-mobile-close:hover {
@@ -871,7 +873,7 @@ section {
   background: var(--active-chat-bg-color);
   border: 1px solid rgba(255,255,255,0.08);
   box-shadow: 0 4px 12px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15);
-  cursor: pointer;
+  cursor: none;
   transition: all 0.2s ease;
   position: relative;
   overflow: hidden;
@@ -971,7 +973,7 @@ section {
   background: var(--contact-bg-color);
   border: 1px solid var(--contact-border-color);
   border-radius: 0.875rem;
-  cursor: pointer;
+  cursor: none;
   transition: all 0.2s ease;
   box-shadow: 0 2px 8px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.6);
 }
@@ -1025,7 +1027,7 @@ section {
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
+  cursor: none;
   color: var(--text-secondary-color);
   transition: background 0.2s;
   flex-shrink: 0;
@@ -1226,7 +1228,7 @@ section {
 	background: transparent;
 	border: none;
 	color: var(--text-secondary-color);
-	cursor: pointer;
+	cursor: none;
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -1328,7 +1330,7 @@ section {
 	overflow: hidden;
 	transition: all 0.3s ease;
 	will-change: transform;
-	cursor: default;
+	cursor: none;
 }
 .bcard::after {
 	content: "";
@@ -1708,13 +1710,13 @@ footer {
 		display: none;
 	}
 	body {
-		cursor: auto;
+		cursor: none;
 	}
 	button {
-		cursor: pointer;
+		cursor: none;
 	}
 	a {
-		cursor: pointer;
+		cursor: none;
 	}
 }
 body * {

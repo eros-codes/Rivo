@@ -43,9 +43,28 @@ const MAX_MESSAGES_PER_CONVERSATION = 1000;
 let _dom = {};
 // paging state per contact
 const messagePaging = {};
+// Map of pending messages keyed by pendingId -> { node, timeoutId, contactId, text, replyTo }
+const pendingMessages = new Map();
 
 export function initChat(dom) {
 	_dom = dom;
+
+	// Delegated click handler for failed message buttons
+	try {
+		if (_dom.chatEl) {
+			_dom.chatEl.addEventListener("click", (e) => {
+				const btn = e.target.closest && e.target.closest(".msg-failed-btn");
+				if (!btn) return;
+				e.stopPropagation();
+				const msgEl = btn.closest(".chat-message");
+				if (!msgEl) return;
+				const pendingId = msgEl.dataset.pendingId;
+				_toggleFailedPanel(msgEl, pendingId);
+			});
+		}
+	} catch (e) {
+		/* ignore */
+	}
 }
 
 // ─── Scroll ───────────────────────────────────────────────────────────────────
@@ -227,6 +246,18 @@ export function closeChat() {
 		// ignore
 	}
 
+	// Cancel pending timeouts for messages in the chat being closed
+	try {
+		for (const [pid, entry] of pendingMessages) {
+			if (entry && entry.contactId === state.contactUserId) {
+				if (entry.timeoutId) {
+					clearTimeout(entry.timeoutId);
+					entry.timeoutId = null;
+					pendingMessages.set(pid, entry);
+				}
+			}
+		}
+	} catch (e) { /* ignore */ }
 	state.contactUserId = null;
 }
 
@@ -799,40 +830,8 @@ export async function sendMessage() {
 			}
 		: null;
 
-	// optimistic UI using a stable temporary id to avoid index races
-	const now = new Date();
-	const localId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-	const optimistic = {
-		_localId: localId,
-		user: true,
-		text,
-		time: now.toLocaleTimeString([], {
-			hour: "2-digit",
-			minute: "2-digit",
-			hour12: false,
-		}),
-		date: now.toISOString().slice(0, 10),
-		isEdited: false,
-		isPinned: false,
-		replyTo,
-		isSeen: false,
-	};
-
-	hideEmptyState(_dom.chatEl, _dom.emptyStateEl);
-	if (!messages[state.contactUserId]) messages[state.contactUserId] = [];
-	optimistic.index = messages[state.contactUserId].length;
-	messages[state.contactUserId].push(optimistic);
-	// If this optimistic outgoing message starts a new day, insert a date separator
-	const prevOpt = messages[state.contactUserId][optimistic.index - 1] || null;
-	if (!prevOpt || prevOpt.date !== optimistic.date) {
-		_dom.chatEl.appendChild(createDateSeparator(optimistic.date));
-	}
-	_dom.chatEl.appendChild(createMessage(optimistic));
-	// tag the DOM node with the localId so we can find & remove it reliably
-	const appendedEl = _dom.chatEl.querySelector(
-		`[data-index="${optimistic.index}"]`,
-	);
-	if (appendedEl) appendedEl.dataset.localId = localId;
+	// create pending UI and send; messages[] is not updated until confirmation
+	_sendOutgoingMessage(contact, text, replyTo, prevContactState);
 
 	resetInput();
 	state.replyTo = null;
@@ -841,71 +840,6 @@ export async function sendMessage() {
 		_dom.messageInput || document.querySelector(".message-input");
 	if (msgInputEl && typeof msgInputEl.focus === "function")
 		msgInputEl.focus();
-
-	// send via socket
-	try {
-		const sent = await emitMessage({
-			conversationId: contact.conversationId,
-			text,
-			replyToId: replyTo?.id || null,
-			replyToName: replyTo?.sender || replyTo?.name || null,
-			replyToText: replyTo?.text || null,
-		});
-		// replace local optimistic id with real id
-		const localIdx = messages[state.contactUserId].findIndex(
-			(m) => m._localId === localId,
-		);
-		if (localIdx !== -1) {
-			messages[state.contactUserId][localIdx].id = sent.id;
-			messages[state.contactUserId][localIdx].isSeen =
-				sent.isSeen || false;
-			messages[state.contactUserId][localIdx].isPinned =
-				sent.isPinned || false;
-			// preserve reply/forward metadata if server returned them
-			messages[state.contactUserId][localIdx].replyTo = sent.replyToId
-				? {
-						id: sent.replyToId,
-						sender: sent.replyToName,
-						text: sent.replyToText,
-					}
-				: messages[state.contactUserId][localIdx].replyTo || null;
-			messages[state.contactUserId][localIdx].forwardedFrom =
-				sent.forwardedFrom ||
-				messages[state.contactUserId][localIdx].forwardedFrom ||
-				null;
-			messages[state.contactUserId][localIdx].forwardedText =
-				sent.forwardedText ||
-				messages[state.contactUserId][localIdx].forwardedText ||
-				null;
-			delete messages[state.contactUserId][localIdx]._localId;
-		}
-		// update DOM node if present
-		const domEl = _dom.chatEl.querySelector(`[data-local-id="${localId}"]`);
-		if (domEl) {
-			domEl.dataset.messageId = sent.id;
-			delete domEl.dataset.localId;
-		}
-	} catch {
-		console.error("Failed to send message");
-		const idx = messages[state.contactUserId].findIndex(
-			(m) => m._localId === localId,
-		);
-		if (idx !== -1) messages[state.contactUserId].splice(idx, 1);
-		const msgEl = _dom.chatEl.querySelector(`[data-local-id="${localId}"]`);
-		if (msgEl) msgEl.remove();
-		// rollback contact preview to previous state
-		if (contact && prevContactState) {
-			contact.lastMessage = prevContactState.lastMessage;
-			contact.lastMessageTime = prevContactState.lastMessageTime;
-			contact.lastMessageDate = prevContactState.lastMessageDate;
-			contact.lastMessageSeen = prevContactState.lastMessageSeen;
-			refreshCard(contact);
-			sortActiveChats();
-			sortContacts();
-		}
-	}
-
-	_updateContactCard();
 }
 
 // ─── Normalize Outgoing Message ───────────────────────────────────────────────
@@ -929,6 +863,218 @@ function _normalizeOutgoing(m) {
 		forwardedText: m.forwardedText || null,
 		isSeen: m.isSeen || false,
 	};
+}
+
+// Pending message helpers
+function _closeFailedPanel() {
+	const existing = document.querySelector('.msg-failed-panel');
+	if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+	try { document.removeEventListener('click', _closeFailedPanel); } catch (e) { /* ignore */ }
+}
+
+function _openFailedPanel(msgEl, pendingId) {
+	_closeFailedPanel();
+	const panel = document.createElement('div');
+	panel.className = 'msg-failed-panel';
+
+	const retryBtn = document.createElement('button');
+	retryBtn.type = 'button';
+	retryBtn.className = 'retry-btn';
+	retryBtn.textContent = 'Retry';
+
+	const copyBtn = document.createElement('button');
+	copyBtn.type = 'button';
+	copyBtn.className = 'copy-btn';
+	copyBtn.textContent = 'Copy';
+
+	const delBtn = document.createElement('button');
+	delBtn.type = 'button';
+	delBtn.className = 'delete-btn';
+	delBtn.textContent = 'Delete';
+
+	panel.appendChild(retryBtn);
+	panel.appendChild(copyBtn);
+	panel.appendChild(delBtn);
+
+	// attach handlers
+	retryBtn.addEventListener('click', (e) => {
+		e.stopPropagation();
+		_retryPending(pendingId);
+		_closeFailedPanel();
+	});
+	copyBtn.addEventListener('click', async (e) => {
+		e.stopPropagation();
+		const entry = pendingMessages.get(pendingId);
+		if (entry && entry.text) {
+			try {
+				await navigator.clipboard.writeText(entry.text);
+				showToast('Copied');
+			} catch (err) {
+				showToast('Copy failed');
+			}
+		}
+		_closeFailedPanel();
+	});
+	delBtn.addEventListener('click', (e) => {
+		e.stopPropagation();
+		const entry = pendingMessages.get(pendingId);
+		if (entry) {
+			// remove node and clear any timeout
+			try { if (entry.timeoutId) clearTimeout(entry.timeoutId); } catch (e) { /* ignore */ }
+			if (entry.node && entry.node.parentNode) entry.node.parentNode.removeChild(entry.node);
+			pendingMessages.delete(pendingId);
+			// restore contact preview if we have prevContactState
+			if (entry.prevContactState) {
+				const contact = contacts.find((c) => c.id === entry.contactId);
+				if (contact) {
+					contact.lastMessage = entry.prevContactState.lastMessage;
+					contact.lastMessageTime = entry.prevContactState.lastMessageTime;
+					contact.lastMessageDate = entry.prevContactState.lastMessageDate;
+					contact.lastMessageSeen = entry.prevContactState.lastMessageSeen;
+					refreshCard(contact);
+					sortActiveChats();
+					sortContacts();
+				}
+			}
+		}
+		_closeFailedPanel();
+	});
+
+	// append to message element so positioning (bottom/right) works
+	msgEl.appendChild(panel);
+
+	// close when clicking elsewhere
+	setTimeout(() => {
+		document.addEventListener('click', _closeFailedPanel);
+	}, 0);
+}
+
+function _toggleFailedPanel(msgEl, pendingId) {
+	const existing = msgEl.querySelector('.msg-failed-panel');
+	if (existing) {
+		_closeFailedPanel();
+	} else {
+		_openFailedPanel(msgEl, pendingId);
+	}
+}
+
+function _retryPending(pendingId) {
+	const entry = pendingMessages.get(pendingId);
+	if (!entry) return;
+	const contact = contacts.find((c) => c.id === entry.contactId);
+	if (entry.timeoutId) try { clearTimeout(entry.timeoutId); } catch (e) { /* ignore */ }
+	// remove failed node from DOM
+	if (entry.node && entry.node.parentNode) entry.node.parentNode.removeChild(entry.node);
+	pendingMessages.delete(pendingId);
+	if (contact) _sendOutgoingMessage(contact, entry.text, entry.replyTo, entry.prevContactState);
+}
+
+function _markPendingFailed(pendingId) {
+	const entry = pendingMessages.get(pendingId);
+	if (!entry) return;
+	// replace node with failed variant
+	const failedNode = createMessage({ user: true, text: entry.text, time: entry.time, failed: true });
+	if (failedNode) {
+		failedNode.dataset.pendingId = pendingId;
+		failedNode.dataset.contactId = entry.contactId;
+		if (entry.node && entry.node.parentNode) entry.node.parentNode.replaceChild(failedNode, entry.node);
+		entry.node = failedNode;
+		entry.timeoutId = null;
+		pendingMessages.set(pendingId, entry);
+	}
+}
+
+async function _confirmPending(pendingId, sent) {
+	const entry = pendingMessages.get(pendingId);
+	if (!entry) return;
+	try { if (entry.timeoutId) clearTimeout(entry.timeoutId); } catch (e) { /* ignore */ }
+	// normalize and push into messages array
+	const normalized = _normalizeOutgoing(sent);
+	if (!messages[entry.contactId]) messages[entry.contactId] = [];
+	normalized.index = messages[entry.contactId].length;
+	messages[entry.contactId].push(normalized);
+
+	// replace DOM node with confirmed message
+	const newNode = createMessage(normalized);
+	if (newNode) {
+		newNode.dataset.index = normalized.index;
+		newNode.dataset.messageId = normalized.id;
+		// find current node and replace
+		if (entry.node && entry.node.parentNode) entry.node.parentNode.replaceChild(newNode, entry.node);
+	}
+
+	// remove pending tracking
+	pendingMessages.delete(pendingId);
+
+	// update contact preview
+	const contact = contacts.find((c) => c.id === entry.contactId);
+	if (contact) {
+		contact.lastMessage = normalized.text;
+		contact.lastMessageTime = normalized.time;
+		contact.lastMessageDate = normalized.date;
+		contact.lastMessageSeen = false;
+		refreshCard(contact);
+		sortActiveChats();
+	}
+}
+
+// Create a pending message in the UI and send via socket. Does not add to messages[] until confirmed.
+function _sendOutgoingMessage(contact, text, replyTo = null, prevContactState = null) {
+	if (!contact) return;
+	const now = new Date();
+	const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+	const dateStr = now.toISOString().slice(0,10);
+
+	// create pending DOM node
+	const pendingId = `p_${Date.now()}_${Math.random().toString(36).slice(2,9)}`;
+	const pendingNode = createMessage({ user: true, text, time: timeStr, pending: true });
+	pendingNode.dataset.pendingId = pendingId;
+	pendingNode.dataset.contactId = contact.id;
+
+	// insert date separator if needed
+	const prev = (messages[contact.id] && messages[contact.id].length) ? messages[contact.id][messages[contact.id].length - 1] : null;
+	if (!_dom.chatEl) return;
+	if (!prev || prev.date !== dateStr) {
+		_dom.chatEl.appendChild(createDateSeparator(dateStr));
+	}
+	_dom.chatEl.appendChild(pendingNode);
+	scrollChatToBottom();
+
+	// update contact preview immediately
+	if (contact) {
+		contact.lastMessage = text;
+		contact.lastMessageTime = timeStr;
+		contact.lastMessageDate = dateStr;
+		contact.lastMessageSeen = false;
+		refreshCard(contact);
+		sortActiveChats();
+		sortContacts();
+	}
+
+	// store pending entry
+	const timeoutId = setTimeout(() => {
+		_markPendingFailed(pendingId);
+	}, 8000);
+	pendingMessages.set(pendingId, { node: pendingNode, timeoutId, contactId: contact.id, text, replyTo, time: timeStr, prevContactState });
+
+	// send via socket (don't await here to allow timeout behavior)
+	(async () => {
+		try {
+			const sent = await emitMessage({
+				conversationId: contact.conversationId,
+				text,
+				replyToId: replyTo?.id || null,
+				replyToName: replyTo?.sender || replyTo?.name || null,
+				replyToText: replyTo?.text || null,
+			});
+			// confirm pending (if still present)
+			await _confirmPending(pendingId, sent);
+		} catch (e) {
+			console.error('Failed to send message', e);
+			// mark failed in UI
+			_markPendingFailed(pendingId);
+		}
+	})();
 }
 
 // ─── Update Contact Card ────────────────────────────────────────────────────────

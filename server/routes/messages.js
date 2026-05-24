@@ -6,6 +6,84 @@ import { generateDEK, encryptMessage, wrapDEK, unwrapDEK, decryptMessage } from 
 
 const router = Router();
 
+// ─── Search messages ───────────────────────────────────────────────────────
+router.get("/search", requireAuth, async (req, res) => {
+    const q = String(req.query.q || "").trim().toLowerCase();
+    if (!q || q.length < 2) {
+        return res.json({ results: [] });
+    }
+
+    const MAX_RESULTS = 50;
+    const MAX_SCAN = 1000;
+
+    try {
+        const memberships = await prisma.conversationMember.findMany({
+            where: { userId: req.userId },
+            select: { conversationId: true },
+        });
+
+        const convIds = memberships.map((m) => m.conversationId);
+        if (convIds.length === 0) return res.json({ results: [] });
+
+        const rows = await prisma.message.findMany({
+            where: {
+                conversationId: { in: convIds },
+                isDeleted: false,
+            },
+            orderBy: { createdAt: "desc" },
+            take: MAX_SCAN,
+            select: {
+                id: true,
+                conversationId: true,
+                senderId: true,
+                text: true,
+                ciphertext: true,
+                iv: true,
+                auth_tag: true,
+                wrapped_dek: true,
+                key_id: true,
+                createdAt: true,
+                isEdited: true,
+                isPinned: true,
+                isSeen: true,
+            },
+        });
+
+        const results = [];
+        for (const m of rows) {
+            if (results.length >= MAX_RESULTS) break;
+
+            let plaintext = m.text || "";
+            if (!plaintext && m.ciphertext && m.wrapped_dek) {
+                try {
+                    const dek = unwrapDEK(m.wrapped_dek, m.key_id || "v1");
+                    plaintext = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
+                } catch {
+                    continue;
+                }
+            }
+
+            if (!plaintext.toLowerCase().includes(q)) continue;
+
+            results.push({
+                messageId: m.id,
+                conversationId: m.conversationId,
+                senderId: m.senderId,
+                text: plaintext,
+                createdAt: m.createdAt,
+                isEdited: m.isEdited,
+                isPinned: m.isPinned,
+                isSeen: m.isSeen,
+            });
+        }
+
+        return res.json({ results });
+    } catch (err) {
+        console.error("Search error:", err);
+        return res.status(500).json({ error: "Search failed" });
+    }
+});
+
 // ─── Get messages of a conversation ──────────────────────────────────────────
 router.get("/:conversationId", requireAuth, async (req, res) => {
 	const conversationId = parseIntSafe(req.params.conversationId);

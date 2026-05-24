@@ -19,6 +19,7 @@ import { makeMessageSkeleton, createTopMessageSkeleton } from "./skeleton.js";
 import { createContactCard } from "../../../components/contact-cards/contact-card.js";
 import { createActiveChatCard } from "../../../components/active-chats/active-chats.js";
 import { showNotification } from "./in-app-notification.js";
+import { getCurrentUserId } from "../../../utils/user.js";
 
 // Local notification dedupe fallback (main may expose window._notifQueue)
 const _localNotifQueue = new Set();
@@ -187,14 +188,7 @@ export async function openChat(fromClick = false) {
 }
 
 function _currentUserId() {
-	try {
-		const stored = localStorage.getItem("user");
-		if (!stored) return null;
-		const parsed = JSON.parse(stored);
-		return parsed?.id ?? null;
-	} catch (e) {
-		return null;
-	}
+	return getCurrentUserId();
 }
 
 export function closeChat() {

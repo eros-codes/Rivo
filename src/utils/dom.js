@@ -1,3 +1,5 @@
+import { getCurrentUserId } from "./user.js";
+
 export function safeSrc(url) {
   const defaultLight = "/assets/images/profile-light.JPG";
   const defaultDark = "/assets/images/profile-dark.JPG";
@@ -176,14 +178,8 @@ export function refreshUserAvatars(user) {
     ];
 
     // Determine current user id from localStorage, if available
-    let currentUserId = null;
-    try {
-      const stored = localStorage.getItem("user");
-      const parsed = stored ? JSON.parse(stored) : null;
-      if (parsed && parsed.id) currentUserId = String(parsed.id);
-    } catch (e) {
-      currentUserId = null;
-    }
+    let currentUserId = getCurrentUserId();
+    if (currentUserId) currentUserId = String(currentUserId);
 
     singleTargets.forEach(({ sel, allowFallbackToCurrentUser }) => {
       const nodes = Array.from(document.querySelectorAll(sel));

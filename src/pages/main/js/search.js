@@ -1,6 +1,7 @@
 import { contacts, messages } from "./state.js";
 import { createContactCard } from "../../../components/contact-cards/contact-card.js";
 import { createMessage } from "../../../components/messages/messages.js";
+import { getCurrentUserId } from "../../../utils/user.js";
 
 let _dom = {};
 let _onContactAction = null;
@@ -19,9 +20,10 @@ export function initSearch(dom) {
 	_onMessageClick = dom.onMessageClick;
 }
 
-export function runSearch(query) {
-	const q = String(query || "").trim().toLowerCase();
-	// require a minimal query to avoid expensive full scans
+export async function runSearch(query) {
+	const q = String(query || "")
+		.trim()
+		.toLowerCase();
 	if (!q || q.length < 2) {
 		_dom.mainContent.style.display = "";
 		_dom.searchResults.style.display = "none";
@@ -32,7 +34,7 @@ export function runSearch(query) {
 	_dom.searchResults.style.display = "flex";
 
 	_renderContactResults(q);
-	_renderMessageResults(q);
+	await _renderMessageResults(q);
 }
 
 // ─── Contacts ─────────────────────────────────────────────────────────────────
@@ -78,26 +80,40 @@ function _renderContactResults(query) {
 }
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
-function _renderMessageResults(query) {
+async function _renderMessageResults(query) {
 	const list = _dom.searchMessagesList;
 	list.textContent = "";
 
-	let found = false;
-	const MAX_MESSAGE_RESULTS = 50;
-	let resultsCount = 0;
-	// stop scanning once we reach max results
-	outer: for (let ci = 0; ci < contacts.length; ci++) {
-		const contact = contacts[ci];
-		const msgs = messages[contact.id];
-		if (!msgs) continue;
+	const loading = document.createElement("p");
+	loading.className = "search-no-results";
+	loading.textContent = "Searching…";
+	list.appendChild(loading);
 
-		for (let idx = 0; idx < msgs.length; idx++) {
-			const msg = msgs[idx];
-			if (!msg.text) continue;
-			if (!msg.text.toLowerCase().includes(query)) continue;
+	try {
+		const res = await fetch(
+			`/api/messages/search?q=${encodeURIComponent(query)}`,
+			{ credentials: "include" },
+		);
+		if (!res.ok) throw new Error();
+		const data = await res.json();
 
-			found = true;
-			resultsCount++;
+		list.textContent = "";
+
+		if (!data.results || data.results.length === 0) {
+			const p = document.createElement("p");
+			p.className = "search-no-results";
+			p.textContent = "No messages found";
+			list.appendChild(p);
+			return;
+		}
+
+		const myId = getCurrentUserId();
+
+		data.results.forEach((result) => {
+			const contact = contacts.find(
+				(c) => c.conversationId === result.conversationId,
+			);
+			if (!contact) return;
 
 			const wrapper = document.createElement("div");
 			wrapper.className = "search-message-result";
@@ -107,33 +123,33 @@ function _renderMessageResults(query) {
 			sender.textContent = contact.nickname || contact.name;
 
 			const msgEl = createMessage({
-				user: msg.user,
-				text: msg.text,
-				time: msg.time,
-				index: idx,
-				isEdited: msg.isEdited,
-				replyTo: msg.replyTo,
-				isSeen: msg.isSeen,
-				isPinned: msg.isPinned,
+				user: result.senderId === myId,
+				text: result.text,
+				time: new Date(result.createdAt).toLocaleTimeString([], {
+					hour: "2-digit",
+					minute: "2-digit",
+					hour12: false,
+				}),
+				index: null,
+				isEdited: result.isEdited,
+				isPinned: result.isPinned,
+				isSeen: result.isSeen,
 			});
 
 			wrapper.appendChild(sender);
 			wrapper.appendChild(msgEl);
 
 			wrapper.addEventListener("click", () => {
-				_onMessageClick(contact, idx);
+				_onMessageClick(contact, null);
 			});
 
 			list.appendChild(wrapper);
-
-			if (resultsCount >= MAX_MESSAGE_RESULTS) break outer;
-		}
-	}
-
-	if (!found) {
+		});
+	} catch {
+		list.textContent = "";
 		const p = document.createElement("p");
 		p.className = "search-no-results";
-		p.textContent = "No messages found";
+		p.textContent = "Search failed";
 		list.appendChild(p);
 	}
 }

@@ -1,6 +1,7 @@
 /* global Cropper */
 import { updateMe, uploadAvatar, deleteAvatar } from "./api.js";
 import { safeSrc, mountAvatar, refreshUserAvatars } from "../../../utils/dom.js";
+import { getCurrentUser } from "./currentUser.js";
 import { isValidUsername } from "../../auth/js/auth-validate.js";
 import { showToast } from "./ui.js";
 let _dom = {};
@@ -92,12 +93,7 @@ export function initEditProfile(dom) {
 						className: 'edit-profile-avatar',
 					});
 					if (_currentUser) _currentUser.profilePics = [res.url];
-					let stored = {};
-					try {
-						stored = JSON.parse(localStorage.getItem("user") || "{}");
-					} catch (e) {
-						stored = {};
-					}
+					let stored = getCurrentUser() || {};
 					const newStored = {
 						id: stored.id || (_currentUser && _currentUser.id) || null,
 						name: (_currentUser && _currentUser.name) || stored.name || "",
@@ -150,12 +146,7 @@ export function initEditProfile(dom) {
 		} finally {
 			if (wrapper) wrapper.classList.remove('uploading');
 		}
-		let stored = {};
-		try {
-			stored = JSON.parse(localStorage.getItem("user") || "{}");
-		} catch (e) {
-			stored = {};
-		}
+		let stored = getCurrentUser() || {};
 		const newStored = {
 			id: stored.id || (_currentUser && _currentUser.id) || null,
 			name: (_currentUser && _currentUser.name) || stored.name || "",
@@ -252,12 +243,7 @@ async function _handleSave() {
 		}
 
 		// update stored user (only allowed fields)
-		let stored = {};
-		try {
-			stored = JSON.parse(localStorage.getItem("user") || "{}");
-		} catch (e) {
-			stored = {};
-		}
+		let stored = getCurrentUser() || {};
 		const newStored = {
 			id: stored.id || (_currentUser && _currentUser.id) || null,
 			name: updated.name || (_currentUser && _currentUser.name) || stored.name || "",

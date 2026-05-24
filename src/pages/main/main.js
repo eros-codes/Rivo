@@ -92,6 +92,7 @@ import {
 import { loadThemeFromStorage } from "../../utils/theme.js";
 import { parseSvg } from "../../utils/svg.js";
 import { safeSrc, updateThemeImages, observeThemeChanges, createAvatarElement, mountAvatar, refreshUserAvatars } from "../../utils/dom.js";
+import { getCurrentUser } from "./js/currentUser.js";
 const _notifQueue = new Set();
 // expose to other modules (e.g., chat) for notification deduplication
 try { window._notifQueue = _notifQueue; } catch (e) { /* ignore */ }
@@ -104,7 +105,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 				window.__SENTRY_DSN__ || localStorage.getItem("sentryDsn");
 			if (!dsn) return;
 			const s = document.createElement("script");
-			s.src = "https://browser.sentry-cdn.com/7.66.0/bundle.min.js";
+			s.src = "/js/bundle.min.js";
 			s.crossOrigin = "anonymous";
 			s.onload = () => {
 				try {
@@ -251,13 +252,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 	}
 
 	// Rely on HttpOnly cookie for auth; if user info not present, ask server for current user.
-	let currentUser = null;
-	try {
-		const stored = localStorage.getItem("user");
-		currentUser = stored ? JSON.parse(stored) : null;
-	} catch (e) {
-		currentUser = null;
-	}
+	let currentUser = getCurrentUser();
 	if (!currentUser || !currentUser.id) {
 		try {
 			const me = await getMe();
@@ -1377,7 +1372,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 					runSearch("");
 					return;
 				}
-				runSearch(q);
+				runSearch(q).catch(() => {});
 			}, 250);
 		});
 	}
@@ -2494,10 +2489,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 		if (e.target === archivedDialog) archivedDialog.close();
 	});
 
-	document.addEventListener("contact:unarchived", (e) => {
-		_unarchiveContact(e.detail.id);
-	});
-
 	// ─── Global click ─────────────────────────────────────────────────────────
 	document.addEventListener("click", (e) => {
 		if (
@@ -2510,12 +2501,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 		if (!searchbar.contains(e.target)) {
 			searchbar.classList.remove("open");
 			searchInput.value = "";
-			activeChatsContainer
-				.querySelectorAll(".active-chat-wrapper")
-				.forEach((w) => (w.style.display = ""));
-			contactsContainer
-				.querySelectorAll(".contacts-card")
-				.forEach((c) => (c.style.display = ""));
 		}
 		if (
 			messageMenu.style.display === "block" &&

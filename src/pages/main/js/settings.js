@@ -2,6 +2,7 @@ import { updatePrivacy, deleteAccount, changePassword, logout } from "./api.js";
 import { showToast } from "./ui.js";
 import { applyAccentColor, applyWallpaper } from "../../../utils/theme.js";
 import { updateThemeImages } from "../../../utils/dom.js";
+import { getCurrentUser } from "./currentUser.js";
 
 let _dom = {};
 let _currentUser = null;
@@ -309,12 +310,7 @@ export function initSettings(dom, currentUser) {
 						showToast(res.error);
 					} else {
 						if (_currentUser) _currentUser[p.field] = val;
-						let stored = {};
-						try {
-							stored = JSON.parse(localStorage.getItem("user") || "{}");
-						} catch (e) {
-							stored = {};
-						}
+						let stored = getCurrentUser() || {};
 						localStorage.setItem(
 							"user",
 							JSON.stringify({ ...stored, ...(res || {}) }),
@@ -470,11 +466,7 @@ export function initSettings(dom, currentUser) {
 export function openSettings(user) {
 	_currentUser = user || _currentUser;
 	if (!_currentUser) {
-		try {
-			_currentUser = JSON.parse(localStorage.getItem('user') || '{}');
-		} catch (e) {
-			_currentUser = {};
-		}
+		_currentUser = getCurrentUser() || {};
 	}
 
     // populate privacy values

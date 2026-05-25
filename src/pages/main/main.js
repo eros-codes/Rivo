@@ -1094,7 +1094,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 					let belongsToMe = false;
 					for (const [uid, msgs] of Object.entries(messages)) {
 						if (!Array.isArray(msgs)) continue;
-						const idx = msgs.findIndex((m) => m.id === messageId);
+						// Compare IDs as strings to avoid type-mismatch (number vs string)
+						const idx = msgs.findIndex((m) => String(m.id) === String(messageId));
 						if (idx !== -1) {
 							foundUserId = Number(uid);
 							msgs[idx].reactions = reactions;
@@ -1108,26 +1109,39 @@ document.addEventListener("DOMContentLoaded", async function () {
 						try { applyReactionsToMessage(msgEl, reactions, currentUserId); } catch (e) { /* ignore */ }
 					});
 
-					// Notification logic:
-					// - If I reacted, show a local toast confirming the action.
-					// - If someone else reacted to my message, show in-app notification
-					//   unless I'm currently viewing that conversation.
-					if (action !== "removed") {
-						if (actorId !== currentUserId) {
-							// If we're currently viewing the conversation where this reaction occurred,
-							// suppress the notification (we already updated the UI in-place).
-							if (foundUserId && Number(state.contactUserId) === Number(foundUserId)) {
-								// suppress while in-chat
-								return;
-							}
 
-							if (belongsToMe) {
-								const reactorContact = contacts.find((c) => c.contactId === actorId || c.id === actorId);
-								if (reactorContact) {
-									showNotification(reactorContact, { text: `reacted ${emoji} to your message` });
+
+						// Notification logic:
+					// - Do NOT show a local toast for my own reaction.
+					// - Show an in-app notification for others reacting to my message
+					//   only when I'm NOT currently viewing that conversation.
+					try {
+						if (action !== "removed") {
+							const actorNum = Number(actorId);
+							// Skip local toast entirely for my own actions
+							if (actorNum !== Number(currentUserId)) {
+								// Only notify if the reaction was on one of my messages
+								// and the conversation is not currently open.
+								if (belongsToMe && state.contactUserId !== foundUserId) {
+									let reactorContact = contacts.find((c) => Number(c.contactId) === actorNum || Number(c.id) === actorNum);
+									if (!reactorContact) {
+										const possible = contacts.find((c) => c.conversationId === foundUserId) || {};
+										reactorContact = {
+											id: possible.id || actorNum,
+											contactId: possible.contactId || actorNum,
+											name: possible.nickname || possible.name || "Someone",
+											nickname: possible.nickname || possible.name || "Someone",
+											profilePics: possible.profilePics || [],
+										};
+									}
+									try {
+										showNotification(reactorContact, { text: `${reactorContact.nickname || reactorContact.name || 'Someone'} reacted ${emoji} to your message` });
+									} catch (e) { /* ignore */ }
 								}
 							}
 						}
+					} catch (e) {
+						// Protect notification path from crashing the handler (errors suppressed)
 					}
 				}
 		);

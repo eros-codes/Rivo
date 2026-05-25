@@ -127,8 +127,9 @@ export function getSocket() {
 
 export function emitMessage(data) {
 	return new Promise((resolve, reject) => {
+		if (!socket) return reject(new Error("Socket not connected"));
 		socket.emit("message:send", data, (res) => {
-			if (res.error) reject(res.error);
+			if (res?.error) reject(res.error);
 			else resolve(res.message);
 		});
 	});
@@ -136,6 +137,7 @@ export function emitMessage(data) {
 
 export function emitEditMessage(messageId, text) {
 	return new Promise((resolve, reject) => {
+		if (!socket) return reject(new Error("Socket not connected"));
 		socket.emit("message:edit", { messageId, text }, (res) => {
 			if (res?.error) reject(res.error);
 			else resolve(res);
@@ -145,6 +147,7 @@ export function emitEditMessage(messageId, text) {
 
 export function emitDeleteMessage(messageId) {
 	return new Promise((resolve, reject) => {
+		if (!socket) return reject(new Error("Socket not connected"));
 		socket.emit("message:delete", { messageId }, (res) => {
 			if (res?.error) reject(res.error);
 			else resolve(res);
@@ -153,15 +156,18 @@ export function emitDeleteMessage(messageId) {
 }
 
 export function emitTypingStart(conversationId) {
+	if (!socket) return;
 	socket.emit("typing:start", { conversationId });
 }
 
 export function emitTypingStop(conversationId) {
+	if (!socket) return;
 	socket.emit("typing:stop", { conversationId });
 }
 
 export function emitMessageSeen(conversationId) {
 	return new Promise((resolve, reject) => {
+		if (!socket) return reject(new Error("Socket not connected"));
 		socket.emit("message:seen", { conversationId }, (res) => {
 			if (res?.error) return reject(res.error);
 			return resolve(res?.marked || []);
@@ -171,6 +177,7 @@ export function emitMessageSeen(conversationId) {
 
 export function emitPinMessage(messageId) {
 	return new Promise((resolve, reject) => {
+		if (!socket) return reject(new Error("Socket not connected"));
 		socket.emit("message:pin", { messageId }, (res) => {
 			if (res?.error) reject(res.error);
 			else resolve(res?.isPinned);

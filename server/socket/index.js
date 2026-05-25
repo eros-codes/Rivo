@@ -712,6 +712,27 @@ export function initSocket(httpServer) {
 					// broadcast to ALL in conversation (including sender)
 					io.to(`conversation:${message.conversationId}`).emit("reaction:updated", payload);
 
+					// Also deliver reaction update to connected sockets that are not joined
+					// to the conversation room (matches message delivery behavior).
+					try {
+						const allRecipients = await getRecipientsCached(message.conversationId);
+						const recipientContacts = allRecipients.filter((c) => c.ownerId !== socket.userId);
+						const usersInRoom = convoOnline.get(message.conversationId) || new Set();
+						const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
+						for (const uid of recipientUserIds) {
+							if (usersInRoom.has(uid)) continue;
+							const sidSet = userSockets.get(uid) || new Set();
+							for (const sid of sidSet) {
+								const s = io.sockets.sockets.get(sid);
+								if (s) {
+									try { s.emit("reaction:updated", payload); } catch (e) { /* ignore per-socket errors */ }
+								}
+							}
+						}
+					} catch (e) {
+						console.error('deliver reaction to direct sockets failed', e);
+					}
+
 					// Log for debugging persistence issues
 					try {
 						console.log(`reaction:add actor=${socket.userId} message=${msgId} action=${action} emoji=${emoji} totalReactions=${allReactions.length}`);

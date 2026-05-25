@@ -53,3 +53,6 @@ tmp_migs.sql
 # Local secret stores / vaults
 .vault/
 secrets.json
+
+# Ignore user profile uploads but keep the folder tracked
+/public/images/user-profiles/*

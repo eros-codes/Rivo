@@ -296,8 +296,4 @@
 	color: var(--text-secondary-color);
 }
 
-.reaction-badge.my-reaction {
-	background: var(--accent-glass);
-	border-color: var(--accent);
-	color: var(--text-secondary-color);
-}
+/* note: my-reaction accent removed — color is determined by reactor vs current user */

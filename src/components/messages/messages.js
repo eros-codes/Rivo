@@ -32,8 +32,7 @@ export function applyReactionsToMessage(msgEl, reactions, currentUserId) {
 		counts[emoji] = (counts[emoji] || 0) + 1;
 	});
 
-	// Check if current user reacted
-	const myReaction = currentUserId ? reactions.find((r) => r.userId === currentUserId) : null;
+	// Check if current user reacted (per-emoji check below)
 
 	const wrap = document.createElement("div");
 	wrap.className = "reaction-badge-wrap";
@@ -53,29 +52,32 @@ export function applyReactionsToMessage(msgEl, reactions, currentUserId) {
 		span.textContent = emoji;
 		badge.appendChild(span);
 
-		// If there are multiple distinct emojis, keep badges circular and
-		// use incoming/outgoing color (do NOT apply accent my-reaction).
+		// Determine if the current user reacted to this emoji
+		const currentReacted = currentUserId ? reactions.some((r) => r.userId === currentUserId && r.emoji === emoji) : false;
+		const othersReacted = counts[emoji] - (currentReacted ? 1 : 0) > 0;
+
 		if (multiEmoji) {
+			// When there are multiple distinct emojis, badges stay circular.
+			// Color each badge by who reacted: if current user reacted to
+			// this emoji -> outgoing, otherwise incoming. Do NOT use accent
+			// here to avoid two-tone badges.
 			badge.classList.add("single");
-			if (msgEl.classList.contains("outgoing")) badge.classList.add("outgoing-reaction");
+			if (currentReacted) badge.classList.add("outgoing-reaction");
 			else badge.classList.add("incoming-reaction");
 		} else {
-			// Single-emoji message: if only one reaction total, render circular
-			// and mark my-reaction with accent. If multiple users reacted the
-			// same emoji, render pill with count and still allow my-reaction
-			// coloring.
-			if (uniqueEmojis.length === 1 && counts[emoji] === 1 && reactions.length === 1) {
-				badge.classList.add("single");
-				if (myReaction?.emoji === emoji) badge.classList.add("my-reaction");
-				else if (msgEl.classList.contains("outgoing")) badge.classList.add("outgoing-reaction");
-				else badge.classList.add("incoming-reaction");
-			} else {
-				// multiple users for same emoji -> pill with count
-				// Always color by message bubble (incoming/outgoing). Do NOT
-				// apply the accent `my-reaction` for count badges so color stays
-				// consistent when multiple people reacted.
+			// Single-emoji across the message
+			if (counts[emoji] > 1 && currentReacted && othersReacted) {
+				// Exception: both of us reacted to the same emoji -> color by
+				// the message direction (incoming/outgoing)
 				if (msgEl.classList.contains("outgoing")) badge.classList.add("outgoing-reaction");
 				else badge.classList.add("incoming-reaction");
+				// keep pill/number styling below
+			} else {
+				// Normal case: color by who reacted
+				if (currentReacted) badge.classList.add("outgoing-reaction");
+				else badge.classList.add("incoming-reaction");
+				// circular when single reaction total
+				if (counts[emoji] === 1 && reactions.length === 1) badge.classList.add("single");
 			}
 		}
 

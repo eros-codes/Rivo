@@ -676,6 +676,27 @@
 			<!-- If user is using desktop then settings will be shown here -->
 		</dialog>
 
+		<dialog class="confirm-dialog" id="delete-account-dialog">
+			<div class="confirm-dialog-body">
+				<h3 class="confirm-dialog-title">Delete Account</h3>
+				<p class="confirm-dialog-desc">This cannot be undone. Enter your password to confirm.</p>
+				<div class="confirm-dialog-input-wrap">
+					<input
+						type="password"
+						id="delete-account-password"
+						class="confirm-dialog-input"
+						placeholder="Password"
+						autocomplete="current-password"
+					/>
+				</div>
+				<p class="confirm-dialog-error" id="delete-account-error"></p>
+				<div class="confirm-dialog-actions">
+					<button class="confirm-dialog-btn confirm-dialog-btn--cancel" id="delete-account-cancel">Cancel</button>
+					<button class="confirm-dialog-btn confirm-dialog-btn--danger" id="delete-account-confirm">Delete</button>
+				</div>
+			</div>
+		</dialog>
+
 		<input type="file" id="avatar-file-input" accept="image/*" style="display: none" />
 
 		<dialog class="avatar-crop-dialog">

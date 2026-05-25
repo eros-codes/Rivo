@@ -3,6 +3,7 @@ import {
 	logout as apiLogout,
 	getContacts,
 	getMe,
+	deleteAccount,
 } from "./js/api.js";
 import { createContactCard } from "../../components/contact-cards/contact-card.js";
 import { createActiveChatCard } from "../../components/active-chats/active-chats.js";
@@ -500,6 +501,43 @@ document.addEventListener("DOMContentLoaded", async function () {
 		"archived-dialog-close",
 	);
 	const archivedDialogList = document.getElementById("archived-dialog-list");
+
+	// Delete account dialog elements
+	const deleteAccountDialog = document.getElementById("delete-account-dialog");
+	const deleteAccountPassword = document.getElementById("delete-account-password");
+	const deleteAccountError = document.getElementById("delete-account-error");
+	const deleteAccountCancel = document.getElementById("delete-account-cancel");
+	const deleteAccountConfirm = document.getElementById("delete-account-confirm");
+
+	// Delete account dialog listeners
+	deleteAccountCancel?.addEventListener("click", () => {
+		try { deleteAccountDialog.close(); } catch (e) { /* ignore */ }
+		if (deleteAccountPassword) deleteAccountPassword.value = "";
+		if (deleteAccountError) deleteAccountError.textContent = "";
+	});
+
+	deleteAccountConfirm?.addEventListener("click", async () => {
+		const password = (deleteAccountPassword && deleteAccountPassword.value && deleteAccountPassword.value.trim()) || "";
+		if (!password) {
+			if (deleteAccountError) deleteAccountError.textContent = "Please enter your password.";
+			return;
+		}
+		if (deleteAccountError) deleteAccountError.textContent = "";
+		if (deleteAccountConfirm) deleteAccountConfirm.disabled = true;
+
+		try {
+			const res = await deleteAccount(password);
+			if (res?.success) {
+				window.location.href = "/src/pages/auth/auth.html";
+			} else {
+				if (deleteAccountError) deleteAccountError.textContent = res?.error || "Incorrect password.";
+				if (deleteAccountConfirm) deleteAccountConfirm.disabled = false;
+			}
+		} catch (err) {
+			if (deleteAccountError) deleteAccountError.textContent = "Connection error.";
+			if (deleteAccountConfirm) deleteAccountConfirm.disabled = false;
+		}
+	});
 
 	// ─── SVG icons ────────────────────────────────────────────────────────────
 	const copyIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></g></svg>`;

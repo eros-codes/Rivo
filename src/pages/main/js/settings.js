@@ -139,32 +139,10 @@ export function initSettings(dom, currentUser) {
 		}
 	}
 
-	// Delete account
+	// Delete account (show confirm dialog instead of prompt)
 	if (_dom.settingsDeleteAccount) {
 		_dom.settingsDeleteAccount.addEventListener("click", async () => {
-			if (
-				!confirm(
-					"Are you sure you want to delete your account? This cannot be undone.",
-				)
-			)
-				return;
-			const password = prompt(
-				"Enter your password to confirm account deletion:",
-			);
-			if (password === null) return;
-			try {
-				const res = await deleteAccount(password);
-				if (res && res.success) {
-					// remove only auth data, keep preferences like theme
-					localStorage.removeItem("user");
-					window.location.href = "../auth/auth.html";
-				} else {
-					showToast(res?.error || "Failed to delete account");
-				}
-			} catch (err) {
-				console.error(err);
-				showToast("Server error deleting account");
-			}
+			document.getElementById("delete-account-dialog")?.showModal();
 		});
 	}
 

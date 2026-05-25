@@ -18,6 +18,82 @@ export function escapeHtml(str) {
 		.replace(/"/g, "&quot;");
 }
 
+export function applyReactionsToMessage(msgEl, reactions, currentUserId) {
+	// Remove existing badge wrap and class
+	const existing = msgEl.querySelector(".reaction-badge-wrap");
+	if (existing) existing.remove();
+	msgEl.classList.remove("has-reaction");
+
+	if (!reactions || reactions.length === 0) return;
+
+	// Group by emoji and count
+	const counts = {};
+	reactions.forEach(({ emoji }) => {
+		counts[emoji] = (counts[emoji] || 0) + 1;
+	});
+
+	// Check if current user reacted
+	const myReaction = currentUserId ? reactions.find((r) => r.userId === currentUserId) : null;
+
+	const wrap = document.createElement("div");
+	wrap.className = "reaction-badge-wrap";
+
+	const uniqueEmojis = Object.keys(counts);
+	const emojis = uniqueEmojis.slice(0, 2);
+	const multiEmoji = uniqueEmojis.length > 1;
+	emojis.forEach((emoji) => {
+		const badge = document.createElement("div");
+		badge.className = "reaction-badge";
+
+		badge.dataset.emoji = emoji;
+		badge.style.position = "relative";
+
+		const span = document.createElement("span");
+		span.className = "reaction-badge-emoji";
+		span.textContent = emoji;
+		badge.appendChild(span);
+
+		// If there are multiple distinct emojis, keep badges circular and
+		// use incoming/outgoing color (do NOT apply accent my-reaction).
+		if (multiEmoji) {
+			badge.classList.add("single");
+			if (msgEl.classList.contains("outgoing")) badge.classList.add("outgoing-reaction");
+			else badge.classList.add("incoming-reaction");
+		} else {
+			// Single-emoji message: if only one reaction total, render circular
+			// and mark my-reaction with accent. If multiple users reacted the
+			// same emoji, render pill with count and still allow my-reaction
+			// coloring.
+			if (uniqueEmojis.length === 1 && counts[emoji] === 1 && reactions.length === 1) {
+				badge.classList.add("single");
+				if (myReaction?.emoji === emoji) badge.classList.add("my-reaction");
+				else if (msgEl.classList.contains("outgoing")) badge.classList.add("outgoing-reaction");
+				else badge.classList.add("incoming-reaction");
+			} else {
+				// multiple users for same emoji -> pill with count
+				// Always color by message bubble (incoming/outgoing). Do NOT
+				// apply the accent `my-reaction` for count badges so color stays
+				// consistent when multiple people reacted.
+				if (msgEl.classList.contains("outgoing")) badge.classList.add("outgoing-reaction");
+				else badge.classList.add("incoming-reaction");
+			}
+		}
+
+		if (counts[emoji] > 1) {
+			const count = document.createElement("span");
+			count.className = "reaction-badge-count";
+			count.textContent = counts[emoji];
+			badge.appendChild(count);
+		}
+
+		wrap.appendChild(badge);
+	});
+
+	// Append and mark element so CSS can add spacing without relying on :has()
+	msgEl.appendChild(wrap);
+	msgEl.classList.add("has-reaction");
+}
+
 export function createMessage({
 	id = null,
 	user,
@@ -50,7 +126,7 @@ export function createMessage({
 	if (pending) message.classList.add('pending');
 	if (failed) message.classList.add('failed');
 	if (typeof index !== "undefined") message.dataset.index = index; // Add index to message element for styling purposes
-	if (id) message.dataset.messageId = id;
+	message.dataset.messageId = id || "";
 	if (_localId) message.dataset.localId = _localId;
 	// Build DOM safely using textContent and DOM nodes
 	if (replyTo) {

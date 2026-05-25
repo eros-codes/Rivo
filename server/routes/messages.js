@@ -152,6 +152,9 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
 						profilePics: true,
 					},
 				},
+				reactions: {
+					select: { userId: true, emoji: true },
+				},
 			},
 		});
 
@@ -239,6 +242,7 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
 					replyToText: replyToTextPlain,
 					forwardedText: forwardedTextPlain,
 					forwardedFrom: m.forwardedFrom,
+					reactions: m.reactions || [],
 					createdAt: m.createdAt,
 				};
 			} catch (err) {

@@ -77,7 +77,7 @@ import {
 	handleDeleteContact,
 } from "./js/profile.js";
 import { initCardContextMenu, closeAllSwipes } from "./js/card-context-menu.js";
-import { initInAppNotification } from "./js/in-app-notification.js";
+import { initInAppNotification, showNotification } from "./js/in-app-notification.js";
 import { initSearch, runSearch } from "./js/search.js";
 import { initEditProfile, openEditProfile } from "./js/edit-profile.js";
 import { initSettings, openSettings, closeSettings } from "./js/settings.js";
@@ -88,7 +88,10 @@ import {
 	emitTypingStop,
 	emitMessageSeen,
 	getSocket,
+	emitReaction,
 } from "./js/socket.js";
+import { applyReactionsToMessage } from "../../components/messages/messages.js";
+import { findMessageById } from "./js/state.js";
 import { loadThemeFromStorage } from "../../utils/theme.js";
 import { parseSvg } from "../../utils/svg.js";
 import { safeSrc, updateThemeImages, observeThemeChanges, createAvatarElement, mountAvatar, refreshUserAvatars } from "../../utils/dom.js";
@@ -1057,33 +1060,77 @@ document.addEventListener("DOMContentLoaded", async function () {
 				}
 			}
 		},
-		_handleUserUpdated
-	,
-		// contact removed handler
-		(payload) => {
-			try {
-				const partnerUserId = payload?.contactUserId || payload?.userId || payload?.contactId;
-				if (!partnerUserId) return;
-				const idx = contacts.findIndex((c) => c.contactId === partnerUserId);
-				if (idx === -1) return;
-				const removed = contacts.splice(idx, 1)[0];
-				// remove DOM card if present
-				const card = document.querySelector(`[data-user-id="${removed.id}"]`);
-				if (card) card.remove();
-				updateContactsEmptyState();
-				// if this conversation is currently open, close it
-				if (state.contactUserId === removed.id) {
-					try { closeChat(); } catch (e) { /* ignore */ }
+		_handleUserUpdated,
+			// contact removed handler
+			(payload) => {
+				try {
+					const partnerUserId = payload?.contactUserId || payload?.userId || payload?.contactId;
+					if (!partnerUserId) return;
+					const idx = contacts.findIndex((c) => c.contactId === partnerUserId);
+					if (idx === -1) return;
+					const removed = contacts.splice(idx, 1)[0];
+					// remove DOM card if present
+					const card = document.querySelector(`[data-user-id="${removed.id}"]`);
+					if (card) card.remove();
+					updateContactsEmptyState();
+					// if this conversation is currently open, close it
+					if (state.contactUserId === removed.id) {
+						try { closeChat(); } catch (e) { /* ignore */ }
+					}
+					updateTotalUnreadCount();
+					sortActiveChats();
+					sortContacts();
+				} catch (e) {
+					/* ignore handler errors */
 				}
-				updateTotalUnreadCount();
-				sortActiveChats();
-				sortContacts();
-			} catch (e) {
-				/* ignore handler errors */
-			}
-		}
-	);
+			},
+				// onReactionUpdated
+				({ messageId, reactions, actorId, emoji, action }) => {
+					const currentUser = getCurrentUser();
+					const currentUserId = currentUser?.id || null;
 
+					// Update reactions in messages array and capture which conversation/user it belongs to
+					let foundUserId = null;
+					let belongsToMe = false;
+					for (const [uid, msgs] of Object.entries(messages)) {
+						if (!Array.isArray(msgs)) continue;
+						const idx = msgs.findIndex((m) => m.id === messageId);
+						if (idx !== -1) {
+							foundUserId = Number(uid);
+							msgs[idx].reactions = reactions;
+							belongsToMe = !!msgs[idx].user;
+							break;
+						}
+					}
+
+					// Update DOM message elements for this messageId
+					document.querySelectorAll(`.chat-message[data-message-id="${messageId}"]`).forEach((msgEl) => {
+						try { applyReactionsToMessage(msgEl, reactions, currentUserId); } catch (e) { /* ignore */ }
+					});
+
+					// Notification logic:
+					// - If I reacted, show a local toast confirming the action.
+					// - If someone else reacted to my message, show in-app notification
+					//   unless I'm currently viewing that conversation.
+					if (action !== "removed") {
+						if (actorId !== currentUserId) {
+							// If we're currently viewing the conversation where this reaction occurred,
+							// suppress the notification (we already updated the UI in-place).
+							if (foundUserId && Number(state.contactUserId) === Number(foundUserId)) {
+								// suppress while in-chat
+								return;
+							}
+
+							if (belongsToMe) {
+								const reactorContact = contacts.find((c) => c.contactId === actorId || c.id === actorId);
+								if (reactorContact) {
+									showNotification(reactorContact, { text: `reacted ${emoji} to your message` });
+								}
+							}
+						}
+					}
+				}
+		);
 	// Rejoin active conversation after socket reconnect and emit leave on unload
 	try {
 		const sock = getSocket();
@@ -1855,6 +1902,23 @@ document.addEventListener("DOMContentLoaded", async function () {
 			const msg = e.target.closest(".chat-message");
 			if (!msg) return;
 			openContextMenu(msg, e);
+		});
+
+		// Delegated click handler for reaction badges
+		chatEl.addEventListener("click", async (e) => {
+			const badge = e.target.closest(".reaction-badge");
+			if (!badge) return;
+			const msgEl = badge.closest(".chat-message");
+			if (!msgEl) return;
+			const messageId = Number(msgEl.dataset.messageId);
+			const emoji = badge.dataset.emoji;
+			if (!messageId || !emoji) return;
+			e.stopPropagation();
+			try {
+				await emitReaction(messageId, emoji);
+			} catch (err) {
+				console.error("reaction toggle failed", err);
+			}
 		});
 
 		chatEl.addEventListener("click", (e) => {

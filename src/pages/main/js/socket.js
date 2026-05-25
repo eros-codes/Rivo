@@ -28,6 +28,7 @@ export function initSocket(
 	onMessagePinned,
 	onUserUpdated,
 	onContactRemoved,
+	onReactionUpdated,
 ) {
 	socket = io({
 		withCredentials: true,
@@ -59,6 +60,10 @@ export function initSocket(
 
 	socket.on("message:pinned", (data) => {
 		onMessagePinned?.(data);
+	});
+
+	socket.on("reaction:updated", (data) => {
+		onReactionUpdated?.(data);
 	});
 
 	socket.on("user:updated", (user) => {
@@ -169,6 +174,16 @@ export function emitPinMessage(messageId) {
 		socket.emit("message:pin", { messageId }, (res) => {
 			if (res?.error) reject(res.error);
 			else resolve(res?.isPinned);
+		});
+	});
+}
+
+export function emitReaction(messageId, emoji) {
+	return new Promise((resolve, reject) => {
+		if (!socket) return reject(new Error("Socket not connected"));
+		socket.emit("reaction:add", { messageId, emoji }, (res) => {
+			if (res?.error) return reject(res.error);
+			return resolve(res);
 		});
 	});
 }

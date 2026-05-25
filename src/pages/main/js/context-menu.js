@@ -14,11 +14,26 @@ import {
 	sortContacts,
 	updateTotalUnreadCount,
 } from "./chat-logic.js";
-import { emitDeleteMessage, emitPinMessage } from "./socket.js";
+import { emitDeleteMessage, emitPinMessage, emitReaction } from "./socket.js";
 import { parseSvg } from "../../../utils/svg.js";
 
 const pinIconForMenu = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4a1 1 0 0 1 1 1z"/></svg>`;
 const unpinIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="m20.97 17.172l-1.414 1.414l-3.535-3.535l-.073.074l-.707 3.536l-1.415 1.414l-4.242-4.243l-4.95 4.95l-1.414-1.414l4.95-4.95l-4.243-4.243L5.34 8.761l3.536-.707l.073-.074l-3.536-3.536L6.828 3.03zM10.365 9.394l-.502.502l-2.822.565l6.5 6.5l.564-2.822l.502-.502zm8.411.074l-1.34 1.34l1.414 1.415l1.34-1.34l.707.707l1.415-1.415l-8.486-8.485l-1.414 1.414l.707.707l-1.34 1.34l1.414 1.415l1.34-1.34z"/></svg>`;
+
+const REACTION_PRESETS = ["👍", "❤️", "😂", "😮", "😢", "🔥"];
+const REACTION_BAR_GAP = 10; // px - fixed gap between message and reaction bar
+
+const reactionBarEl = document.createElement("div");
+reactionBarEl.className = "reaction-bar";
+reactionBarEl.style.display = "none";
+REACTION_PRESETS.forEach((emoji) => {
+	const btn = document.createElement("button");
+	btn.className = "reaction-bar-btn";
+	btn.textContent = emoji;
+	btn.dataset.emoji = emoji;
+	reactionBarEl.appendChild(btn);
+});
+document.body.appendChild(reactionBarEl);
 
 let _dom = {};
 
@@ -35,6 +50,25 @@ export function initContextMenu(dom) {
 	_dom = dom;
 }
 
+// Reaction bar click handler
+reactionBarEl.addEventListener("click", async (e) => {
+	const btn = e.target.closest(".reaction-bar-btn");
+	if (!btn) return;
+	const emoji = btn.dataset.emoji;
+	const idx = reactionBarEl.dataset.msgIndex;
+	const msg = getMessageByIndex(state.contactUserId, idx);
+	if (!msg?.id) return;
+
+	closeContextMenu();
+
+	try {
+		await emitReaction(msg.id, emoji);
+	} catch (err) {
+		console.error("reaction emit failed", err);
+		try { showToast("Failed to send reaction"); } catch (e) { /* ignore */ }
+	}
+});
+
 // ─── Open ─────────────────────────────────────────────────────────────────────
 export function openContextMenu(msg, e) {
 	if (state.isMenuOpen) {
@@ -48,6 +82,42 @@ export function openContextMenu(msg, e) {
 	state.selectedMsg = msg;
 
 	_dom.messageMenu.style.display = "block";
+
+	// Compute whether message needs to be nudged up to fit the menu,
+	// apply the transform first, then position the reaction bar using
+	// the message's post-transform bounding rect so the bar sits
+	// visually above the message itself (not the original position).
+	const preRect = msg.getBoundingClientRect();
+	const menuHeight = _dom.messageMenu.getBoundingClientRect().height;
+	let translateAmount = 0;
+	if (window.innerHeight - preRect.bottom < menuHeight) {
+		translateAmount = menuHeight + preRect.bottom - window.innerHeight + 24;
+		msg.style.transform = `translateY(-${translateAmount}px)`;
+	}
+
+	// Prepare reaction bar position but keep it hidden until the
+	// context menu is shown. Measure the bar height invisibly so the
+	// spacing above the message matches the bottom spacing used for
+	// the context menu (uses `basePadding`).
+	reactionBarEl.style.position = "fixed";
+	// Temporarily render invisible to measure size without flashing
+	reactionBarEl.style.visibility = "hidden";
+	reactionBarEl.style.display = "flex";
+	const barRect = reactionBarEl.getBoundingClientRect();
+	reactionBarEl.style.display = "none";
+	reactionBarEl.style.visibility = "";
+
+	// Compute top so gap above equals fixed REACTION_BAR_GAP (px)
+	const top = Math.max(8, preRect.top - barRect.height - REACTION_BAR_GAP - translateAmount);
+	reactionBarEl.style.top = top + "px";
+	if (msg.classList.contains("outgoing")) {
+		reactionBarEl.style.right = (window.innerWidth - preRect.right) + "px";
+		reactionBarEl.style.left = "auto";
+	} else {
+		reactionBarEl.style.left = preRect.left + "px";
+		reactionBarEl.style.right = "auto";
+	}
+	reactionBarEl.dataset.msgIndex = msg.dataset.index;
 	_dom.chatOverlay.style.display = "block";
 	msg.style.zIndex = 500;
 
@@ -80,30 +150,27 @@ export function openContextMenu(msg, e) {
 	}
 
 	// Position menu
-	const rect = msg.getBoundingClientRect();
-	const menuHeight = _dom.messageMenu.getBoundingClientRect().height;
-	let translateAmount = 0;
-
-	if (window.innerHeight - rect.bottom < menuHeight) {
-		translateAmount = menuHeight + rect.bottom - window.innerHeight + 24;
-		msg.style.transform = `translateY(-${translateAmount}px)`;
-	}
-
+	// Position the context menu below the (possibly shifted) message using
+	// the same pre-transform rectangle and translateAmount so it moves
+	// together with the message and reaction bar.
 	_dom.messageMenu.style.top =
-		rect.top + rect.height - translateAmount + basePadding + "px";
+		preRect.top + preRect.height - translateAmount + basePadding + "px";
 
 	if (msg.classList.contains("outgoing")) {
-		_dom.messageMenu.style.right = window.innerWidth - rect.right + "px";
+		_dom.messageMenu.style.right = window.innerWidth - preRect.right + "px";
 		_dom.messageMenu.style.left = "";
 	} else {
-		_dom.messageMenu.style.left = rect.left + "px";
+		_dom.messageMenu.style.left = preRect.left + "px";
 		_dom.messageMenu.style.right = "";
 	}
 
 	state.isMenuOpen = true;
+	// Show menu and reaction bar together to keep timing identical.
 	setTimeout(() => {
 		_dom.messageMenu.style.opacity = 1;
 		_dom.chatOverlay.style.opacity = 1;
+		// reveal reaction bar at the same time
+		reactionBarEl.style.display = "flex";
 	}, 100);
 
 	if (e && typeof e.stopPropagation === "function") e.stopPropagation();
@@ -115,6 +182,8 @@ export function closeContextMenu() {
 	_dom.chatOverlay.style.opacity = 0;
 	_dom.messageMenu.style.display = "none";
 	_dom.chatOverlay.style.display = "none";
+	// hide reaction bar when menu closes
+	reactionBarEl.style.display = "none";
 	if (state.selectedMsg) {
 		state.selectedMsg.style.zIndex = "";
 		state.selectedMsg.style.transform = "translateY(0px)";

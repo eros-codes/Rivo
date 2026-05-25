@@ -28,6 +28,7 @@ model User {
   messages       Message[]
   pushSubscriptions PushSubscription[]
   conversations  ConversationMember[]
+  reactions      MessageReaction[]
 }
 
 model Contact {
@@ -95,6 +96,7 @@ model Message {
   forwardedFrom  String?
   forwardedText  String?
   createdAt      DateTime     @default(now())
+  reactions      MessageReaction[]
   @@index([conversationId])
 }
 
@@ -109,4 +111,17 @@ model PushSubscription {
   createdAt DateTime @default(now())
   lastUsed  DateTime?
   @@index([userId])
+}
+
+model MessageReaction {
+  id        Int      @id @default(autoincrement())
+  messageId Int
+  userId    Int
+  emoji     String
+  createdAt DateTime @default(now())
+
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
 }

@@ -654,6 +654,108 @@ export function initSocket(httpServer) {
 			}
 		});
 
+			// ─── Add/toggle reaction ────────────────────────────────────────────────────
+			socket.on("reaction:add", async ({ messageId, emoji }, callback) => {
+				try {
+					if (!messageId || !emoji || typeof emoji !== "string" || emoji.length > 10) {
+						return callback?.({ error: "Invalid data" });
+					}
+
+					const msgId = parseIntSafe(messageId);
+					if (!msgId) return callback?.({ error: "Invalid messageId" });
+
+					const message = await prisma.message.findUnique({
+						where: { id: msgId },
+						select: { id: true, conversationId: true, senderId: true },
+					});
+					if (!message) return callback?.({ error: "Message not found" });
+
+					// verify membership
+					const member = await prisma.conversationMember.findFirst({
+						where: { conversationId: message.conversationId, userId: socket.userId },
+					});
+					if (!member) return callback?.({ error: "Forbidden" });
+
+					// upsert: one reaction per user per message
+					const existing = await prisma.messageReaction.findUnique({
+						where: { messageId_userId: { messageId: msgId, userId: socket.userId } },
+					});
+
+					let reaction;
+					let action;
+
+					if (existing && existing.emoji === emoji) {
+						// same emoji → remove (toggle off)
+						await prisma.messageReaction.delete({
+							where: { messageId_userId: { messageId: msgId, userId: socket.userId } },
+						});
+						reaction = null;
+						action = "removed";
+					} else {
+						// different emoji or new → upsert
+						reaction = await prisma.messageReaction.upsert({
+							where: { messageId_userId: { messageId: msgId, userId: socket.userId } },
+							create: { messageId: msgId, userId: socket.userId, emoji },
+							update: { emoji },
+						});
+						action = existing ? "changed" : "added";
+					}
+
+					// fetch updated reactions for this message
+					const allReactions = await prisma.messageReaction.findMany({
+						where: { messageId: msgId },
+						select: { userId: true, emoji: true },
+					});
+
+					const payload = { messageId: msgId, reactions: allReactions, actorId: socket.userId, emoji, action };
+
+					// broadcast to ALL in conversation (including sender)
+					io.to(`conversation:${message.conversationId}`).emit("reaction:updated", payload);
+
+					// Log for debugging persistence issues
+					try {
+						console.log(`reaction:add actor=${socket.userId} message=${msgId} action=${action} emoji=${emoji} totalReactions=${allReactions.length}`);
+					} catch (e) { /* ignore logging errors */ }
+
+					// Send silent web-push to recipients who are offline / not in-room
+					try {
+						const allRecipients = await getRecipientsCached(message.conversationId);
+						const recipientContacts = allRecipients.filter((c) => c.ownerId !== socket.userId);
+						const usersInRoom = convoOnline.get(message.conversationId) || new Set();
+						const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId)));
+						const offlineTargetIds = recipientUserIds.filter((uid) => {
+							const hasSockets = userSockets.has(uid) && userSockets.get(uid).size > 0;
+							return !usersInRoom.has(uid) && !hasSockets;
+						});
+
+						if (offlineTargetIds.length > 0) {
+							let actorName = 'Someone';
+							try {
+								const actor = await prisma.user.findUnique({ where: { id: socket.userId }, select: { name: true } });
+								if (actor?.name) actorName = actor.name;
+							} catch (e) {
+								/* ignore */
+							}
+
+							for (const uid of offlineTargetIds) {
+								push.sendNotificationToUser(uid, {
+									title: actorName,
+									body: `reacted ${emoji}`,
+									data: { conversationId: message.conversationId },
+								}).catch(() => { /* suppress push errors */ });
+							}
+						}
+					} catch (e) {
+						console.error('reaction:push error', e);
+					}
+
+					callback?.({ success: true, action, reactions: allReactions });
+				} catch (err) {
+					console.error("reaction:add error", err);
+					callback?.({ error: "Server error" });
+				}
+			});
+
 		// ─── Typing ────────────────────────────────────────────────────────────
 		socket.on("typing:start", ({ conversationId }) => {
 			const convId = parseIntSafe(conversationId);

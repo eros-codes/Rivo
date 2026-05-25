@@ -1,6 +1,6 @@
 import { state, messages, contacts, findMessageById } from "./state.js";
 import { showEmptyState, hideEmptyState, showToast } from "./ui.js";
-import { createMessage, markMessagesAsSeen } from "../../../components/messages/messages.js";
+import { createMessage, markMessagesAsSeen, applyReactionsToMessage } from "../../../components/messages/messages.js";
 import {
 	moveToActiveChats,
 	moveToContacts,
@@ -179,6 +179,7 @@ export async function openChat(fromClick = false) {
 					: null,
 				forwardedFrom: m.forwardedFrom || null,
 				forwardedText: m.forwardedText || null,
+				reactions: m.reactions || [],
 			}));
 
 			// paging metadata
@@ -384,7 +385,11 @@ export function injectMessages(userId) {
 			lastDate = message.date;
 		}
 
-		fragment.appendChild(createMessage(message));
+		const _msgEl = createMessage(message);
+		if (message.reactions && message.reactions.length > 0) {
+			try { applyReactionsToMessage(_msgEl, message.reactions, _currentUserId()); } catch(e) { }
+		}
+		fragment.appendChild(_msgEl);
 		if (message.isPinned) state.pinnedIndexes.push(index);
 	});
 
@@ -399,6 +404,17 @@ export function injectMessages(userId) {
 	}
 
 	_dom.chatEl.appendChild(fragment);
+
+	// After rendering messages, apply reaction badges for messages that have reactions
+	try {
+		const currentUserId = _currentUserId();
+		userMessages.forEach((msg) => {
+			if (msg && Array.isArray(msg.reactions) && msg.reactions.length > 0) {
+				const msgEl = _dom.chatEl.querySelector(`.chat-message[data-message-id="${msg.id}"]`);
+				if (msgEl) applyReactionsToMessage(msgEl, msg.reactions, currentUserId);
+			}
+		});
+	} catch (e) { /* ignore */ }
 }
 
 // Load older messages (page) and prepend to the current message list.
@@ -454,6 +470,7 @@ export async function loadOlderMessages() {
 			replyTo: m.replyToId ? { id: m.replyToId, sender: m.replyToName, text: m.replyToText } : null,
 			forwardedFrom: m.forwardedFrom || null,
 			forwardedText: m.forwardedText || null,
+			reactions: m.reactions || [],
 		}));
 
 		// prepend
@@ -581,6 +598,7 @@ export async function receiveMessage(message) {
 			: null,
 		forwardedFrom: message.forwardedFrom || null,
 		forwardedText: message.forwardedText || null,
+    		reactions: message.reactions || [],
 	};
 
 	if (!messages[contact.id]) messages[contact.id] = [];
@@ -602,7 +620,13 @@ export async function receiveMessage(message) {
 		if (!prevMsg || prevMsg.date !== normalized.date) {
 			_dom.chatEl.appendChild(createDateSeparator(normalized.date));
 		}
-		_dom.chatEl.appendChild(createMessage(normalized));
+		const newEl = createMessage(normalized);
+		try {
+			if (normalized.reactions && normalized.reactions.length > 0) {
+				applyReactionsToMessage(newEl, normalized.reactions, _currentUserId());
+			}
+		} catch (e) { /* ignore */ }
+		_dom.chatEl.appendChild(newEl);
 		scrollChatToBottom();
 		emitMessageSeen(contact.conversationId);
 	}

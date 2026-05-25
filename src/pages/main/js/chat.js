@@ -520,15 +520,20 @@ export async function receiveMessage(message) {
 					(c) => c.conversationId === message.conversationId,
 				);
 				if (raw) {
+					const resolvedName = raw.nickname || raw.contact?.name || "";
+					const anonUsernameRaw = raw.contact?.username || "";
+					const anonEmailRaw = raw.contact?.email || "";
+					const isDeletedAccount = resolvedName && String(resolvedName).toLowerCase() === 'deleted account';
+					const isAnonPlaceholder = (anonUsernameRaw && String(anonUsernameRaw).startsWith('deleted_user_')) || (anonEmailRaw && String(anonEmailRaw).endsWith('@deleted.rivo'));
 					const newContact = {
 						...raw,
-						name: raw.nickname || raw.contact?.name || "",
-						username: raw.contact?.username || "",
+						name: resolvedName,
+						username: (isDeletedAccount || isAnonPlaceholder) ? "" : anonUsernameRaw,
 						profilePics: raw.contact?.profilePics || [],
 						isOnline: raw.contact?.isOnline || false,
 						lastSeen: raw.contact?.lastSeen || null,
 						bio: raw.contact?.bio || "",
-						email: raw.contact?.email || "",
+						email: (isDeletedAccount || isAnonPlaceholder) ? "" : anonEmailRaw,
 						lastMessage: raw.conversation?.messages?.[0]?.text || "",
 						lastMessageTime: raw.conversation?.messages?.[0]
 							? new Date(raw.conversation.messages[0].createdAt).toLocaleTimeString([], {

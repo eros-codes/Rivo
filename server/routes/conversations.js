@@ -191,19 +191,74 @@ router.delete("/:id/messages", requireAuth, async (req, res) => {
 
         if (!member) return res.status(403).json({ error: "Forbidden" });
 
-		// NOTE: Previously this endpoint marked all messages in a conversation
-		// as deleted for everyone. That's a global delete which removes the
-		// other participant's history. As a safer interim measure, only mark
-		// messages authored by the requesting user as deleted. A proper
-		// per-user soft-delete requires a schema migration (e.g., a
-		// Message.deletedFor array or a ChatDeletion table) which should be
-		// implemented separately.
-		await prisma.message.updateMany({
-			where: { conversationId, senderId: req.userId },
-			data: { isDeleted: true },
-		});
+		// Fetch messages that will be affected so we can emit deletion events
+		// and adjust unread counters for recipients. Only consider messages
+		// that are currently not deleted.
+		const msgs = await prisma.message.findMany({ where: { conversationId, isDeleted: false }, select: { id: true, isSeen: true } });
+		const ids = msgs.map((m) => m.id);
 
-        return res.json({ success: true });
+		if (ids.length === 0) {
+			return res.json({ success: true });
+		}
+
+		// Mark those messages deleted
+		await prisma.message.updateMany({ where: { id: { in: ids } }, data: { isDeleted: true } });
+
+		// If any of the deleted messages were unseen, decrement recipients' unread counts
+		const unseenCount = msgs.filter((m) => !m.isSeen).length;
+		try {
+			if (unseenCount > 0) {
+				const recipientContacts = await prisma.contact.findMany({ where: { conversationId, ownerId: { not: req.userId } }, select: { id: true, unreadCount: true } });
+				for (const rc of recipientContacts) {
+					const dec = Math.min(rc.unreadCount || 0, unseenCount);
+					if (dec > 0) {
+						try {
+							await prisma.contact.update({ where: { id: rc.id }, data: { unreadCount: { decrement: dec } } });
+						} catch (e) {
+							/* ignore individual update failures */
+						}
+					}
+				}
+			}
+		} catch (e) {
+			console.error('adjust unread on bulk delete failed', e);
+		}
+
+		// Broadcast deletion events so connected clients can update their UI
+		try {
+			const io = globalThis.__rivo_io;
+			if (io) {
+				// Notify room first
+				for (const mid of ids) {
+					io.to(`conversation:${conversationId}`).emit('message:deleted', { messageId: mid });
+				}
+
+				// Also deliver the delete event directly to connected sockets of recipients
+				const recipientContacts = await prisma.contact.findMany({ where: { conversationId }, select: { ownerId: true } });
+				const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId).filter((id) => id !== req.userId)));
+				for (const uid of recipientUserIds) {
+					try {
+						for (const s of io.sockets.sockets.values()) {
+							try {
+								if (s && s.userId === uid) {
+									// Skip sockets already in the room (they already received the room emit)
+									try {
+										if (s.rooms && s.rooms.has(`conversation:${conversationId}`)) continue;
+									} catch (e) { /* ignore room-check failures */ }
+									for (const mid of ids) {
+										try { s.emit('message:deleted', { messageId: mid }); } catch (e) { /* ignore per-socket errors */ }
+									}
+								}
+							} catch (e) { /* ignore per-socket */ }
+						}
+					} catch (e) { /* ignore per-user failures */ }
+				}
+			}
+		} catch (e) {
+			console.error('broadcast deleted messages failed', e);
+		}
+
+		return res.json({ success: true });
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: "Server error" });

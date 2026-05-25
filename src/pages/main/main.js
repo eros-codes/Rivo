@@ -908,7 +908,20 @@ document.addEventListener("DOMContentLoaded", async function () {
 				if (c.id === user.id) {
 					c.profilePics = user.profilePics || [];
 					if (user.name) c.name = user.name;
-					if (user.username) c.username = user.username;
+					// If the server anonymized this account (delete flow) it will set
+					// `name` to "Deleted account" and replace username/email with
+					// generated placeholders like `deleted_user_<id>_<ts>` / `@deleted.rivo`.
+					// We should not display those garbled values in the UI — clear them.
+					const isDeletedAccount = user.name && String(user.name).toLowerCase() === 'deleted account';
+					const isAnonUsername = user.username && String(user.username).startsWith('deleted_user_');
+					const isAnonEmail = user.email && String(user.email).endsWith('@deleted.rivo');
+					if (isDeletedAccount || isAnonUsername || isAnonEmail) {
+						c.username = "";
+						c.email = "";
+					} else {
+						if (user.username) c.username = user.username;
+						if (user.email) c.email = user.email;
+					}
 					// Do not overwrite a user's custom local `nickname` when the
 					// remote user updates their profile. `nickname` is a local-only
 					// field set by the current user and must not be clobbered.

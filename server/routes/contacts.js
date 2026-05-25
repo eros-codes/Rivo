@@ -382,7 +382,17 @@ router.delete("/:id", requireAuth, async (req, res) => {
 			// attempt to remove the conversation.
 			const remaining = await tx.contact.findFirst({ where: { conversationId: contact.conversationId } });
 			if (!remaining && contact.conversationId) {
-				await tx.conversation.delete({ where: { id: contact.conversationId } });
+				// Only delete the conversation if there are no messages.
+				// Conversations may have messages even after contacts are removed
+				// (e.g., message history). Attempting to delete a conversation
+				// with existing messages can violate FK constraints and cause
+				// a transaction failure. Safely check message count first.
+				const msgCount = await tx.message.count({ where: { conversationId: contact.conversationId } });
+				if (msgCount === 0) {
+					await tx.conversation.delete({ where: { id: contact.conversationId } });
+				} else {
+					// Keep the conversation to preserve message history.
+				}
 			}
 		});
 

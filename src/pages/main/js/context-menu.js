@@ -36,6 +36,31 @@ REACTION_PRESETS.forEach((emoji) => {
 document.body.appendChild(reactionBarEl);
 
 let _dom = {};
+let _prevBodyOverflow = null;
+let _prevBodyTouchAction = null;
+const _preventScroll = (e) => {
+	try { e.preventDefault(); } catch (err) { /* ignore */ }
+};
+
+function _disableScrollWhileMenuOpen() {
+	try {
+		_prevBodyOverflow = document.body.style.overflow || "";
+		_prevBodyTouchAction = document.body.style.touchAction || "";
+		document.body.style.overflow = "hidden";
+		document.body.style.touchAction = "none";
+		document.addEventListener('wheel', _preventScroll, { passive: false, capture: true });
+		document.addEventListener('touchmove', _preventScroll, { passive: false, capture: true });
+	} catch (e) { /* ignore */ }
+}
+
+function _enableScrollAfterMenuClose() {
+	try {
+		document.removeEventListener('wheel', _preventScroll, { capture: true });
+		document.removeEventListener('touchmove', _preventScroll, { capture: true });
+		document.body.style.overflow = _prevBodyOverflow || "";
+		document.body.style.touchAction = _prevBodyTouchAction || "";
+	} catch (e) { /* ignore */ }
+}
 
 /**
 
@@ -119,6 +144,9 @@ export function openContextMenu(msg, e) {
 	}
 	reactionBarEl.dataset.msgIndex = msg.dataset.index;
 	_dom.chatOverlay.style.display = "block";
+
+	// Prevent the page/chat from scrolling while the context menu is open.
+	_disableScrollWhileMenuOpen();
 	msg.style.zIndex = 500;
 
 	// Pin/Unpin label & icon
@@ -188,6 +216,8 @@ export function closeContextMenu() {
 		state.selectedMsg.style.zIndex = "";
 		state.selectedMsg.style.transform = "translateY(0px)";
 	}
+	// Re-enable scrolling now that menu is closed
+	_enableScrollAfterMenuClose();
 	state.isMenuOpen = false;
 }
 

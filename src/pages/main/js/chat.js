@@ -20,6 +20,7 @@ import { createContactCard } from "../../../components/contact-cards/contact-car
 import { createActiveChatCard } from "../../../components/active-chats/active-chats.js";
 import { showNotification } from "./in-app-notification.js";
 import { getCurrentUserId } from "../../../utils/user.js";
+import { getCurrentUser } from "./currentUser.js";
 
 // Local notification dedupe fallback (main may expose window._notifQueue)
 const _localNotifQueue = new Set();
@@ -387,7 +388,10 @@ export function injectMessages(userId) {
 
 		const _msgEl = createMessage(message);
 		if (message.reactions && message.reactions.length > 0) {
-			try { applyReactionsToMessage(_msgEl, message.reactions, _currentUserId()); } catch(e) { }
+			try {
+				const _cu = getCurrentUser();
+				applyReactionsToMessage(_msgEl, message.reactions, _cu?.id || null);
+			} catch (e) { }
 		}
 		fragment.appendChild(_msgEl);
 		if (message.isPinned) state.pinnedIndexes.push(index);
@@ -407,7 +411,8 @@ export function injectMessages(userId) {
 
 	// After rendering messages, apply reaction badges for messages that have reactions
 	try {
-		const currentUserId = _currentUserId();
+		const _cu = getCurrentUser();
+		const currentUserId = _cu?.id || null;
 		userMessages.forEach((msg) => {
 			if (msg && Array.isArray(msg.reactions) && msg.reactions.length > 0) {
 				const msgEl = _dom.chatEl.querySelector(`.chat-message[data-message-id="${msg.id}"]`);
@@ -623,7 +628,8 @@ export async function receiveMessage(message) {
 		const newEl = createMessage(normalized);
 		try {
 			if (normalized.reactions && normalized.reactions.length > 0) {
-				applyReactionsToMessage(newEl, normalized.reactions, _currentUserId());
+				const _cu = getCurrentUser();
+				applyReactionsToMessage(newEl, normalized.reactions, _cu?.id || null);
 			}
 		} catch (e) { /* ignore */ }
 		_dom.chatEl.appendChild(newEl);

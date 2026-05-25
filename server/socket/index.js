@@ -733,10 +733,7 @@ export function initSocket(httpServer) {
 						console.error('deliver reaction to direct sockets failed', e);
 					}
 
-					// Log for debugging persistence issues
-					try {
-						console.log(`reaction:add actor=${socket.userId} message=${msgId} action=${action} emoji=${emoji} totalReactions=${allReactions.length}`);
-					} catch (e) { /* ignore logging errors */ }
+					// Logging suppressed in production: reaction event handled
 
 					// Send silent web-push to recipients who are offline / not in-room
 					try {

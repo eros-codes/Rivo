@@ -229,9 +229,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 				chatName.textContent = friend.nickname || friend.name;
 				closeSettings();
 				openChat(true);
-				if (friend.conversationId) {
-					emitMessageSeen(friend.conversationId);
-				}
 				scrollChatToBottom();
 
 				if (friend.isBlocked) {
@@ -739,9 +736,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 			} catch (e) { /* ignore */ }
 			chatName.textContent = contact.nickname || contact.name;
 			openChat(true);
-			if (contact.conversationId) {
-				emitMessageSeen(contact.conversationId);
-			}
 			scrollChatToBottom();
 
 			if (msgIndex === null) return;
@@ -882,9 +876,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 			state.contactUserId = normalized.id;
 			openChat(true);
-			if (normalized.conversationId) {
-				emitMessageSeen(normalized.conversationId);
-			}
 
 			// Ensure the send input and unblock action reflect the contact's
 			// blocked state immediately after adding.
@@ -1627,9 +1618,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
-			if (friend.conversationId) {
-				emitMessageSeen(friend.conversationId);
-			}
 			scrollChatToBottom();
 
 			if (friend.isBlocked) {
@@ -1728,10 +1716,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 						} catch (e) { /* ignore */ }
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
-
-			if (friend.conversationId) {
-				emitMessageSeen(friend.conversationId);
-			}
 			if (friend.isBlocked) {
 				messageContainer.style.display = "none";
 				const _ub = unblockActionBtn[0];
@@ -2581,9 +2565,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 							chatName.textContent =
 								friend.nickname || friend.name;
 							openChat(true);
-							if (friend.conversationId) {
-								emitMessageSeen(friend.conversationId);
-							}
 							scrollChatToBottom();
 
 							if (friend.isBlocked) {

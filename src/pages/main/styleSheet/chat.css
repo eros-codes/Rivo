@@ -125,6 +125,25 @@
 	white-space: nowrap;
 }
 
+.unread-separator {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	gap: 0.5rem;
+	padding: 0.4rem 0;
+	user-select: none;
+}
+.unread-separator span {
+	font-size: 0.78rem;
+	color: var(--text-main-color);
+	background: var(--glass-bg-input-color);
+	padding: 0.25rem 0.9rem;
+	border-radius: 2rem;
+	white-space: nowrap;
+	font-weight: 600;
+}
+
 .chat-empty {
 	display: none;
 	flex-direction: column;
@@ -140,10 +159,9 @@
 	background: var(--glass-bg-input-color);
 	border: 1px solid rgba(255, 255, 255, 0.1);
 	color: var(--text-main-color);
-
+	cursor: pointer;
 	backdrop-filter: blur(14px) saturate(160%);
 	-webkit-backdrop-filter: blur(14px) saturate(160%);
-
 	box-shadow:
 		0 8px 24px rgba(0, 0, 0, 0.12),
 		inset 1px 1px 0 rgba(255, 255, 255, 0.1),

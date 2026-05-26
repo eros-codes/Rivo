@@ -1,6 +1,10 @@
 import { state, messages, contacts, findMessageById } from "./state.js";
 import { showEmptyState, hideEmptyState, showToast } from "./ui.js";
-import { createMessage, markMessagesAsSeen, applyReactionsToMessage } from "../../../components/messages/messages.js";
+import {
+	createMessage,
+	markMessagesAsSeen,
+	applyReactionsToMessage,
+} from "../../../components/messages/messages.js";
 import {
 	moveToActiveChats,
 	moveToContacts,
@@ -9,7 +13,12 @@ import {
 	sortContacts,
 	updateTotalUnreadCount,
 } from "./chat-logic.js";
-import { emitMessage, emitEditMessage, emitMessageSeen, getSocket } from "./socket.js";
+import {
+	emitMessage,
+	emitEditMessage,
+	emitMessageSeen,
+	getSocket,
+} from "./socket.js";
 import {
 	getMessagesPage,
 	getContacts,
@@ -31,21 +40,33 @@ export const lineHeight = 22.4;
 export const maxLines = 7;
 export const maxHeight = lineHeight * maxLines;
 export const DEFAULT_PAGE_LIMIT = 50;
+// After server reports messages marked as seen, keep the unread separator
+// visible for at least this many milliseconds before applying the seen state
+const MIN_SEPARATOR_VISIBLE_AFTER_MARK_MS = 600;
 
 // Returns true when the chat view is near bottom within `offset` pixels.
 export function nearBottom(chatEl, offset = 70) {
 	if (!chatEl) return false;
-	return chatEl.scrollTop + chatEl.clientHeight >= chatEl.scrollHeight - offset;
+	return (
+		chatEl.scrollTop + chatEl.clientHeight >= chatEl.scrollHeight - offset
+	);
 }
 
 // Cap messages kept per conversation to avoid unbounded client memory growth
 const MAX_MESSAGES_PER_CONVERSATION = 1000;
 
 let _dom = {};
+// Unread messages separator state
+let _unreadSeparatorContactId = null;
+let _unreadSeparatorIndex = -1;
 // paging state per contact
 const messagePaging = {};
 // Map of pending messages keyed by pendingId -> { node, timeoutId, contactId, text, replyTo }
 const pendingMessages = new Map();
+// Timeout handle used to debounce/delay marking messages as seen when opening a chat
+let _seenTimeoutId = null;
+// Timeout handle used to delay applying server-marked seen state so separator is visible
+let _seenApplyTimeoutId = null;
 
 export function initChat(dom) {
 	_dom = dom;
@@ -54,7 +75,8 @@ export function initChat(dom) {
 	try {
 		if (_dom.chatEl) {
 			_dom.chatEl.addEventListener("click", (e) => {
-				const btn = e.target.closest && e.target.closest(".msg-failed-btn");
+				const btn =
+					e.target.closest && e.target.closest(".msg-failed-btn");
 				if (!btn) return;
 				e.stopPropagation();
 				const msgEl = btn.closest(".chat-message");
@@ -143,18 +165,25 @@ export async function openChat(fromClick = false) {
 	if (contact?.conversationId) {
 		// show message skeletons while fetching
 		if (_dom.chatEl) {
-			_dom.chatEl.querySelectorAll('.skeleton-placeholder').forEach((n) => n.remove());
+			_dom.chatEl
+				.querySelectorAll(".skeleton-placeholder")
+				.forEach((n) => n.remove());
 			_dom.chatEl.appendChild(makeMessageSkeleton(8));
-			_dom.chatEl.setAttribute('aria-busy', 'true');
+			_dom.chatEl.setAttribute("aria-busy", "true");
 		}
 
 		try {
 			const PAGE_LIMIT = DEFAULT_PAGE_LIMIT;
-			const serverMessages = await getMessagesPage(contact.conversationId, { limit: PAGE_LIMIT });
+			const serverMessages = await getMessagesPage(
+				contact.conversationId,
+				{ limit: PAGE_LIMIT },
+			);
 			// remove skeletons once we have results
 			if (_dom.chatEl) {
-				_dom.chatEl.querySelectorAll('.skeleton-placeholder').forEach((n) => n.remove());
-				_dom.chatEl.removeAttribute('aria-busy');
+				_dom.chatEl
+					.querySelectorAll(".skeleton-placeholder")
+					.forEach((n) => n.remove());
+				_dom.chatEl.removeAttribute("aria-busy");
 			}
 			// normalize for frontend and keep createdAt for paging
 			messages[state.contactUserId] = serverMessages.map((m) => ({
@@ -173,10 +202,10 @@ export async function openChat(fromClick = false) {
 				isSeen: m.isSeen,
 				replyTo: m.replyToId
 					? {
-						id: m.replyToId,
-						sender: m.replyToName,
-						text: m.replyToText,
-					}
+							id: m.replyToId,
+							sender: m.replyToName,
+							text: m.replyToText,
+						}
 					: null,
 				forwardedFrom: m.forwardedFrom || null,
 				forwardedText: m.forwardedText || null,
@@ -185,20 +214,145 @@ export async function openChat(fromClick = false) {
 
 			// paging metadata
 			messagePaging[state.contactUserId] = {
-				hasMore: Array.isArray(serverMessages) && serverMessages.length === PAGE_LIMIT,
+				hasMore:
+					Array.isArray(serverMessages) &&
+					serverMessages.length === PAGE_LIMIT,
 				loading: false,
 				pageSize: PAGE_LIMIT,
 			};
 		} catch (err) {
-			console.error('getMessagesPage failed', err);
+			console.error("getMessagesPage failed", err);
 			messages[state.contactUserId] = [];
-			messagePaging[state.contactUserId] = { hasMore: false, loading: false };
+			messagePaging[state.contactUserId] = {
+				hasMore: false,
+				loading: false,
+			};
 		}
 	}
-
+	// ثبت موقعیت separator قبل از اینکه isSeen تغییر کنه
+	if (_unreadSeparatorContactId !== state.contactUserId) {
+		const _loadedMsgs = messages[state.contactUserId] || [];
+		_unreadSeparatorContactId = state.contactUserId;
+		_unreadSeparatorIndex = _loadedMsgs.findIndex(
+			(m) => m.isSeen !== true && !m.user,
+		);
+		if (_unreadSeparatorIndex === -1) {
+			const _uc = contacts.find((c) => c.id === state.contactUserId);
+			const _unread = _uc ? _uc.unreadCount || 0 : 0;
+			if (_unread > 0) {
+				let _cnt = 0;
+				for (let i = _loadedMsgs.length - 1; i >= 0; i--) {
+					if (!_loadedMsgs[i].user) {
+						_cnt++;
+						if (_cnt === _unread) {
+							_unreadSeparatorIndex = i;
+							break;
+						}
+					}
+				}
+			}
+		}
+	}
 	injectMessages(state.contactUserId);
 	if (contact?.conversationId && fromClick) {
-		emitMessageSeen(contact.conversationId);
+		// Delay marking messages as seen briefly so the unread separator
+		// is visible to the user when the chat opens. Debounce multiple
+		// rapid opens by clearing previous timeout.
+		try {
+			if (_seenTimeoutId) clearTimeout(_seenTimeoutId);
+		} catch (e) {
+			/* ignore */
+		}
+		_seenTimeoutId = setTimeout(() => {
+			emitMessageSeen(contact.conversationId)
+				.then((marked) => {
+					try {
+						const arr = messages[state.contactUserId] || [];
+						// Clear any previous apply timeout and schedule applying the server-mark
+						try {
+							if (_seenApplyTimeoutId)
+								clearTimeout(_seenApplyTimeoutId);
+						} catch (e) {
+							/* ignore */
+						}
+						_seenApplyTimeoutId = setTimeout(() => {
+							try {
+								if (
+									Array.isArray(marked) &&
+									marked.length > 0
+								) {
+									const idSet = new Set(
+										marked.map((id) => String(id)),
+									);
+									let changed = false;
+									arr.forEach((m) => {
+										if (
+											!m.user &&
+											idSet.has(String(m.id)) &&
+											m.isSeen !== true
+										) {
+											m.isSeen = true;
+											changed = true;
+										}
+									});
+									if (changed)
+										injectMessages(state.contactUserId);
+								} else {
+									// Fallback: mark all incoming messages as seen
+									let changed = false;
+									arr.forEach((m) => {
+										if (!m.user && m.isSeen !== true) {
+											m.isSeen = true;
+											changed = true;
+										}
+									});
+									if (changed)
+										injectMessages(state.contactUserId);
+								}
+								// Reset unread count for this contact in the UI since we've marked messages seen
+								try {
+									const c = contacts.find(
+										(c) => c.id === state.contactUserId,
+									);
+									if (c) {
+										c.unreadCount = 0;
+										refreshCard(c);
+										updateTotalUnreadCount();
+										injectMessages(state.contactUserId);
+									}
+								} catch (e) {
+									/* ignore */
+								}
+							} catch (err) {
+								console.debug(
+									"[openChat] applyMarkedSeen handler error",
+									err,
+								);
+							}
+							try {
+								_seenApplyTimeoutId = null;
+							} catch (e) {
+								/* ignore */
+							}
+						}, MIN_SEPARATOR_VISIBLE_AFTER_MARK_MS);
+					} catch (err) {
+						console.debug(
+							"[openChat] emitMessageSeen handler error",
+							err,
+						);
+					}
+				})
+				.catch((err) => {
+					console.debug("[openChat] emitMessageSeen failed", err);
+				})
+				.finally(() => {
+					try {
+						_seenTimeoutId = null;
+					} catch (e) {
+						/* ignore */
+					}
+				});
+		}, 700);
 	}
 	if (contact?.isOnline) {
 		_dom.chatProfilePicture.classList.add("online");
@@ -242,7 +396,10 @@ export function closeChat() {
 		const prevContact = contacts.find((c) => c.id === state.contactUserId);
 		if (prevContact && prevContact.conversationId) {
 			const sock = getSocket();
-			if (sock) sock.emit("conversation:leave", { conversationId: prevContact.conversationId });
+			if (sock)
+				sock.emit("conversation:leave", {
+					conversationId: prevContact.conversationId,
+				});
 		}
 	} catch (e) {
 		// ignore
@@ -259,7 +416,28 @@ export function closeChat() {
 				}
 			}
 		}
-	} catch (e) { /* ignore */ }
+	} catch (e) {
+		/* ignore */
+	}
+	// Clear seen-marking timeouts so they don't apply after the chat is closed
+	try {
+		if (_seenTimeoutId) {
+			clearTimeout(_seenTimeoutId);
+			_seenTimeoutId = null;
+		}
+	} catch (e) {
+		/* ignore */
+	}
+	try {
+		if (_seenApplyTimeoutId) {
+			clearTimeout(_seenApplyTimeoutId);
+			_seenApplyTimeoutId = null;
+		}
+	} catch (e) {
+		/* ignore */
+	}
+	_unreadSeparatorContactId = null;
+	_unreadSeparatorIndex = -1;
 	state.contactUserId = null;
 }
 
@@ -329,7 +507,8 @@ export function updatePinnedMessage(contactId = state.contactUserId) {
 		}
 	}
 	// Only update the pinned-count UI for the currently visible chat
-	if (contactId === state.contactUserId) updatePinCount(pinnedMsg ? pinnedMsg.index : null);
+	if (contactId === state.contactUserId)
+		updatePinCount(pinnedMsg ? pinnedMsg.index : null);
 }
 
 // ─── Inject messages ──────────────────────────────────────────────────────────
@@ -357,6 +536,17 @@ function createDateSeparator(dateStr) {
 	return el;
 }
 
+function createUnreadSeparator() {
+	const el = document.createElement("div");
+	el.className = "unread-separator";
+	el.setAttribute("role", "separator");
+	el.setAttribute("aria-label", "Unread messages");
+	const span = document.createElement("span");
+	span.textContent = "Unread messages";
+	el.appendChild(span);
+	return el;
+}
+
 export function injectMessages(userId) {
 	if (!_dom.chatEl) return;
 	const userMessages = messages[userId];
@@ -377,6 +567,71 @@ export function injectMessages(userId) {
 	}
 	hideEmptyState(_dom.chatEl, _dom.emptyStateEl);
 
+	// find the first incoming message that is unseen.
+	// Treat missing/undefined isSeen as unseen (i.e., isSeen !== true).
+	let firstUnseenIndex;
+	if (_unreadSeparatorContactId === userId && _unreadSeparatorIndex !== -1) {
+		firstUnseenIndex = _unreadSeparatorIndex;
+	} else {
+		firstUnseenIndex = Array.isArray(userMessages)
+			? userMessages.findIndex((m) => m.isSeen !== true && !m.user)
+			: -1;
+	}
+
+	// Fallback: if server didn't include explicit isSeen flags but contact
+	// still reports unreadCount, place the separator before the last N
+	// incoming messages (N = contact.unreadCount).
+	if (
+		!(_unreadSeparatorContactId === userId && _unreadSeparatorIndex !== -1)
+	) {
+		try {
+			if (firstUnseenIndex === -1) {
+				const contact = contacts.find((c) => c.id === userId);
+				const unread = contact ? contact.unreadCount || 0 : 0;
+				if (
+					unread > 0 &&
+					Array.isArray(userMessages) &&
+					userMessages.length > 0
+				) {
+					let needed = Number(unread);
+					let count = 0;
+					for (let i = userMessages.length - 1; i >= 0; i--) {
+						if (!userMessages[i].user) {
+							count++;
+							if (count === needed) {
+								firstUnseenIndex = i;
+								break;
+							}
+						}
+					}
+					// If we never reached 'needed' but counted some incoming msgs,
+					// place separator at earliest incoming message.
+					if (firstUnseenIndex === -1 && count > 0) {
+						for (let i = 0; i < userMessages.length; i++) {
+							if (!userMessages[i].user) {
+								firstUnseenIndex = i;
+								break;
+							}
+						}
+					}
+				}
+			}
+		} catch (e) {
+			/* ignore fallback errors */
+		}
+	}
+
+	// Debug: log unseen summary to help diagnose missing separator
+	try {
+		const unseenCount = Array.isArray(userMessages)
+			? userMessages.filter((m) => m.isSeen !== true && !m.user).length
+			: 0;
+		const contact = contacts.find((c) => c.id === userId);
+		const contactUnread = contact ? contact.unreadCount || 0 : 0;
+	} catch (e) {
+		/* ignore debug errors */
+	}
+
 	const fragment = document.createDocumentFragment();
 	userMessages.forEach((message, index) => {
 		message.index = index;
@@ -386,12 +641,21 @@ export function injectMessages(userId) {
 			lastDate = message.date;
 		}
 
+		// insert unread separator just before the first unseen incoming message
+		if (index === firstUnseenIndex && firstUnseenIndex !== -1) {
+			fragment.appendChild(createUnreadSeparator());
+		}
+
 		const _msgEl = createMessage(message);
 		if (message.reactions && message.reactions.length > 0) {
 			try {
 				const _cu = getCurrentUser();
-				applyReactionsToMessage(_msgEl, message.reactions, _cu?.id || null);
-			} catch (e) { }
+				applyReactionsToMessage(
+					_msgEl,
+					message.reactions,
+					_cu?.id || null,
+				);
+			} catch (e) {}
 		}
 		fragment.appendChild(_msgEl);
 		if (message.isPinned) state.pinnedIndexes.push(index);
@@ -414,12 +678,25 @@ export function injectMessages(userId) {
 		const _cu = getCurrentUser();
 		const currentUserId = _cu?.id || null;
 		userMessages.forEach((msg) => {
-			if (msg && Array.isArray(msg.reactions) && msg.reactions.length > 0) {
-				const msgEl = _dom.chatEl.querySelector(`.chat-message[data-message-id="${msg.id}"]`);
-				if (msgEl) applyReactionsToMessage(msgEl, msg.reactions, currentUserId);
+			if (
+				msg &&
+				Array.isArray(msg.reactions) &&
+				msg.reactions.length > 0
+			) {
+				const msgEl = _dom.chatEl.querySelector(
+					`.chat-message[data-message-id="${msg.id}"]`,
+				);
+				if (msgEl)
+					applyReactionsToMessage(
+						msgEl,
+						msg.reactions,
+						currentUserId,
+					);
 			}
 		});
-	} catch (e) { /* ignore */ }
+	} catch (e) {
+		/* ignore */
+	}
 }
 
 // Load older messages (page) and prepend to the current message list.
@@ -429,14 +706,21 @@ export async function loadOlderMessages() {
 	const contact = contacts.find((c) => c.id === uid);
 	if (!contact || !contact.conversationId) return;
 
-	let meta = messagePaging[uid] || { hasMore: true, loading: false, pageSize: DEFAULT_PAGE_LIMIT };
+	let meta = messagePaging[uid] || {
+		hasMore: true,
+		loading: false,
+		pageSize: DEFAULT_PAGE_LIMIT,
+	};
 	// persist meta reference
 	messagePaging[uid] = meta;
 	if (!meta.hasMore || meta.loading) return;
 	meta.loading = true;
 
-		try {
-			const earliest = messages[uid] && messages[uid][0] ? messages[uid][0].createdAt : null;
+	try {
+		const earliest =
+			messages[uid] && messages[uid][0]
+				? messages[uid][0].createdAt
+				: null;
 		if (!earliest) {
 			meta.loading = false;
 			return;
@@ -447,15 +731,20 @@ export async function loadOlderMessages() {
 		if (_dom.chatEl) {
 			topSkel = createTopMessageSkeleton();
 			_dom.chatEl.prepend(topSkel);
-			_dom.chatEl.setAttribute('aria-busy', 'true');
+			_dom.chatEl.setAttribute("aria-busy", "true");
 		}
 
 		const oldScrollHeight = _dom.chatEl ? _dom.chatEl.scrollHeight : 0;
 		const oldScrollTop = _dom.chatEl ? _dom.chatEl.scrollTop : 0;
 
 		const PAGE_LIMIT = meta.pageSize || DEFAULT_PAGE_LIMIT;
-		const earliestId = (messages[uid] && messages[uid][0]) ? messages[uid][0].id : null;
-		const more = await getMessagesPage(contact.conversationId, { limit: PAGE_LIMIT, before: earliest, beforeId: earliestId });
+		const earliestId =
+			messages[uid] && messages[uid][0] ? messages[uid][0].id : null;
+		const more = await getMessagesPage(contact.conversationId, {
+			limit: PAGE_LIMIT,
+			before: earliest,
+			beforeId: earliestId,
+		});
 		if (!Array.isArray(more) || more.length === 0) {
 			meta.hasMore = false;
 			meta.loading = false;
@@ -466,13 +755,23 @@ export async function loadOlderMessages() {
 			id: m.id,
 			user: m.senderId === _currentUserId(),
 			text: m.text,
-			time: new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+			time: new Date(m.createdAt).toLocaleTimeString([], {
+				hour: "2-digit",
+				minute: "2-digit",
+				hour12: false,
+			}),
 			date: new Date(m.createdAt).toISOString().slice(0, 10),
 			createdAt: m.createdAt,
 			isEdited: m.isEdited,
 			isPinned: m.isPinned,
 			isSeen: m.isSeen,
-			replyTo: m.replyToId ? { id: m.replyToId, sender: m.replyToName, text: m.replyToText } : null,
+			replyTo: m.replyToId
+				? {
+						id: m.replyToId,
+						sender: m.replyToName,
+						text: m.replyToText,
+					}
+				: null,
 			forwardedFrom: m.forwardedFrom || null,
 			forwardedText: m.forwardedText || null,
 			reactions: m.reactions || [],
@@ -482,7 +781,10 @@ export async function loadOlderMessages() {
 		messages[uid] = [...normalized, ...(messages[uid] || [])];
 
 		// trim if too many
-		if (Array.isArray(messages[uid]) && messages[uid].length > MAX_MESSAGES_PER_CONVERSATION) {
+		if (
+			Array.isArray(messages[uid]) &&
+			messages[uid].length > MAX_MESSAGES_PER_CONVERSATION
+		) {
 			messages[uid] = messages[uid].slice(-MAX_MESSAGES_PER_CONVERSATION);
 		}
 
@@ -494,11 +796,12 @@ export async function loadOlderMessages() {
 			injectMessages(uid);
 			// remove top skeleton if present
 			if (topSkel && topSkel.parentNode) topSkel.remove();
-			_dom.chatEl.removeAttribute('aria-busy');
-			_dom.chatEl.scrollTop = (_dom.chatEl.scrollHeight - oldScrollHeight) + oldScrollTop;
+			_dom.chatEl.removeAttribute("aria-busy");
+			_dom.chatEl.scrollTop =
+				_dom.chatEl.scrollHeight - oldScrollHeight + oldScrollTop;
 		}
 	} catch (e) {
-		console.error('loadOlderMessages failed', e);
+		console.error("loadOlderMessages failed", e);
 	} finally {
 		if (messagePaging[uid]) messagePaging[uid].loading = false;
 	}
@@ -520,30 +823,51 @@ export async function receiveMessage(message) {
 					(c) => c.conversationId === message.conversationId,
 				);
 				if (raw) {
-					const resolvedName = raw.nickname || raw.contact?.name || "";
+					const resolvedName =
+						raw.nickname || raw.contact?.name || "";
 					const anonUsernameRaw = raw.contact?.username || "";
 					const anonEmailRaw = raw.contact?.email || "";
-					const isDeletedAccount = resolvedName && String(resolvedName).toLowerCase() === 'deleted account';
-					const isAnonPlaceholder = (anonUsernameRaw && String(anonUsernameRaw).startsWith('deleted_user_')) || (anonEmailRaw && String(anonEmailRaw).endsWith('@deleted.rivo'));
+					const isDeletedAccount =
+						resolvedName &&
+						String(resolvedName).toLowerCase() ===
+							"deleted account";
+					const isAnonPlaceholder =
+						(anonUsernameRaw &&
+							String(anonUsernameRaw).startsWith(
+								"deleted_user_",
+							)) ||
+						(anonEmailRaw &&
+							String(anonEmailRaw).endsWith("@deleted.rivo"));
 					const newContact = {
 						...raw,
 						name: resolvedName,
-						username: (isDeletedAccount || isAnonPlaceholder) ? "" : anonUsernameRaw,
+						username:
+							isDeletedAccount || isAnonPlaceholder
+								? ""
+								: anonUsernameRaw,
 						profilePics: raw.contact?.profilePics || [],
 						isOnline: raw.contact?.isOnline || false,
 						lastSeen: raw.contact?.lastSeen || null,
 						bio: raw.contact?.bio || "",
-						email: (isDeletedAccount || isAnonPlaceholder) ? "" : anonEmailRaw,
-						lastMessage: raw.conversation?.messages?.[0]?.text || "",
+						email:
+							isDeletedAccount || isAnonPlaceholder
+								? ""
+								: anonEmailRaw,
+						lastMessage:
+							raw.conversation?.messages?.[0]?.text || "",
 						lastMessageTime: raw.conversation?.messages?.[0]
-							? new Date(raw.conversation.messages[0].createdAt).toLocaleTimeString([], {
-								hour: "2-digit",
-								minute: "2-digit",
-								hour12: false,
-							})
+							? new Date(
+									raw.conversation.messages[0].createdAt,
+								).toLocaleTimeString([], {
+									hour: "2-digit",
+									minute: "2-digit",
+									hour12: false,
+								})
 							: null,
 						lastMessageDate: raw.conversation?.messages?.[0]
-							? new Date(raw.conversation.messages[0].createdAt).toISOString().slice(0, 10)
+							? new Date(raw.conversation.messages[0].createdAt)
+									.toISOString()
+									.slice(0, 10)
 							: null,
 						unreadCount: raw.unreadCount ?? 0,
 						lastMessageSeen: (() => {
@@ -560,24 +884,46 @@ export async function receiveMessage(message) {
 						contacts.push(newContact);
 
 						// append DOM card to the appropriate container
-						const contactsContainer = document.querySelector(".contacts-container");
-						const activeChatsContainer = document.querySelector(".active-chats-container");
+						const contactsContainer = document.querySelector(
+							".contacts-container",
+						);
+						const activeChatsContainer = document.querySelector(
+							".active-chats-container",
+						);
 						if (contactsContainer && activeChatsContainer) {
-							if (newContact.isPinned || newContact.unreadCount > 0 || newContact.lastMessageSeen === false) {
-								activeChatsContainer.appendChild(createActiveChatCard(newContact));
+							if (
+								newContact.isPinned ||
+								newContact.unreadCount > 0 ||
+								newContact.lastMessageSeen === false
+							) {
+								activeChatsContainer.appendChild(
+									createActiveChatCard(newContact),
+								);
 							} else {
-								contactsContainer.appendChild(createContactCard({ ...newContact, hasMessages: !!newContact.lastMessage }, _dom.onContactAction));
+								contactsContainer.appendChild(
+									createContactCard(
+										{
+											...newContact,
+											hasMessages:
+												!!newContact.lastMessage,
+										},
+										_dom.onContactAction,
+									),
+								);
 							}
 							updateTotalUnreadCount();
 							sortActiveChats();
 							sortContacts();
 							// Hide the "No contacts yet" placeholder immediately
-							const emptyEl = document.getElementById("contacts-empty");
+							const emptyEl =
+								document.getElementById("contacts-empty");
 							if (emptyEl) emptyEl.style.display = "none";
 						}
 					}
 
-					contact = contacts.find((c) => c.conversationId === message.conversationId);
+					contact = contacts.find(
+						(c) => c.conversationId === message.conversationId,
+					);
 				}
 			}
 		} catch (e) {
@@ -601,14 +947,14 @@ export async function receiveMessage(message) {
 		isSeen: message.isSeen || false,
 		replyTo: message.replyToId
 			? {
-				id: message.replyToId,
-				sender: message.replyToName,
-				text: message.replyToText,
-			}
+					id: message.replyToId,
+					sender: message.replyToName,
+					text: message.replyToText,
+				}
 			: null,
 		forwardedFrom: message.forwardedFrom || null,
 		forwardedText: message.forwardedText || null,
-    		reactions: message.reactions || [],
+		reactions: message.reactions || [],
 	};
 
 	if (!messages[contact.id]) messages[contact.id] = [];
@@ -634,9 +980,15 @@ export async function receiveMessage(message) {
 		try {
 			if (normalized.reactions && normalized.reactions.length > 0) {
 				const _cu = getCurrentUser();
-				applyReactionsToMessage(newEl, normalized.reactions, _cu?.id || null);
+				applyReactionsToMessage(
+					newEl,
+					normalized.reactions,
+					_cu?.id || null,
+				);
 			}
-		} catch (e) { /* ignore */ }
+		} catch (e) {
+			/* ignore */
+		}
 		_dom.chatEl.appendChild(newEl);
 		scrollChatToBottom();
 		emitMessageSeen(contact.conversationId);
@@ -653,11 +1005,17 @@ export async function receiveMessage(message) {
 		try {
 			if (!normalized.user && !contact.isSaved && !contact.isMuted) {
 				// Deduplicate notifications by message id using main's queue if present
-				const notifQueue = (typeof window !== 'undefined' && window._notifQueue) ? window._notifQueue : _localNotifQueue;
+				const notifQueue =
+					typeof window !== "undefined" && window._notifQueue
+						? window._notifQueue
+						: _localNotifQueue;
 				if (normalized.id) {
 					if (!notifQueue.has(normalized.id)) {
 						notifQueue.add(normalized.id);
-						setTimeout(() => notifQueue.delete(normalized.id), 5000);
+						setTimeout(
+							() => notifQueue.delete(normalized.id),
+							5000,
+						);
 						showNotification(contact, normalized);
 					}
 				} else {
@@ -669,11 +1027,11 @@ export async function receiveMessage(message) {
 		}
 	}
 
-// Do not auto-unarchive when receiving a message. Keep archived contacts archived
-// until the local user explicitly sends a message (auto-unarchive on send).
-if (!contact.isArchived) {
-    moveToActiveChats(contact);
-}
+	// Do not auto-unarchive when receiving a message. Keep archived contacts archived
+	// until the local user explicitly sends a message (auto-unarchive on send).
+	if (!contact.isArchived) {
+		moveToActiveChats(contact);
+	}
 	refreshCard(contact);
 	sortActiveChats();
 }
@@ -840,7 +1198,7 @@ export async function sendMessage() {
 
 	const contact = contacts.find((c) => c.id === state.contactUserId);
 	if (!contact) return;
-	
+
 	// Auto-unarchive on send
 	if (contact.isArchived) {
 		contact.isArchived = false;
@@ -902,70 +1260,83 @@ function _normalizeOutgoing(m) {
 
 // Pending message helpers
 function _closeFailedPanel() {
-	const existing = document.querySelector('.msg-failed-panel');
-	if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
-	try { document.removeEventListener('click', _closeFailedPanel); } catch (e) { /* ignore */ }
+	const existing = document.querySelector(".msg-failed-panel");
+	if (existing && existing.parentNode)
+		existing.parentNode.removeChild(existing);
+	try {
+		document.removeEventListener("click", _closeFailedPanel);
+	} catch (e) {
+		/* ignore */
+	}
 }
 
 function _openFailedPanel(msgEl, pendingId) {
 	_closeFailedPanel();
-	const panel = document.createElement('div');
-	panel.className = 'msg-failed-panel';
+	const panel = document.createElement("div");
+	panel.className = "msg-failed-panel";
 
-	const retryBtn = document.createElement('button');
-	retryBtn.type = 'button';
-	retryBtn.className = 'retry-btn';
-	retryBtn.textContent = 'Retry';
+	const retryBtn = document.createElement("button");
+	retryBtn.type = "button";
+	retryBtn.className = "retry-btn";
+	retryBtn.textContent = "Retry";
 
-	const copyBtn = document.createElement('button');
-	copyBtn.type = 'button';
-	copyBtn.className = 'copy-btn';
-	copyBtn.textContent = 'Copy';
+	const copyBtn = document.createElement("button");
+	copyBtn.type = "button";
+	copyBtn.className = "copy-btn";
+	copyBtn.textContent = "Copy";
 
-	const delBtn = document.createElement('button');
-	delBtn.type = 'button';
-	delBtn.className = 'delete-btn';
-	delBtn.textContent = 'Delete';
+	const delBtn = document.createElement("button");
+	delBtn.type = "button";
+	delBtn.className = "delete-btn";
+	delBtn.textContent = "Delete";
 
 	panel.appendChild(retryBtn);
 	panel.appendChild(copyBtn);
 	panel.appendChild(delBtn);
 
 	// attach handlers
-	retryBtn.addEventListener('click', (e) => {
+	retryBtn.addEventListener("click", (e) => {
 		e.stopPropagation();
 		_retryPending(pendingId);
 		_closeFailedPanel();
 	});
-	copyBtn.addEventListener('click', async (e) => {
+	copyBtn.addEventListener("click", async (e) => {
 		e.stopPropagation();
 		const entry = pendingMessages.get(pendingId);
 		if (entry && entry.text) {
 			try {
 				await navigator.clipboard.writeText(entry.text);
-				showToast('Copied');
+				showToast("Copied");
 			} catch (err) {
-				showToast('Copy failed');
+				showToast("Copy failed");
 			}
 		}
 		_closeFailedPanel();
 	});
-	delBtn.addEventListener('click', (e) => {
+	delBtn.addEventListener("click", (e) => {
 		e.stopPropagation();
 		const entry = pendingMessages.get(pendingId);
 		if (entry) {
 			// remove node and clear any timeout
-			try { if (entry.timeoutId) clearTimeout(entry.timeoutId); } catch (e) { /* ignore */ }
-			if (entry.node && entry.node.parentNode) entry.node.parentNode.removeChild(entry.node);
+			try {
+				if (entry.timeoutId) clearTimeout(entry.timeoutId);
+			} catch (e) {
+				/* ignore */
+			}
+			if (entry.node && entry.node.parentNode)
+				entry.node.parentNode.removeChild(entry.node);
 			pendingMessages.delete(pendingId);
 			// restore contact preview if we have prevContactState
 			if (entry.prevContactState) {
 				const contact = contacts.find((c) => c.id === entry.contactId);
 				if (contact) {
 					contact.lastMessage = entry.prevContactState.lastMessage;
-					contact.lastMessageTime = entry.prevContactState.lastMessageTime;
-					contact.lastMessageDate = entry.prevContactState.lastMessageDate;
-					contact.lastMessageSeen = entry.prevContactState.lastMessageSeen;
+					contact.lastMessageTime =
+						entry.prevContactState.lastMessageTime;
+					contact.lastMessageDate =
+						entry.prevContactState.lastMessageDate;
+					contact.lastMessageSeen =
+						entry.prevContactState.lastMessageSeen;
 					refreshCard(contact);
 					sortActiveChats();
 					sortContacts();
@@ -980,12 +1351,12 @@ function _openFailedPanel(msgEl, pendingId) {
 
 	// close when clicking elsewhere
 	setTimeout(() => {
-		document.addEventListener('click', _closeFailedPanel);
+		document.addEventListener("click", _closeFailedPanel);
 	}, 0);
 }
 
 function _toggleFailedPanel(msgEl, pendingId) {
-	const existing = msgEl.querySelector('.msg-failed-panel');
+	const existing = msgEl.querySelector(".msg-failed-panel");
 	if (existing) {
 		_closeFailedPanel();
 	} else {
@@ -997,22 +1368,40 @@ function _retryPending(pendingId) {
 	const entry = pendingMessages.get(pendingId);
 	if (!entry) return;
 	const contact = contacts.find((c) => c.id === entry.contactId);
-	if (entry.timeoutId) try { clearTimeout(entry.timeoutId); } catch (e) { /* ignore */ }
+	if (entry.timeoutId)
+		try {
+			clearTimeout(entry.timeoutId);
+		} catch (e) {
+			/* ignore */
+		}
 	// remove failed node from DOM
-	if (entry.node && entry.node.parentNode) entry.node.parentNode.removeChild(entry.node);
+	if (entry.node && entry.node.parentNode)
+		entry.node.parentNode.removeChild(entry.node);
 	pendingMessages.delete(pendingId);
-	if (contact) _sendOutgoingMessage(contact, entry.text, entry.replyTo, entry.prevContactState);
+	if (contact)
+		_sendOutgoingMessage(
+			contact,
+			entry.text,
+			entry.replyTo,
+			entry.prevContactState,
+		);
 }
 
 function _markPendingFailed(pendingId) {
 	const entry = pendingMessages.get(pendingId);
 	if (!entry) return;
 	// replace node with failed variant
-	const failedNode = createMessage({ user: true, text: entry.text, time: entry.time, failed: true });
+	const failedNode = createMessage({
+		user: true,
+		text: entry.text,
+		time: entry.time,
+		failed: true,
+	});
 	if (failedNode) {
 		failedNode.dataset.pendingId = pendingId;
 		failedNode.dataset.contactId = entry.contactId;
-		if (entry.node && entry.node.parentNode) entry.node.parentNode.replaceChild(failedNode, entry.node);
+		if (entry.node && entry.node.parentNode)
+			entry.node.parentNode.replaceChild(failedNode, entry.node);
 		entry.node = failedNode;
 		entry.timeoutId = null;
 		pendingMessages.set(pendingId, entry);
@@ -1022,7 +1411,11 @@ function _markPendingFailed(pendingId) {
 async function _confirmPending(pendingId, sent) {
 	const entry = pendingMessages.get(pendingId);
 	if (!entry) return;
-	try { if (entry.timeoutId) clearTimeout(entry.timeoutId); } catch (e) { /* ignore */ }
+	try {
+		if (entry.timeoutId) clearTimeout(entry.timeoutId);
+	} catch (e) {
+		/* ignore */
+	}
 	// normalize and push into messages array
 	const normalized = _normalizeOutgoing(sent);
 	if (!messages[entry.contactId]) messages[entry.contactId] = [];
@@ -1035,7 +1428,8 @@ async function _confirmPending(pendingId, sent) {
 		newNode.dataset.index = normalized.index;
 		newNode.dataset.messageId = normalized.id;
 		// find current node and replace
-		if (entry.node && entry.node.parentNode) entry.node.parentNode.replaceChild(newNode, entry.node);
+		if (entry.node && entry.node.parentNode)
+			entry.node.parentNode.replaceChild(newNode, entry.node);
 	}
 
 	// remove pending tracking
@@ -1054,20 +1448,40 @@ async function _confirmPending(pendingId, sent) {
 }
 
 // Create a pending message in the UI and send via socket. Does not add to messages[] until confirmed.
-function _sendOutgoingMessage(contact, text, replyTo = null, prevContactState = null) {
+function _sendOutgoingMessage(
+	contact,
+	text,
+	replyTo = null,
+	prevContactState = null,
+) {
 	if (!contact) return;
+
+	// Remove empty-state placeholder if present so the pending message replaces it
+	hideEmptyState(_dom.chatEl, _dom.emptyStateEl);
 	const now = new Date();
-	const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-	const dateStr = now.toISOString().slice(0,10);
+	const timeStr = now.toLocaleTimeString([], {
+		hour: "2-digit",
+		minute: "2-digit",
+		hour12: false,
+	});
+	const dateStr = now.toISOString().slice(0, 10);
 
 	// create pending DOM node
-	const pendingId = `p_${Date.now()}_${Math.random().toString(36).slice(2,9)}`;
-	const pendingNode = createMessage({ user: true, text, time: timeStr, pending: true });
+	const pendingId = `p_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+	const pendingNode = createMessage({
+		user: true,
+		text,
+		time: timeStr,
+		pending: true,
+	});
 	pendingNode.dataset.pendingId = pendingId;
 	pendingNode.dataset.contactId = contact.id;
 
 	// insert date separator if needed
-	const prev = (messages[contact.id] && messages[contact.id].length) ? messages[contact.id][messages[contact.id].length - 1] : null;
+	const prev =
+		messages[contact.id] && messages[contact.id].length
+			? messages[contact.id][messages[contact.id].length - 1]
+			: null;
 	if (!_dom.chatEl) return;
 	if (!prev || prev.date !== dateStr) {
 		_dom.chatEl.appendChild(createDateSeparator(dateStr));
@@ -1090,7 +1504,15 @@ function _sendOutgoingMessage(contact, text, replyTo = null, prevContactState = 
 	const timeoutId = setTimeout(() => {
 		_markPendingFailed(pendingId);
 	}, 8000);
-	pendingMessages.set(pendingId, { node: pendingNode, timeoutId, contactId: contact.id, text, replyTo, time: timeStr, prevContactState });
+	pendingMessages.set(pendingId, {
+		node: pendingNode,
+		timeoutId,
+		contactId: contact.id,
+		text,
+		replyTo,
+		time: timeStr,
+		prevContactState,
+	});
 
 	// send via socket (don't await here to allow timeout behavior)
 	(async () => {
@@ -1105,7 +1527,7 @@ function _sendOutgoingMessage(contact, text, replyTo = null, prevContactState = 
 			// confirm pending (if still present)
 			await _confirmPending(pendingId, sent);
 		} catch (e) {
-			console.error('Failed to send message', e);
+			console.error("Failed to send message", e);
 			// mark failed in UI
 			_markPendingFailed(pendingId);
 		}
@@ -1181,7 +1603,11 @@ export function handleMessagesSeen(
 	// If any messages were marked as seen, mark the contact's last message as seen
 	if (anyMarked && seenBy !== null && seenBy !== _currentUserId()) {
 		contact.lastMessageSeen = true;
-		if (!contact.isPinned && !contact.isSaved && contact.unreadCount === 0) {
+		if (
+			!contact.isPinned &&
+			!contact.isSaved &&
+			contact.unreadCount === 0
+		) {
 			moveToContacts(contact);
 			sortContacts();
 		}

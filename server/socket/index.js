@@ -238,6 +238,7 @@ export function initSocket(httpServer) {
 				forwardedFrom,
 				forwardedText,
 			} = data;
+			const isOneTime = data.isOneTime === true;
 
 			const convId = parseIntSafe(conversationId);
 			if (!convId) return callback?.({ error: "Invalid conversationId" });
@@ -292,6 +293,7 @@ export function initSocket(httpServer) {
 						conversationId: convId,
 						senderId: socket.userId,
 						text: null,
+						isOneTime,
 						ciphertext,
 						iv,
 						auth_tag: authTag,
@@ -374,6 +376,7 @@ export function initSocket(httpServer) {
 					isEdited: message.isEdited,
 					isPinned: message.isPinned,
 					isDeleted: message.isDeleted,
+					isOneTime: message.isOneTime,
 					replyToId: message.replyToId,
 					replyToName: message.replyToName,
 					replyToText: replyToTextPlain,
@@ -963,6 +966,34 @@ export function initSocket(httpServer) {
 						}
 					}
 				}
+
+				// One-time message cleanup on disconnect (ensure seen one-time messages
+				// are deleted even when the client did not explicitly leave the convo)
+				if (socket.joinedConversations && socket.joinedConversations.size > 0) {
+					for (const cid of socket.joinedConversations) {
+						(async () => {
+							try {
+								const seenOneTime = await prisma.message.findMany({
+									where: {
+										conversationId: cid,
+										isOneTime: true,
+										isSeen: true,
+										isDeleted: false,
+										senderId: { not: socket.userId },
+									},
+									select: { id: true },
+								});
+								if (seenOneTime.length > 0) {
+									const ids = seenOneTime.map((m) => m.id);
+									await prisma.message.updateMany({ where: { id: { in: ids } }, data: { isDeleted: true } });
+									io.to(`conversation:${cid}`).emit("message:onetime-deleted", { messageIds: ids });
+								}
+							} catch (e) {
+								/* ignore */
+							}
+						})();
+					}
+				}
 			}
 		});
 
@@ -1082,6 +1113,50 @@ export function initSocket(httpServer) {
 						if (set.size === 0) convoOnline.delete(convId);
 						else convoOnline.set(convId, set);
 					}
+				}
+
+				// One-time message cleanup: if this user has seen any one-time messages in this
+				// conversation that were sent by someone else, delete them now.
+				try {
+					const seenOneTimeMessages = await prisma.message.findMany({
+						where: {
+							conversationId: convId,
+							isOneTime: true,
+							isSeen: true,
+							isDeleted: false,
+							senderId: { not: socket.userId },
+						},
+						select: { id: true },
+					});
+
+					if (seenOneTimeMessages.length > 0) {
+						const ids = seenOneTimeMessages.map((m) => m.id);
+						await prisma.message.updateMany({
+							where: { id: { in: ids } },
+							data: { isDeleted: true },
+						});
+						// Notify all members of the conversation (sender needs to see it disappear too)
+						io.to(`conversation:${convId}`).emit("message:onetime-deleted", { messageIds: ids });
+
+						// Also deliver directly to sockets not joined to the room
+						try {
+							const allRecipients = await getRecipientsCached(convId);
+							const usersInRoom = convoOnline.get(convId) || new Set();
+							const allUserIds = Array.from(new Set(allRecipients.map((c) => c.ownerId)));
+							for (const uid of allUserIds) {
+								if (usersInRoom.has(uid)) continue;
+								const sidSet = userSockets.get(uid) || new Set();
+								for (const sid of sidSet) {
+									const s = io.sockets.sockets.get(sid);
+									if (s) s.emit("message:onetime-deleted", { messageIds: ids });
+								}
+							}
+						} catch (e) {
+							console.error("onetime direct delivery failed", e);
+						}
+					}
+				} catch (e) {
+					console.error("one-time message cleanup failed", e);
 				}
 			} catch (e) {
 				console.error("conversation:leave error", e);

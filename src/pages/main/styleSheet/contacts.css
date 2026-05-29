@@ -78,6 +78,18 @@ pointer-events: none;
 	border: 1px solid var(--contact-border-color);
 	box-shadow: var(--light-shadow);
 }
+/* Ensure any <img> avatars keep fixed dimensions and avoid layout shift */
+.contact-profile.initial-avatar,
+.contact-profile {
+    display: inline-block;
+    width: 70%;
+    height: auto;
+}
+.contact-profile[style], .contact-profile img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
 
 /* Initial-letter avatar fallback used when no profile picture is present. */
 .initial-avatar {

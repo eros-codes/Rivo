@@ -90,6 +90,7 @@ model Message {
   isEdited       Boolean      @default(false)
   isPinned       Boolean      @default(false)
   isDeleted      Boolean      @default(false)
+  isOneTime      Boolean      @default(false)
   replyToId      Int?
   replyToName    String?
   replyToText    String?

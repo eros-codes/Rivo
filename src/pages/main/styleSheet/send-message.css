@@ -30,11 +30,11 @@
 			135deg,
 			rgba(255, 255, 255, 0.08) 0%,
 			rgba(255, 255, 255, 0.04) 25%,
-			rgba(0, 0, 0, 0.10) 100%
+			rgba(0, 0, 0, 0.1) 100%
 		),
 		var(--header-glass-bg-color);
 
-	border: 1px solid rgba(255, 255, 255, 0.10);
+	border: 1px solid rgba(255, 255, 255, 0.1);
 	color: var(--text-secondary-color);
 
 	backdrop-filter: blur(14px) saturate(160%);
@@ -42,11 +42,14 @@
 
 	box-shadow:
 		0 8px 24px rgba(0, 0, 0, 0.22),
-		inset 1px 1px 0 rgba(255, 255, 255, 0.10),
+		inset 1px 1px 0 rgba(255, 255, 255, 0.1),
 		inset -1px -1px 0 rgba(0, 0, 0, 0.16);
 
 	outline: none;
-	transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+	transition:
+		border-color 0.2s ease,
+		box-shadow 0.2s ease,
+		transform 0.2s ease;
 }
 
 .message-input:hover,
@@ -59,10 +62,6 @@
 }
 .message-input::placeholder {
 	color: var(--white-hover);
-}
-.message-input::selection {
-	background-color: var(--background-color);
-	color: black;
 }
 .send-btn {
 	height: 1.75rem;
@@ -101,14 +100,15 @@
 	background: var(--text-main-color);
 	border-radius: 2rem 2rem 0 0;
 	padding: 0.4rem 1.5rem;
-	border: 1px solid rgba(255, 255, 255, 0.10);
-	background: linear-gradient(
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	background:
+		linear-gradient(
 			135deg,
 			rgba(255, 255, 255, 0.08) 0%,
 			rgba(255, 255, 255, 0.04) 25%,
-			rgba(0, 0, 0, 0.10) 100%
+			rgba(0, 0, 0, 0.1) 100%
 		),
-	var(--header-glass-bg-color);
+		var(--header-glass-bg-color);
 	color: var(--text-secondary-color);
 	backdrop-filter: blur(14px) saturate(160%);
 	-webkit-backdrop-filter: blur(14px) saturate(160%);
@@ -122,23 +122,43 @@
 	align-items: center;
 	gap: 0.5rem;
 	box-shadow:
-	0 6px 18px rgba(0, 0, 0, 0.18),
-	inset 1px 1px 0 rgba(255, 255, 255, 0.10),
-	inset -1px -1px 0 rgba(0, 0, 0, 0.16);
+		0 6px 18px rgba(0, 0, 0, 0.18),
+		inset 1px 1px 0 rgba(255, 255, 255, 0.1),
+		inset -1px -1px 0 rgba(0, 0, 0, 0.16);
 }
-.message-action-preview::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
+.onetime-trigger {
+	position: absolute;
+	bottom: calc(100% + 0.75rem);
+	right: 1rem;
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	z-index: 502;
+	animation: onetimeFadeIn 0.18s ease;
+}
 
-  background: linear-gradient(
-    145deg,
-    rgba(255,255,255,0.1),
-    rgba(255,255,255,0.04) 30%,
-    transparent 60%
-  );
+.onetime-trigger-label {
+    display: inline-flex;
+    border-radius: 1rem;
+    color: var(--text-secondary-color);
+    font-size: 0.9rem;
+    white-space: nowrap;
+    opacity: 0.9;
+}
+
+.message-action-preview::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	pointer-events: none;
+
+	background: linear-gradient(
+		145deg,
+		rgba(255, 255, 255, 0.1),
+		rgba(255, 255, 255, 0.04) 30%,
+		transparent 60%
+	);
 }
 .action-preview {
 	display: flex;
@@ -195,11 +215,11 @@
 			135deg,
 			rgba(255, 255, 255, 0.08) 0%,
 			rgba(255, 255, 255, 0.04) 25%,
-			rgba(0, 0, 0, 0.10) 100%
+			rgba(0, 0, 0, 0.1) 100%
 		),
 		var(--header-glass-bg-color);
 
-	border: 1px solid rgba(255, 255, 255, 0.10);
+	border: 1px solid rgba(255, 255, 255, 0.1);
 	color: var(--text-secondary-color);
 
 	backdrop-filter: blur(14px) saturate(160%);
@@ -207,11 +227,14 @@
 
 	box-shadow:
 		0 8px 24px rgba(0, 0, 0, 0.22),
-		inset 1px 1px 0 rgba(255, 255, 255, 0.10),
+		inset 1px 1px 0 rgba(255, 255, 255, 0.1),
 		inset -1px -1px 0 rgba(0, 0, 0, 0.16);
 
 	outline: none;
-	transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+	transition:
+		border-color 0.2s ease,
+		box-shadow 0.2s ease,
+		transform 0.2s ease;
 }
 .unblock-action-btn:hover {
 	border-color: rgba(255, 255, 255, 0.16);
@@ -223,7 +246,7 @@
 
 .emoji-btn {
 	position: absolute;
-    height: 1.75rem;
+	height: 1.75rem;
 	width: 1.75rem;
 	left: 1.25rem;
 	bottom: 0.6rem;
@@ -237,7 +260,7 @@
 }
 
 .emoji-btn:hover {
-    opacity: 1;
+	opacity: 1;
 }
 
 .emoji-btn svg {
@@ -245,25 +268,62 @@
 	height: 100%;
 }
 emoji-picker {
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: 0;
-    z-index: 1000;
-    width: 320px;
-    height: 380px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-    border-radius: 1rem;
-    --border-radius: 1rem;
+	position: absolute;
+	bottom: calc(100% + 8px);
+	left: 0;
+	z-index: 1000;
+	width: 320px;
+	height: 380px;
+	box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+	border-radius: 1rem;
+	--border-radius: 1rem;
 	display: none;
 	background-color: var(--header-glass-bg-color);
 	backdrop-filter: blur(7px);
 }
 
 @media (max-width: 700px) {
-    emoji-picker {
-        width: 280px;
-        height: 320px;
-        left: 50%;
-        transform: translateX(-50%);
-    }
+	emoji-picker {
+		width: 280px;
+		height: 320px;
+		left: 50%;
+		transform: translateX(-50%);
+	}
+}
+
+/* ── One-time trigger button ───────────────────────────────────── */
+.onetime-trigger-btn {
+	width: 2.5rem;
+	height: 2.5rem;
+	border-radius: 50%;
+	border: 1.5px solid var(--glass-border);
+	background: var(--header-glass-bg-color);
+	backdrop-filter: blur(12px);
+	-webkit-backdrop-filter: blur(12px);
+	color: var(--text-secondary-color);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	box-shadow: var(--shadow);
+	transition:
+		background 0.2s,
+		border-color 0.2s,
+		transform 0.15s ease;
+}
+.onetime-trigger-btn:hover {
+	background: var(--header-color);
+	border-color: var(--active-chat-bg-color);
+	transform: scale(1.08);
+}
+
+@keyframes onetimeFadeIn {
+	from {
+		opacity: 0;
+		transform: translateY(6px) scale(0.9);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
 }

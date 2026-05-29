@@ -6,6 +6,8 @@ import {
 	updatePinnedMessage,
 	basePadding,
 	nearBottom,
+	lineHeight,
+	maxLines,
 } from "./chat.js";
 import {
 	refreshCard,
@@ -336,6 +338,32 @@ export function deleteMessage(msg, index) {
 				if (remaining.length === 0) {
 					showEmptyState(_dom.chatEl, _dom.emptyStateEl);
 				}
+
+				// Recompute chat padding to avoid leftover bottom gap after DOM changes
+				try {
+					const inputEl = _dom.messageInput;
+					if (inputEl && _dom.chatEl) {
+						let lines = Math.floor(inputEl.scrollHeight / lineHeight);
+						if (lines < 1) lines = 1;
+						if (lines > maxLines) lines = maxLines;
+						if (lines < maxLines) {
+							_dom.chatEl.style.paddingBottom =
+								basePadding +
+								2 * (lines - 1) * 0.75 +
+								state.actionPreviewHeight +
+								"rem";
+						} else {
+							_dom.chatEl.style.paddingBottom =
+								basePadding +
+								2 * ((maxLines - 2) * 0.75 + 0.2) +
+								state.actionPreviewHeight +
+								"rem";
+						}
+						if (nearBottom(_dom.chatEl)) scrollChatToBottomAfterPadding();
+					} else if (_dom.chatEl) {
+						_dom.chatEl.style.paddingBottom = basePadding + state.actionPreviewHeight + "rem";
+					}
+				} catch (e) { /* ignore */ }
 			} catch (e) {
 				// server delete failed; restore message opacity and notify
 				console.error("deleteMessage failed", e);

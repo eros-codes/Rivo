@@ -23,10 +23,14 @@ import {
 	closeChat,
 	injectMessages,
 	sendMessage,
+	sendOneTimeMessage,
 	resetInput,
 	scrollChatToBottom,
 	scrollChatToBottomAfterPadding,
 	nearBottom,
+	nearTop,
+	canLoadOlder,
+	clearOpenSuppression,
 	loadOlderMessages,
 	updatePinCount,
 	updatePinnedMessage,
@@ -36,6 +40,7 @@ import {
 	maxHeight,
 	receiveMessage,
 	handleMessagesSeen,
+	handleOnetimeDeleted,
 } from "./js/chat.js";
 import {
 	initChatLogic,
@@ -90,6 +95,7 @@ import {
 	emitMessageSeen,
 	getSocket,
 	emitReaction,
+ 	setOnetimeDeletedHandler,
 } from "./js/socket.js";
 import { applyReactionsToMessage } from "../../components/messages/messages.js";
 import { findMessageById } from "./js/state.js";
@@ -229,7 +235,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 				chatName.textContent = friend.nickname || friend.name;
 				closeSettings();
 				openChat(true);
-				scrollChatToBottom();
 
 				if (friend.isBlocked) {
 					messageContainer.style.display = "none";
@@ -524,9 +529,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 		try {
 			const res = await deleteAccount(password);
-			if (res?.success) {
-				window.location.href = "/src/pages/auth/auth.html";
-			} else {
+				if (res?.success) {
+					window.location.href = "/auth/auth.html";
+				} else {
 				if (deleteAccountError) deleteAccountError.textContent = res?.error || "Incorrect password.";
 				if (deleteAccountConfirm) deleteAccountConfirm.disabled = false;
 			}
@@ -559,6 +564,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 	// ─── other variables ─────────────────────────────────────────────────────
 	let _typingTimeout = null;
 	let _suppressNextClick = false;
+	// Local overlay flag for one-time long-press UI (do not store in shared state)
+	let oneTimeOverlayActive = false;
 	// client-side throttle for typing emits (ms)
 	let _lastTypingEmit = 0;
 	const TYPING_CLIENT_THROTTLE_MS = 800;
@@ -736,7 +743,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 			} catch (e) { /* ignore */ }
 			chatName.textContent = contact.nickname || contact.name;
 			openChat(true);
-			scrollChatToBottom();
 
 			if (msgIndex === null) return;
 
@@ -1187,6 +1193,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 					}
 				}
 		);
+		// Wire one-time-deleted events from socket to chat handler
+		try { setOnetimeDeletedHandler(handleOnetimeDeleted); } catch (e) { /* ignore */ }
 	// Rejoin active conversation after socket reconnect and emit leave on unload
 	try {
 		const sock = getSocket();
@@ -1618,7 +1626,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
-			scrollChatToBottom();
 
 			if (friend.isBlocked) {
 				messageContainer.style.display = "none";
@@ -1725,7 +1732,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 				const _ub = unblockActionBtn[0];
 				if (_ub) _ub.style.display = "none";
 			}
-			scrollChatToBottom();
+            
 		});
 	}
 
@@ -1809,11 +1816,223 @@ document.addEventListener("DOMContentLoaded", async function () {
 			savedSelectionEnd = messageInput.selectionEnd;
 		});
 
-		sendMessageBtn.addEventListener("click", sendMessage);
+		// Capture original send button icon so we can swap it temporarily
+		const originalSendBtnInner = sendMessageBtn ? sendMessageBtn.innerHTML : null;
+		const oneTimeSendIcon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.2" stroke-dasharray="47 10" stroke-linecap="round" stroke-dashoffset="-5"/><text x="12" y="16.5" text-anchor="middle" font-size="9" font-weight="700" fill="currentColor">1</text></svg>`;
+
+		// Timestamp until which the immediate release click after activating the
+		// long-press overlay should be suppressed. Shared between the long-press
+		// handler and the general send action so we can allow a subsequent click
+		// to send normally once this window passes.
+		let oneTimeIgnoreClickUntil = 0;
+		let suppressNextSendClick = false;
+
+		function performSendActionFromUI(e) {
+			if (e && typeof e.preventDefault === 'function') {
+				e.preventDefault();
+			}
+			// If we recently activated the one-time overlay, swallow the immediate
+			// release click so the user doesn't accidentally send the message.
+			if (suppressNextSendClick) {
+				suppressNextSendClick = false;
+				return;
+			}
+			// If long-press overlay is active, suppress the immediate release click
+			if (oneTimeOverlayActive) {
+				// If still inside the short suppression window, ignore click so the
+				// floating action can be tapped. Otherwise, dismiss the overlay and
+				// proceed to a normal send.
+				if (Date.now() < oneTimeIgnoreClickUntil) {
+					return;
+				} else {
+					try {
+						document.dispatchEvent(new Event('chat:closed'));
+					} catch (e) { /* ignore */ }
+					// continue to normal send
+				}
+			}
+			// If user selected one-time mode, send as one-time and reset UI
+			if (state.sendMode === 'one-time') {
+				try {
+					sendOneTimeMessage();
+				} catch (err) {
+					/* ignore */
+				}
+				// reset to default mode after sending
+				state.sendMode = 'normal';
+				if (sendMessageBtn && originalSendBtnInner)
+					sendMessageBtn.innerHTML = originalSendBtnInner;
+				return;
+			}
+			// Normal send
+			try { sendMessage(); } catch (err) { /* ignore */ }
+		}
+
+		sendMessageBtn.addEventListener("click", (e) => performSendActionFromUI(e));
+		// One-time message: long-press on send button
+		(function initOneTimePress() {
+			if (!sendMessageBtn || !messageContainer) return;
+
+			let pressTimer = null;
+			let onetimeWrap = null;
+			let onetimeBtn = null;
+			let onetimeLabel = null;
+			let triggered = false;
+
+			function showOneTime() {
+				// Guard against creating multiple overlays if one already exists.
+				if (onetimeWrap || messageContainer.querySelector('.onetime-trigger')) return;
+				triggered = true;
+				// Mark that the one-time overlay is active so we can suppress the
+				// immediate release click and allow the user to tap the floating btn.
+				oneTimeOverlayActive = true;
+				oneTimeIgnoreClickUntil = Date.now() + 300;
+				// Also explicitly suppress the immediate next send click (the
+				// pointerup/click that follows the long-press) so releasing doesn't
+				// accidentally send the message.
+				suppressNextSendClick = true;
+				// Show overlay (reuse existing chat overlay)
+				if (chatOverlay) {
+					chatOverlay.style.display = "block";
+					chatOverlay.style.opacity = "0.6";
+					chatOverlay.style.zIndex = "498";
+				}
+				// Bring send area above overlay
+				messageContainer.style.zIndex = "501";
+
+				// Create wrapper and floating button with label
+				onetimeWrap = document.createElement("div");
+				onetimeWrap.className = "onetime-trigger";
+
+				onetimeLabel = document.createElement("span");
+				onetimeLabel.className = "onetime-trigger-label";
+				// If one-time mode is already selected, show a hint that this
+				// action will send normally; otherwise show the one-time hint.
+				onetimeLabel.textContent = state.sendMode === 'one-time' ? "Send normally" : "One-time message";
+
+				onetimeBtn = document.createElement("button");
+				onetimeBtn.type = "button";
+				onetimeBtn.className = "onetime-trigger-btn";
+				onetimeBtn.setAttribute("aria-label", state.sendMode === 'one-time' ? "Send normally" : "Send as one-time message");
+				// Show floating button content. If we've already selected one-time mode,
+				// show the normal send icon so long-press toggles the mode.
+				if (state.sendMode === 'one-time' && originalSendBtnInner) {
+					onetimeBtn.innerHTML = originalSendBtnInner;
+				} else {
+					onetimeBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+							<circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.2"
+									stroke-dasharray="47 10" stroke-linecap="round" stroke-dashoffset="-5"/>
+							<text x="12" y="16.5" text-anchor="middle" font-size="9.5"
+									font-weight="700" fill="currentColor">1</text>
+							</svg>`;
+				}
+
+				onetimeWrap.appendChild(onetimeLabel);
+				onetimeWrap.appendChild(onetimeBtn);
+				messageContainer.appendChild(onetimeWrap);
+
+				onetimeBtn.addEventListener("click", (e) => {
+					e.stopPropagation();
+					// Toggle send mode: if not one-time, enable it; otherwise go back to normal.
+					if (state.sendMode !== 'one-time') {
+						state.sendMode = 'one-time';
+						if (sendMessageBtn) sendMessageBtn.innerHTML = oneTimeSendIcon;
+					} else {
+						state.sendMode = 'normal';
+						if (sendMessageBtn && originalSendBtnInner)
+							sendMessageBtn.innerHTML = originalSendBtnInner;
+					}
+					oneTimeOverlayActive = false;
+					hideOneTime();
+				});
+			}
+
+			function hideOneTime() {
+				triggered = false;
+				oneTimeOverlayActive = false;
+				clearTimeout(pressTimer);
+				pressTimer = null;
+
+				if (chatOverlay) {
+					chatOverlay.style.display = "none";
+					chatOverlay.style.opacity = "0";
+					chatOverlay.style.zIndex = "";
+				}
+				messageContainer.style.zIndex = "";
+				if (onetimeWrap && onetimeWrap.parentNode) {
+					onetimeWrap.parentNode.removeChild(onetimeWrap);
+				}
+				onetimeWrap = null;
+				onetimeBtn = null;
+				onetimeLabel = null;
+				oneTimeIgnoreClickUntil = 0;
+				suppressNextSendClick = false;
+
+				// If the chat has been closed, also clear any lingering send-mode selection
+					try {
+						if (typeof state !== 'undefined' && (state.contactUserId === null || typeof state.contactUserId === 'undefined')) {
+							state.sendMode = 'normal';
+							oneTimeOverlayActive = false;
+							if (sendMessageBtn && originalSendBtnInner) sendMessageBtn.innerHTML = originalSendBtnInner;
+						}
+					} catch (e) { /* ignore */ }
+			}
+
+			// Ensure overlay and one-time UI are hidden when chat is closed elsewhere
+		document.addEventListener('chat:closed', () => {
+			try {
+				if (triggered) hideOneTime();
+				// ensure overlay state cleared and send icon reset (do NOT reset
+				// canonical `sendMode` here — actual chat close handler in chat.js
+				// is responsible for resetting the send mode)
+				oneTimeOverlayActive = false;
+				if (sendMessageBtn && originalSendBtnInner) sendMessageBtn.innerHTML = originalSendBtnInner;
+			} catch (e) { /* ignore */ }
+		});
+
+			// Pointer events (works for both mouse and touch)
+			sendMessageBtn.addEventListener("pointerdown", (e) => {
+				if (state.isMenuOpen) return;
+				// Do not start another long-press while overlay is active
+				if (oneTimeOverlayActive) return;
+				pressTimer = setTimeout(() => {
+					showOneTime();
+				}, 500);
+			});
+
+			sendMessageBtn.addEventListener("pointerup", () => {
+				if (!triggered) clearTimeout(pressTimer);
+			});
+
+			sendMessageBtn.addEventListener("pointerleave", () => {
+				if (!triggered) clearTimeout(pressTimer);
+			});
+
+			// Dismiss when clicking overlay or anywhere outside. Ignore the
+			// immediate click that often follows the long-press release so the
+			// floating action remains available for the user to tap.
+			document.addEventListener("click", (e) => {
+				if (!triggered) return;
+				// If user clicked the one-time wrapper itself, let its handler run.
+				if (onetimeWrap && onetimeWrap.contains(e.target)) return;
+				// Ignore the synthetic/initial release click that may occur
+				// right after the long-press activation.
+				if (Date.now() < oneTimeIgnoreClickUntil) return;
+				if (sendMessageBtn.contains(e.target)) return;
+				hideOneTime();
+			});
+
+			// Also dismiss if chat overlay is tapped
+			if (chatOverlay) {
+				chatOverlay.addEventListener("click", () => {
+					if (triggered) hideOneTime();
+				});
+			}
+		})();
 		messageInput.addEventListener("keydown", (e) => {
 			if (e.key === "Enter" && !e.shiftKey && window.innerWidth > 700) {
 				e.preventDefault();
-				sendMessage();
+				performSendActionFromUI(e);
 			}
 		});
 	}
@@ -2009,11 +2228,58 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}
 		});
 
-		chatEl.addEventListener("scroll", () => {
+		// Track recent user interactions and the scroll position at the
+		// start of interaction. This lets us require a deliberate user
+		// scroll-up delta before auto-loading older messages.
+		let _lastUserInteractionAt = 0;
+		let _lastUserScrollTop = null;
+		const _markUserInteraction = () => {
+			_lastUserInteractionAt = Date.now();
+			try { state.suppressAutoLoadUntil = 0; } catch (e) {}
+			try { _lastUserScrollTop = chatEl.scrollTop; } catch (e) { _lastUserScrollTop = null; }
+			try { clearOpenSuppression(state.contactUserId); } catch (e) {}
+		};
+		chatEl.addEventListener('wheel', _markUserInteraction, { passive: true });
+		chatEl.addEventListener('touchstart', _markUserInteraction, { passive: true });
+		chatEl.addEventListener('pointerdown', _markUserInteraction, { passive: true });
+		window.addEventListener('keydown', (ev) => {
+			try {
+				const keys = ['ArrowUp','PageUp','Home','ArrowDown','PageDown','End'];
+				if (keys.includes(ev.key)) _markUserInteraction();
+			} catch (e) {}
+		}, true);
+
+		chatEl.addEventListener("scroll", (e) => {
+			// Ignore programmatic scrolls and non-user-initiated events
 			if (state.isProgrammaticScroll) return;
-			// load older messages when user scrolls to top area
-			if (chatEl.scrollTop <= 60) {
+			if (e && e.isTrusted === false) return;
+			// load older messages when user scrolls to top area, but allow
+			// temporary suppression during initial rendering. Use `nearTop`
+			// to handle reversed layouts reliably.
+			const recentUser = Date.now() - _lastUserInteractionAt < 1000;
+			const suppressAuto = (state.suppressAutoLoadUntil || 0) > Date.now();
+			const userScrolledUp =
+				typeof _lastUserScrollTop === 'number' &&
+				_lastUserScrollTop - chatEl.scrollTop > 80; // px threshold
+
+			const scrollableHeight = chatEl.scrollHeight - chatEl.clientHeight;
+			if (
+				chatEl.scrollTop < Math.min(200, scrollableHeight * 0.15) &&
+				!state.suppressScrollLoad
+			) {
 				loadOlderMessages();
+			} else if (nearTop(chatEl, 60) && state.initializingChat) {
+				
+			} else if (
+				nearTop(chatEl, 60) &&
+				suppressAuto &&
+				!userScrolledUp &&
+				!recentUser
+			) {
+				
+			} else if (nearTop(chatEl, 60) && !userScrolledUp && !recentUser) {
+				// Suppress layout-driven/top proximity triggers unless user initiated.
+				
 			}
 			const distanceFromBottom =
 				chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight;
@@ -2180,7 +2446,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 			msgActionmsg.textContent = msgs.text;
 			messageInput.style.borderRadius = "0 0 2rem 2rem";
 			sendMessageBtn.style.display = "block";
-			scrollChatToBottom();
+			// Wait for padding/layout changes (msgAction) then scroll.
+			scrollChatToBottomAfterPadding();
 
 			state.isForwarding = true;
 			state.forwardingMsg = buildForwardedMsg(msgs, friend.id);
@@ -2565,7 +2832,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 							chatName.textContent =
 								friend.nickname || friend.name;
 							openChat(true);
-							scrollChatToBottom();
 
 							if (friend.isBlocked) {
 								messageContainer.style.display = "none";

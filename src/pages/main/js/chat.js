@@ -39,7 +39,60 @@ export const basePadding = 4;
 export const lineHeight = 22.4;
 export const maxLines = 7;
 export const maxHeight = lineHeight * maxLines;
-export const DEFAULT_PAGE_LIMIT = 50;
+// Read client pagination config from environment or global injected config.
+function _getClientEnvNumber(name, fallback) {
+	try {
+		if (typeof process !== "undefined" && process.env && process.env[name]) {
+			const v = Number(process.env[name]);
+			if (!Number.isNaN(v)) return v;
+		}
+	} catch (e) {}
+
+	try {
+		if (typeof window !== "undefined") {
+			// Attempt multiple injected config sources
+			if (window.__RIVO_CLIENT_CONFIG && window.__RIVO_CLIENT_CONFIG[name] != null) {
+				const v = Number(window.__RIVO_CLIENT_CONFIG[name]);
+				if (!Number.isNaN(v)) return v;
+			}
+			if (window.__env && window.__env[name] != null) {
+				const v = Number(window.__env[name]);
+				if (!Number.isNaN(v)) return v;
+			}
+			if (window.RIVO_CONFIG && window.RIVO_CONFIG[name] != null) {
+				const v = Number(window.RIVO_CONFIG[name]);
+				if (!Number.isNaN(v)) return v;
+			}
+		}
+	} catch (e) {}
+
+	return fallback;
+}
+	// debug log removed
+function _getClientEnvBool(name, fallback) {
+	try {
+		if (typeof process !== 'undefined' && process.env && typeof process.env[name] !== 'undefined') {
+			const raw = String(process.env[name]).toLowerCase();
+			return raw === '1' || raw === 'true';
+		}
+	} catch (e) {}
+	try {
+		if (typeof window !== 'undefined') {
+			const src = (window.__RIVO_CLIENT_CONFIG && window.__RIVO_CLIENT_CONFIG[name]) || (window.__env && window.__env[name]) || (window.RIVO_CONFIG && window.RIVO_CONFIG[name]);
+			if (typeof src !== 'undefined' && src !== null) {
+				const raw = String(src).toLowerCase();
+				return raw === '1' || raw === 'true';
+			}
+		}
+	} catch (e) {}
+	return !!fallback;
+}
+
+export const DEFAULT_PAGE_LIMIT = _getClientEnvNumber('DEFAULT_PAGE_LIMIT', 50);
+// Client-side hard limit to avoid requesting huge pages
+export const MAX_CLIENT_PAGE_LIMIT = _getClientEnvNumber('MAX_CLIENT_PAGE_LIMIT', 100);
+// Optionally prefetch previous page on open (default: false)
+const CLIENT_PREFETCH_ON_OPEN = _getClientEnvBool('CLIENT_PREFETCH_ON_OPEN', false);
 // After server reports messages marked as seen, keep the unread separator
 // visible for at least this many milliseconds before applying the seen state
 const MIN_SEPARATOR_VISIBLE_AFTER_MARK_MS = 600;
@@ -50,6 +103,66 @@ export function nearBottom(chatEl, offset = 70) {
 	return (
 		chatEl.scrollTop + chatEl.clientHeight >= chatEl.scrollHeight - offset
 	);
+}
+
+// Returns true when the chat view is near the start (oldest messages)
+// within `offset` pixels. This handles reversed layouts by comparing
+// the first message element's proximity to the container edges.
+export function nearTop(chatEl, offset = 60) {
+	if (!chatEl) return false;
+	try {
+		const firstEl = chatEl.querySelector('.chat-message');
+		if (!firstEl) return false;
+		const firstRect = firstEl.getBoundingClientRect();
+		const chatRect = chatEl.getBoundingClientRect();
+		const distTop = Math.abs(firstRect.top - chatRect.top);
+		const distBottom = Math.abs(chatRect.bottom - firstRect.bottom);
+		// Determine which edge the first element is anchored to and
+		// compare distance to that edge.
+		if (distTop <= distBottom) {
+			return (firstRect.top - chatRect.top) <= offset;
+		}
+		return (chatRect.bottom - firstRect.bottom) <= offset;
+	} catch (e) {
+		return false;
+	}
+}
+
+function _chatPaddingBottom() {
+	try {
+		if (!_dom || !_dom.chatEl) return 0;
+		// Prefer the actual input element height if available so the last
+		// message aligns above the input area (covers overlay/input cases).
+		const inputEl =
+			_dom.messageInput ||
+			document.querySelector("textarea, input[type=\"text\"], .message-input");
+		if (inputEl) {
+			try {
+				const r = inputEl.getBoundingClientRect();
+				if (r && r.height) return r.height;
+			} catch (e) {
+				// fall back to computed style
+			}
+		}
+		const el = _dom.chatEl;
+		const style = getComputedStyle(el);
+		return parseFloat(style.paddingBottom) || 0;
+	} catch (e) {
+		return 0;
+	}
+}
+
+		// debug log removed
+export function canLoadOlder() {
+	try {
+		const uid = state.contactUserId;
+		if (!uid) return false;
+		const meta = messagePaging[uid];
+		if (!meta) return true; // allow if no metadata yet
+		return !!meta.hasMore && !meta.loading;
+	} catch (e) {
+		return false;
+	}
 }
 
 // Cap messages kept per conversation to avoid unbounded client memory growth
@@ -65,8 +178,10 @@ const messagePaging = {};
 const pendingMessages = new Map();
 // Timeout handle used to debounce/delay marking messages as seen when opening a chat
 let _seenTimeoutId = null;
-// Timeout handle used to delay applying server-marked seen state so separator is visible
+	// debug log removed
 let _seenApplyTimeoutId = null;
+
+let _suppressInjectScroll = false;
 
 export function initChat(dom) {
 	_dom = dom;
@@ -93,48 +208,60 @@ export function initChat(dom) {
 // ─── Scroll ───────────────────────────────────────────────────────────────────
 export function scrollChatToBottom() {
 	if (!_dom.chatEl) return;
-	// Defer to the next animation frame so recent layout changes
-	// (like paddingBottom) are applied before we compute scrollHeight.
+	try {
+		state.isProgrammaticScroll = true;
+	} catch (e) {}
 	requestAnimationFrame(() => {
-		_dom.chatEl.scrollTop = _dom.chatEl.scrollHeight;
+		if (_dom.chatEl) _dom.chatEl.scrollTop = _dom.chatEl.scrollHeight;
+		requestAnimationFrame(() => {
+			try {
+				state.isProgrammaticScroll = false;
+			} catch (e) {}
+		});
 	});
 }
 
-// Wait for chat padding transition to finish (or timeout) then scroll bottom.
 export function scrollChatToBottomAfterPadding(timeout = 400) {
 	if (!_dom.chatEl) return;
 	const el = _dom.chatEl;
 	let called = false;
 
+	try {
+		state.isProgrammaticScroll = true;
+	} catch (e) {}
+
 	function doScroll() {
 		if (called) return;
 		called = true;
-		// final RAF to ensure layout stable
 		requestAnimationFrame(() => {
 			el.scrollTop = el.scrollHeight;
+			requestAnimationFrame(() => {
+				// یه بار دیگه بعد از RAF برای layout shifts ناشی از fonts/images
+				// debug log removed
+				try {
+					state.isProgrammaticScroll = false;
+				} catch (e) {}
+			});
 		});
 	}
 
-	function onTransition(e) {
-		if (!e || !e.propertyName) return;
-		if (e.propertyName.includes("padding")) {
-			el.removeEventListener("transitionend", onTransition);
-			doScroll();
-		}
-	}
-
-	el.addEventListener("transitionend", onTransition);
-	// fallback in case transitionend doesn't fire
-	setTimeout(() => {
-		el.removeEventListener("transitionend", onTransition);
+	// debug log removed
+	el.addEventListener("transitionend", function onT(e) {
+		// debug log removed
+		el.removeEventListener("transitionend", onT);
 		doScroll();
-	}, timeout);
+	});
+	setTimeout(() => doScroll(), timeout);
 }
 
 // ─── Open / Close ─────────────────────────────────────────────────────────────
 export async function openChat(fromClick = false) {
 	const isAlreadyOpen = _dom.chatPart.style.display === "flex";
 	const isMobile = window.matchMedia("(max-width: 768px)").matches;
+	// Mark that we're initializing so pagination/scroll-based loads don't fire
+	try {
+		state.initializingChat = true;
+	} catch (e) {}
 
 	_dom.chatPart.style.display = "flex";
 
@@ -162,6 +289,7 @@ export async function openChat(fromClick = false) {
 
 	// load messages از backend
 	const contact = contacts.find((c) => c.id === state.contactUserId);
+	// contact lookup (no debug log)
 	if (contact?.conversationId) {
 		// show message skeletons while fetching
 		if (_dom.chatEl) {
@@ -170,10 +298,12 @@ export async function openChat(fromClick = false) {
 				.forEach((n) => n.remove());
 			_dom.chatEl.appendChild(makeMessageSkeleton(8));
 			_dom.chatEl.setAttribute("aria-busy", "true");
+			// debug log removed
 		}
 
 		try {
 			const PAGE_LIMIT = DEFAULT_PAGE_LIMIT;
+			// debug log removed
 			const serverMessages = await getMessagesPage(
 				contact.conversationId,
 				{ limit: PAGE_LIMIT },
@@ -185,6 +315,7 @@ export async function openChat(fromClick = false) {
 					.forEach((n) => n.remove());
 				_dom.chatEl.removeAttribute("aria-busy");
 			}
+			// debug log removed
 			// normalize for frontend and keep createdAt for paging
 			messages[state.contactUserId] = serverMessages.map((m) => ({
 				id: m.id,
@@ -210,18 +341,27 @@ export async function openChat(fromClick = false) {
 				forwardedFrom: m.forwardedFrom || null,
 				forwardedText: m.forwardedText || null,
 				reactions: m.reactions || [],
+				isOneTime: m.isOneTime || false,
 			}));
+			// debug log removed
 
-			// paging metadata
+			// paging metadata (suppress auto-load immediately after open)
 			messagePaging[state.contactUserId] = {
 				hasMore:
 					Array.isArray(serverMessages) &&
 					serverMessages.length === PAGE_LIMIT,
 				loading: false,
 				pageSize: PAGE_LIMIT,
+				// optional prefetch buffer
+				prefetched: null,
+				prefetching: false,
+				// prevent `loadOlderMessages` from firing immediately after open
+				openSuppressedUntil: Date.now() + 3000,
 			};
+			// debug log removed
 		} catch (err) {
 			console.error("getMessagesPage failed", err);
+			// debug log removed
 			messages[state.contactUserId] = [];
 			messagePaging[state.contactUserId] = {
 				hasMore: false,
@@ -229,6 +369,16 @@ export async function openChat(fromClick = false) {
 			};
 		}
 	}
+
+	// Hide chat while we render initial batch to avoid flicker during
+	// positioning. We'll reveal after we've pinned to bottom.
+	try {
+		if (_dom && _dom.chatEl) {
+			_dom.chatEl.style.visibility = "hidden";
+			// debug log removed
+		}
+	} catch (e) {}
+
 	// ثبت موقعیت separator قبل از اینکه isSeen تغییر کنه
 	if (_unreadSeparatorContactId !== state.contactUserId) {
 		const _loadedMsgs = messages[state.contactUserId] || [];
@@ -253,7 +403,23 @@ export async function openChat(fromClick = false) {
 			}
 		}
 	}
+	_suppressInjectScroll = true;
+	// Prevent the global scroll handler from triggering pagination while
+	// we are doing the initial render and positioning.
+	try {
+		state.suppressScrollLoad = true;
+	} catch (e) {}
+	// debug log removed
 	injectMessages(state.contactUserId);
+	_suppressInjectScroll = false;
+	// debug log removed
+
+	// Safety: clear suppression in case positioning callback never fires
+	setTimeout(() => {
+		try {
+			state.suppressScrollLoad = false;
+		} catch (e) {}
+	}, 1000);
 	if (contact?.conversationId && fromClick) {
 		// Delay marking messages as seen briefly so the unread separator
 		// is visible to the user when the chat opens. Debounce multiple
@@ -268,83 +434,45 @@ export async function openChat(fromClick = false) {
 				.then((marked) => {
 					try {
 						const arr = messages[state.contactUserId] || [];
-						// Clear any previous apply timeout and schedule applying the server-mark
-						try {
-							if (_seenApplyTimeoutId)
-								clearTimeout(_seenApplyTimeoutId);
-						} catch (e) {
-							/* ignore */
+
+						// فقط isSeen رو توی memory آپدیت کن
+						if (Array.isArray(marked) && marked.length > 0) {
+							const idSet = new Set(marked.map(String));
+							arr.forEach((m) => {
+								if (!m.user && idSet.has(String(m.id)))
+									m.isSeen = true;
+							});
+						} else {
+							arr.forEach((m) => {
+								if (!m.user) m.isSeen = true;
+							});
 						}
-						_seenApplyTimeoutId = setTimeout(() => {
-							try {
-								if (
-									Array.isArray(marked) &&
-									marked.length > 0
-								) {
-									const idSet = new Set(
-										marked.map((id) => String(id)),
-									);
-									let changed = false;
-									arr.forEach((m) => {
-										if (
-											!m.user &&
-											idSet.has(String(m.id)) &&
-											m.isSeen !== true
-										) {
-											m.isSeen = true;
-											changed = true;
-										}
-									});
-									if (changed)
-										injectMessages(state.contactUserId);
-								} else {
-									// Fallback: mark all incoming messages as seen
-									let changed = false;
-									arr.forEach((m) => {
-										if (!m.user && m.isSeen !== true) {
-											m.isSeen = true;
-											changed = true;
-										}
-									});
-									if (changed)
-										injectMessages(state.contactUserId);
-								}
-								// Reset unread count for this contact in the UI since we've marked messages seen
-								try {
-									const c = contacts.find(
-										(c) => c.id === state.contactUserId,
-									);
-									if (c) {
-										c.unreadCount = 0;
-										refreshCard(c);
-										updateTotalUnreadCount();
-										injectMessages(state.contactUserId);
-									}
-								} catch (e) {
-									/* ignore */
-								}
-							} catch (err) {
-								console.debug(
-									"[openChat] applyMarkedSeen handler error",
-									err,
-								);
-							}
-							try {
-								_seenApplyTimeoutId = null;
-							} catch (e) {
-								/* ignore */
-							}
-						}, MIN_SEPARATOR_VISIBLE_AFTER_MARK_MS);
-					} catch (err) {
-						console.debug(
-							"[openChat] emitMessageSeen handler error",
-							err,
+
+						// فقط separator رو از DOM حذف کن — بدون re-render
+						if (_dom.chatEl) {
+							_dom.chatEl
+								.querySelector(".unread-separator")
+								?.remove();
+						}
+
+						// unread count رو reset کن
+						const c = contacts.find(
+							(c) => c.id === state.contactUserId,
 						);
+						if (c) {
+							c.unreadCount = 0;
+							refreshCard(c);
+							updateTotalUnreadCount();
+						}
+
+						// separator tracking reset
+						_unreadSeparatorContactId = null;
+						_unreadSeparatorIndex = -1;
+					} catch (e) {
+						/* ignore */
 					}
 				})
-				.catch((err) => {
-					console.debug("[openChat] emitMessageSeen failed", err);
-				})
+				.catch(() => {})
 				.finally(() => {
 					try {
 						_seenTimeoutId = null;
@@ -354,12 +482,50 @@ export async function openChat(fromClick = false) {
 				});
 		}, 700);
 	}
-	if (contact?.isOnline) {
-		_dom.chatProfilePicture.classList.add("online");
-	} else {
-		_dom.chatProfilePicture.classList.remove("online");
+	if (_dom && _dom.chatProfilePicture) {
+		if (contact?.isOnline) {
+			_dom.chatProfilePicture.classList.add("online");
+		} else {
+			_dom.chatProfilePicture.classList.remove("online");
+		}
 	}
-	scrollChatToBottom();
+
+	// Pin to bottom (no smooth scroll). Reveal chat after padding settles.
+	// Mark that we're doing a programmatic scroll so scroll handlers ignore it.
+	try {
+		state.isProgrammaticScroll = true;
+	} catch (e) {}
+	// Hide → render → scroll → reveal (instant, no corrective loop)
+	try {
+		if (_dom.chatEl) _dom.chatEl.style.visibility = "hidden";
+	} catch (e) {}
+
+	_suppressInjectScroll = true;
+	try {
+		state.suppressScrollLoad = true;
+	} catch (e) {}
+	// Note: messages were already injected above; skip duplicate inject to avoid
+	// extra render and potential programmatic scroll events.
+	_suppressInjectScroll = false;
+
+	try {
+		state.isProgrammaticScroll = true;
+	} catch (e) {}
+	requestAnimationFrame(() => {
+		if (_dom.chatEl) {
+			_dom.chatEl.scrollTop = _dom.chatEl.scrollHeight;
+		}
+		requestAnimationFrame(() => {
+			if (_dom.chatEl) {
+				_dom.chatEl.scrollTop = _dom.chatEl.scrollHeight; // second pass for layout shifts
+				_dom.chatEl.style.visibility = "";
+			}
+			try {
+				state.isProgrammaticScroll = false;
+				state.suppressScrollLoad = false;
+			} catch (e) {}
+		});
+	});
 }
 
 function _currentUserId() {
@@ -372,6 +538,8 @@ export function closeChat() {
 	_dom.peoplePart.querySelector(".main-header").style.display = "";
 	_dom.peoplePart.querySelector(".main-header").style.zIndex = "";
 	_dom.peoplePart.style.display = "";
+	// Clear initializing flag if chat is closed mid-init
+	try { state.initializingChat = false; } catch (e) {}
 
 	if (isMobile) {
 		_dom.chatPart.classList.remove("slide-in");
@@ -437,6 +605,17 @@ export function closeChat() {
 		/* ignore */
 	}
 	_unreadSeparatorContactId = null;
+	// Reset send mode when chat is closed
+	if (typeof state !== "undefined") {
+		state.sendMode = "normal";
+	}
+	// Notify other UI modules that the chat was closed so they can hide overlays
+	try {
+		document.dispatchEvent(new CustomEvent("chat:closed"));
+	} catch (e) {
+		/* ignore */
+	}
+
 	_unreadSeparatorIndex = -1;
 	state.contactUserId = null;
 }
@@ -549,9 +728,22 @@ function createUnreadSeparator() {
 
 export function injectMessages(userId) {
 	if (!_dom.chatEl) return;
+
+	// Remember whether the view was near the bottom before we re-render so
+	// we can preserve the user's scroll position (or pin to bottom) after
+	// the DOM changes. This prevents an intermediate scroll from being lost
+	// when another async render happens shortly after.
+	let wasNear = false;
+	try {
+		wasNear = nearBottom(_dom.chatEl);
+	} catch (e) {
+		/* ignore */
+	}
+	// debug log removed
 	const userMessages = messages[userId];
 	if (!userMessages) {
 		showEmptyState(_dom.chatEl, _dom.emptyStateEl);
+		// debug log removed
 		return;
 	}
 
@@ -563,9 +755,11 @@ export function injectMessages(userId) {
 
 	if (Array.isArray(userMessages) && userMessages.length === 0) {
 		showEmptyState(_dom.chatEl, _dom.emptyStateEl);
+		// debug log removed
 		return;
 	}
 	hideEmptyState(_dom.chatEl, _dom.emptyStateEl);
+	// debug log removed
 
 	// find the first incoming message that is unseen.
 	// Treat missing/undefined isSeen as unseen (i.e., isSeen !== true).
@@ -633,6 +827,7 @@ export function injectMessages(userId) {
 	}
 
 	const fragment = document.createDocumentFragment();
+	// debug log removed
 	userMessages.forEach((message, index) => {
 		message.index = index;
 
@@ -647,6 +842,7 @@ export function injectMessages(userId) {
 		}
 
 		const _msgEl = createMessage(message);
+		// debug log removed
 		if (message.reactions && message.reactions.length > 0) {
 			try {
 				const _cu = getCurrentUser();
@@ -672,6 +868,48 @@ export function injectMessages(userId) {
 	}
 
 	_dom.chatEl.appendChild(fragment);
+	// debug log removed
+
+	// After rendering messages, ensure viewport is pinned to the bottom
+	// after the browser paints. Respect `_suppressInjectScroll` so callers
+	// that intentionally suppress auto-scrolling (e.g., `openChat`) keep
+	// control of final positioning.
+	try {
+		if (!_suppressInjectScroll && state.contactUserId === userId) {
+			requestAnimationFrame(() => {
+				requestAnimationFrame(() => {
+					try {
+						const el = _dom.chatEl;
+						const doScroll = () => { try { scrollChatToBottom(); } catch (e) { /* ignore */ } };
+						// Retry a couple of times in case of late layout shifts (images/fonts)
+						const scheduleRetries = () => {
+							try { setTimeout(doScroll, 80); setTimeout(doScroll, 200); } catch (e) { /* ignore */ }
+						};
+						if (!el) return doScroll();
+						const imgs = Array.from(el.querySelectorAll('img')).filter(i => !i.complete);
+							if (imgs.length > 0) {
+								let loaded = 0;
+								const onOne = () => {
+									loaded++;
+									if (loaded >= imgs.length) {
+										doScroll();
+										scheduleRetries();
+									}
+								};
+								imgs.forEach((img) => {
+									img.addEventListener('load', onOne, { once: true });
+									img.addEventListener('error', onOne, { once: true });
+								});
+								setTimeout(() => { doScroll(); scheduleRetries(); }, 300);
+							} else {
+								doScroll();
+								scheduleRetries();
+							}
+					} catch (e) { /* ignore */ }
+				});
+			});
+		}
+	} catch (e) { /* ignore */ }
 
 	// After rendering messages, apply reaction badges for messages that have reactions
 	try {
@@ -686,16 +924,19 @@ export function injectMessages(userId) {
 				const msgEl = _dom.chatEl.querySelector(
 					`.chat-message[data-message-id="${msg.id}"]`,
 				);
-				if (msgEl)
-					applyReactionsToMessage(
-						msgEl,
-						msg.reactions,
-						currentUserId,
-					);
-			}
-		});
+				try { applyReactionsToMessage(msgEl, msg.reactions, currentUserId); } catch (e) { /* ignore */ }
+					}
+				});
+				// debug log removed
 	} catch (e) {
 		/* ignore */
+	}
+
+	if (!_suppressInjectScroll && state.contactUserId === userId && wasNear) {
+		// debug log removed
+		scrollChatToBottomAfterPadding();
+	} else {
+		// debug log removed
 	}
 }
 
@@ -705,14 +946,26 @@ export async function loadOlderMessages() {
 	if (!uid) return;
 	const contact = contacts.find((c) => c.id === uid);
 	if (!contact || !contact.conversationId) return;
+	// debug log removed
 
 	let meta = messagePaging[uid] || {
 		hasMore: true,
 		loading: false,
 		pageSize: DEFAULT_PAGE_LIMIT,
+		prefetched: null,
+		prefetching: false,
 	};
 	// persist meta reference
 	messagePaging[uid] = meta;
+	// If this conversation was just opened, respect the per-conversation
+	// suppression window so we don't auto-load older pages during initial
+	// positioning/layout work.
+	try {
+		if (meta.openSuppressedUntil && Date.now() < meta.openSuppressedUntil) {
+			// debug log removed
+			return;
+		}
+	} catch (e) {}
 	if (!meta.hasMore || meta.loading) return;
 	meta.loading = true;
 
@@ -726,6 +979,14 @@ export async function loadOlderMessages() {
 			return;
 		}
 
+		// Compute page limit and earliestId early so logs below are accurate
+		const PAGE_LIMIT = Math.min(
+			meta.pageSize || DEFAULT_PAGE_LIMIT,
+			MAX_CLIENT_PAGE_LIMIT,
+		);
+		const earliestId =
+			messages[uid] && messages[uid][0] ? messages[uid][0].id : null;
+
 		// insert a small top skeleton so user sees loading in progress
 		let topSkel = null;
 		if (_dom.chatEl) {
@@ -736,18 +997,30 @@ export async function loadOlderMessages() {
 
 		const oldScrollHeight = _dom.chatEl ? _dom.chatEl.scrollHeight : 0;
 		const oldScrollTop = _dom.chatEl ? _dom.chatEl.scrollTop : 0;
+		// debug log removed
 
-		const PAGE_LIMIT = meta.pageSize || DEFAULT_PAGE_LIMIT;
-		const earliestId =
-			messages[uid] && messages[uid][0] ? messages[uid][0].id : null;
-		const more = await getMessagesPage(contact.conversationId, {
-			limit: PAGE_LIMIT,
-			before: earliest,
-			beforeId: earliestId,
-		});
+		let more = null;
+			// Use prefetched page if available
+			if (meta.prefetched && Array.isArray(meta.prefetched)) {
+				more = meta.prefetched;
+				meta.prefetched = null;
+				// debug log removed
+			} else {
+				// debug log removed
+				more = await getMessagesPage(contact.conversationId, {
+					limit: PAGE_LIMIT,
+					before: earliest,
+					beforeId: earliestId,
+				});
+				// debug log removed
+			}
+
 		if (!Array.isArray(more) || more.length === 0) {
 			meta.hasMore = false;
 			meta.loading = false;
+			// cleanup skeleton
+			if (topSkel && topSkel.parentNode) topSkel.remove();
+			if (_dom.chatEl) _dom.chatEl.removeAttribute("aria-busy");
 			return;
 		}
 
@@ -765,22 +1038,25 @@ export async function loadOlderMessages() {
 			isEdited: m.isEdited,
 			isPinned: m.isPinned,
 			isSeen: m.isSeen,
+			isOneTime: m.isOneTime || false,
 			replyTo: m.replyToId
 				? {
-						id: m.replyToId,
-						sender: m.replyToName,
-						text: m.replyToText,
-					}
+					id: m.replyToId,
+					sender: m.replyToName,
+					text: m.replyToText,
+				}
 				: null,
 			forwardedFrom: m.forwardedFrom || null,
 			forwardedText: m.forwardedText || null,
 			reactions: m.reactions || [],
 		}));
 
-		// prepend
-		messages[uid] = [...normalized, ...(messages[uid] || [])];
+		// prepend into model
+		const oldMsgs = messages[uid] || [];
+		messages[uid] = [...normalized, ...oldMsgs];
+		// debug log removed
 
-		// trim if too many
+		// enforce size cap
 		if (
 			Array.isArray(messages[uid]) &&
 			messages[uid].length > MAX_MESSAGES_PER_CONVERSATION
@@ -791,27 +1067,126 @@ export async function loadOlderMessages() {
 		// update hasMore
 		meta.hasMore = more.length === PAGE_LIMIT;
 
-		// re-render and adjust scroll to keep view stable
+		// reindex model
+		messages[uid].forEach((m, i) => (m.index = i));
+
+		// -- DOM incremental prepend (do not re-render whole list) --
 		if (_dom.chatEl) {
-			injectMessages(uid);
-			// remove top skeleton if present
-			if (topSkel && topSkel.parentNode) topSkel.remove();
-			_dom.chatEl.removeAttribute("aria-busy");
-			_dom.chatEl.scrollTop =
-				_dom.chatEl.scrollHeight - oldScrollHeight + oldScrollTop;
+			try {
+				const L = normalized.length;
+				// shift existing DOM indices by L
+				const existing = Array.from(_dom.chatEl.querySelectorAll(".chat-message"));
+				existing.forEach((n) => {
+					try {
+						const oldIdx = Number(n.dataset.index);
+						if (!Number.isNaN(oldIdx)) n.dataset.index = String(oldIdx + L);
+					} catch (e) {}
+				});
+
+				// rebuild pinned indexes from model
+				state.pinnedIndexes = [];
+				messages[uid].forEach((m, i) => {
+					if (m.isPinned) state.pinnedIndexes.push(i);
+				});
+
+				// Build fragment for the newly fetched older messages
+				const frag = document.createDocumentFragment();
+				let lastDate = null;
+				normalized.forEach((message, idx) => {
+					// message.index should already be 0..L-1
+					if (message.date && message.date !== lastDate) {
+						frag.appendChild(createDateSeparator(message.date));
+						lastDate = message.date;
+					}
+					// If unread separator belongs in this new range, insert it
+					const firstUnseenIndex = Array.isArray(messages[uid])
+						? messages[uid].findIndex((m) => m.isSeen !== true && !m.user)
+						: -1;
+					if (message.index === firstUnseenIndex && firstUnseenIndex !== -1) {
+						frag.appendChild(createUnreadSeparator());
+					}
+					const node = createMessage(message);
+					if (message.reactions && message.reactions.length > 0) {
+						try {
+							const _cu = getCurrentUser();
+							applyReactionsToMessage(node, message.reactions, _cu?.id || null);
+						} catch (e) {}
+					}
+					frag.appendChild(node);
+				});
+
+				// Remember original first node to detect duplicate separators
+				const originalFirst = _dom.chatEl.firstElementChild;
+				// Prepend fragment
+				_dom.chatEl.prepend(frag);
+
+				// If we introduced duplicate date separators at the boundary, remove one
+				try {
+					if (originalFirst) {
+						const prev = originalFirst.previousElementSibling;
+						if (prev && prev.classList && prev.classList.contains("date-separator") && originalFirst.classList && originalFirst.classList.contains("date-separator")) {
+							originalFirst.parentNode.removeChild(originalFirst);
+						}
+					}
+				} catch (e) {}
+
+				// remove top skeleton if present
+				if (topSkel && topSkel.parentNode) topSkel.remove();
+				_dom.chatEl.removeAttribute("aria-busy");
+
+				// restore scroll position to keep the viewport stable
+				// Perform a programmatic scroll to preserve viewport. Mark state so
+				// scroll handlers ignore this adjustment.
+				try {
+					state.isProgrammaticScroll = true;
+				} catch (e) {}
+				_dom.chatEl.scrollTop = _dom.chatEl.scrollHeight - oldScrollHeight + oldScrollTop;
+				// debug log removed
+				// Clear programmatic flag after next paint.
+				requestAnimationFrame(() => {
+					requestAnimationFrame(() => {
+						try { state.isProgrammaticScroll = false; } catch (e) {}
+					});
+				});
+
+				// update pinned banner
+				try {
+					updatePinnedMessage();
+				} catch (e) {}
+			} catch (e) {
+				console.error("loadOlderMessages DOM update failed", e);
+				// Fallback: full re-render if incremental update fails
+				injectMessages(uid);
+				if (topSkel && topSkel.parentNode) topSkel.remove();
+				_dom.chatEl.removeAttribute("aria-busy");
+			}
 		}
 	} catch (e) {
 		console.error("loadOlderMessages failed", e);
 	} finally {
-		if (messagePaging[uid]) messagePaging[uid].loading = false;
+		if (messagePaging[uid]) {
+			try { messagePaging[uid].loading = false; } catch (e) {}
+			try { messagePaging[uid].openSuppressedUntil = Date.now() + 3000; } catch (e) {}
+		}
 	}
+}
+
+// Clear per-conversation open suppression (used by `main.js` when the
+// user performs an explicit interaction so older pages can be loaded).
+export function clearOpenSuppression(uid) {
+	try {
+		if (!uid) uid = state.contactUserId;
+		if (messagePaging && messagePaging[uid]) messagePaging[uid].openSuppressedUntil = 0;
+	} catch (e) {}
 }
 
 // ─── Receive incoming message (from socket) ───────────────────────────────────
 export async function receiveMessage(message) {
+	try { console.log('[chat] receiveMessage START', { messageId: message.id, conversationId: message.conversationId, senderId: message.senderId }); } catch (e) {}
 	let contact = contacts.find(
 		(c) => c.conversationId === message.conversationId,
 	);
+	try { console.log('[chat] receiveMessage contact resolved', contact ? { id: contact.id, conversationId: contact.conversationId } : null); } catch (e) {}
 
 	// If we don't know about this conversation yet, try to refresh contacts
 	// from the server (handles case where someone added the current user).
@@ -945,6 +1320,7 @@ export async function receiveMessage(message) {
 		isEdited: false,
 		isPinned: false,
 		isSeen: message.isSeen || false,
+		isOneTime: message.isOneTime || false,
 		replyTo: message.replyToId
 			? {
 					id: message.replyToId,
@@ -959,6 +1335,7 @@ export async function receiveMessage(message) {
 
 	if (!messages[contact.id]) messages[contact.id] = [];
 	messages[contact.id].push(normalized);
+	// debug log removed
 
 	// Do not trim messages immediately on receive to avoid jarring the user
 	// (e.g., when they're reading older history). Trimming is performed
@@ -989,9 +1366,28 @@ export async function receiveMessage(message) {
 		} catch (e) {
 			/* ignore */
 		}
-		_dom.chatEl.appendChild(newEl);
-		scrollChatToBottom();
-		emitMessageSeen(contact.conversationId);
+		// If the user is currently scrolled to the bottom, append and mark seen.
+		// Otherwise, append but do not auto-scroll; show a "scroll to bottom"
+		// affordance so the user can jump to the newest messages.
+			try {
+				const wasAtBottom = nearBottom(_dom.chatEl);
+				_dom.chatEl.appendChild(newEl);
+				// debug log removed
+				if (wasAtBottom) {
+				scrollChatToBottom();
+				emitMessageSeen(contact.conversationId);
+			} else {
+				try {
+					const btn = document.querySelector('.scroll-to-bottom-btn');
+					if (btn) btn.classList.add('visible');
+				} catch (e) {}
+			}
+		} catch (e) {
+			// fallback: append + scroll
+			_dom.chatEl.appendChild(newEl);
+			scrollChatToBottom();
+			emitMessageSeen(contact.conversationId);
+		}
 	}
 
 	// کارت رو آپدیت کن
@@ -1034,6 +1430,183 @@ export async function receiveMessage(message) {
 	}
 	refreshCard(contact);
 	sortActiveChats();
+}
+
+export function handleOnetimeDeleted({ messageIds }) {
+	if (!Array.isArray(messageIds) || messageIds.length === 0) return;
+	const idSet = new Set(messageIds.map(String));
+
+	// First: apply a small fade/scale animation to any visible DOM nodes
+	try {
+		if (_dom && _dom.chatEl) {
+			messageIds.forEach((id) => {
+				const el = _dom.chatEl.querySelector(
+					`.chat-message[data-message-id="${id}"]`,
+				);
+				if (el) {
+					el.style.transition =
+						"opacity 0.3s ease, transform 0.3s ease";
+					el.style.opacity = "0";
+					el.style.transform = "scale(0.95)";
+				}
+			});
+		}
+	} catch (e) {
+		/* ignore animation errors */
+	}
+
+	// After animation completes, remove messages from memory, update UI and contact previews
+	setTimeout(() => {
+		const affectedUids = new Set();
+
+		for (const [uid, msgs] of Object.entries(messages)) {
+			if (!Array.isArray(msgs)) continue;
+			const before = msgs.length;
+			const filtered = msgs.filter((m) => !idSet.has(String(m.id)));
+			if (filtered.length !== before) {
+				messages[Number(uid)] = filtered;
+				filtered.forEach((m, i) => {
+					m.index = i;
+				});
+				affectedUids.add(Number(uid));
+			}
+		}
+
+		// Remove DOM nodes if still present (safety) and re-render open conversation
+		try {
+			if (_dom && _dom.chatEl) {
+				messageIds.forEach((id) => {
+					const el = _dom.chatEl.querySelector(
+						`.chat-message[data-message-id="${id}"]`,
+					);
+					if (el && el.parentNode) el.parentNode.removeChild(el);
+				});
+			}
+		} catch (e) {
+			/* ignore DOM cleanup errors */
+		}
+
+		// If the currently open conversation was affected, re-render and update pinned
+		try {
+			if (
+				state.contactUserId &&
+				affectedUids.has(Number(state.contactUserId))
+			) {
+				// Update DOM indices incrementally instead of full re-render.
+				try {
+					const uid = Number(state.contactUserId);
+					if (_dom && _dom.chatEl) {
+						const nodes = Array.from(_dom.chatEl.querySelectorAll('.chat-message'));
+						nodes.forEach((node) => {
+							const mid = node.dataset?.messageId;
+							if (!mid) return;
+							const newIndex = (messages[uid] || []).findIndex((m) => String(m.id) === String(mid));
+							if (newIndex === -1) {
+								// message was removed; drop node if still present
+								if (node.parentNode) node.parentNode.removeChild(node);
+							} else {
+								node.dataset.index = newIndex;
+							}
+						});
+						// refresh pinned banner
+						updatePinnedMessage();
+					}
+				} catch (e) {
+					/* ignore */
+				}
+			}
+		} catch (e) {
+			/* ignore */
+		}
+
+		// Update contact previews (lastMessage, unreadCount) for affected conversations
+		try {
+			for (const uid of affectedUids) {
+				const friend = contacts.find((c) => c.id === Number(uid));
+				const arr = messages[uid] || [];
+				if (friend) {
+					if (arr.length > 0) {
+						const lastMsg = arr[arr.length - 1];
+						friend.lastMessage = lastMsg.text || "";
+						friend.lastMessageTime = lastMsg.time || "";
+						friend.lastMessageDate = lastMsg.date || "";
+						friend.lastMessageTs = lastMsg.createdAt || 0;
+						friend.lastMessageSeen = lastMsg.user
+							? lastMsg.isSeen !== false
+							: true;
+						try {
+							friend.unreadCount = arr.filter(
+								(m) => !m.user && m.isSeen !== true,
+							).length;
+						} catch (e) {
+							/* ignore */
+						}
+					} else {
+						friend.lastMessage = "";
+						friend.lastMessageTime = "";
+						friend.lastMessageDate = "";
+						friend.lastMessageTs = 0;
+						friend.lastMessageSeen = true;
+						friend.unreadCount = 0;
+					}
+					try {
+						refreshCard(friend);
+					} catch (e) {
+						/* ignore */
+					}
+				}
+			}
+			try {
+				sortActiveChats();
+			} catch (e) {
+				/* ignore */
+			}
+			try {
+				sortContacts();
+			} catch (e) {
+				/* ignore */
+			}
+			try {
+				updateTotalUnreadCount();
+			} catch (e) {
+				/* ignore */
+			}
+		} catch (e) {
+			/* ignore */
+		}
+
+		// Recompute chat padding to avoid leftover spacing after DOM changes
+		try {
+			if (_dom && _dom.chatEl) {
+				const inputEl = _dom.messageInput;
+				if (inputEl) {
+					let lines = Math.floor(inputEl.scrollHeight / lineHeight);
+					if (lines < 1) lines = 1;
+					if (lines > maxLines) lines = maxLines;
+					if (lines < maxLines) {
+						_dom.chatEl.style.paddingBottom =
+							basePadding +
+							2 * (lines - 1) * 0.75 +
+							state.actionPreviewHeight +
+							"rem";
+					} else {
+						_dom.chatEl.style.paddingBottom =
+							basePadding +
+							2 * ((maxLines - 2) * 0.75 + 0.2) +
+							state.actionPreviewHeight +
+							"rem";
+					}
+				} else {
+					_dom.chatEl.style.paddingBottom =
+						basePadding + state.actionPreviewHeight + "rem";
+				}
+				// If conversation open, ensure scroll stays correct
+				if (state.contactUserId) scrollChatToBottomAfterPadding();
+			}
+		} catch (e) {
+			/* ignore */
+		}
+	}, 300);
 }
 
 // ─── Send message ─────────────────────────────────────────────────────────────
@@ -1235,6 +1808,35 @@ export async function sendMessage() {
 		msgInputEl.focus();
 }
 
+export async function sendOneTimeMessage() {
+	const text = _dom.messageInput.value.trim();
+	if (!text) return;
+
+	const contact = contacts.find((c) => c.id === state.contactUserId);
+	if (!contact) return;
+
+	if (contact.isArchived) {
+		contact.isArchived = false;
+		apiUpdateContact(contact.id, { isArchived: false }).catch(() => {});
+	}
+
+	const replyTo = state.replyTo;
+	const prevContactState = {
+		lastMessage: contact.lastMessage,
+		lastMessageTime: contact.lastMessageTime,
+		lastMessageDate: contact.lastMessageDate,
+		lastMessageSeen: contact.lastMessageSeen,
+	};
+
+	// Use the existing pending-message flow, but pass isOneTime: true
+	_sendOutgoingMessage(contact, text, replyTo, prevContactState, true);
+
+	resetInput();
+	state.replyTo = null;
+	scrollChatToBottom();
+	_dom.messageInput?.focus();
+}
+
 // ─── Normalize Outgoing Message ───────────────────────────────────────────────
 function _normalizeOutgoing(m) {
 	return {
@@ -1255,6 +1857,7 @@ function _normalizeOutgoing(m) {
 		forwardedFrom: m.forwardedFrom || null,
 		forwardedText: m.forwardedText || null,
 		isSeen: m.isSeen || false,
+		isOneTime: m.isOneTime || false,
 	};
 }
 
@@ -1418,6 +2021,8 @@ async function _confirmPending(pendingId, sent) {
 	}
 	// normalize and push into messages array
 	const normalized = _normalizeOutgoing(sent);
+	// preserve one-time flag
+	normalized.isOneTime = sent.isOneTime || false;
 	if (!messages[entry.contactId]) messages[entry.contactId] = [];
 	normalized.index = messages[entry.contactId].length;
 	messages[entry.contactId].push(normalized);
@@ -1453,6 +2058,7 @@ function _sendOutgoingMessage(
 	text,
 	replyTo = null,
 	prevContactState = null,
+	isOneTime = false,
 ) {
 	if (!contact) return;
 
@@ -1473,6 +2079,7 @@ function _sendOutgoingMessage(
 		text,
 		time: timeStr,
 		pending: true,
+		isOneTime: !!isOneTime,
 	});
 	pendingNode.dataset.pendingId = pendingId;
 	pendingNode.dataset.contactId = contact.id;
@@ -1512,6 +2119,7 @@ function _sendOutgoingMessage(
 		replyTo,
 		time: timeStr,
 		prevContactState,
+		isOneTime: !!isOneTime,
 	});
 
 	// send via socket (don't await here to allow timeout behavior)
@@ -1523,6 +2131,7 @@ function _sendOutgoingMessage(
 				replyToId: replyTo?.id || null,
 				replyToName: replyTo?.sender || replyTo?.name || null,
 				replyToText: replyTo?.text || null,
+				isOneTime: !!isOneTime,
 			});
 			// confirm pending (if still present)
 			await _confirmPending(pendingId, sent);

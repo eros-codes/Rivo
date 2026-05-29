@@ -1,6 +1,7 @@
 import { io } from "/js/socket.io.esm.min.js";
 
 let socket = null;
+let _onOnetimeDeleted = null;
 
 function _showStatus(text) {
 	const el = document.getElementById("connection-status");
@@ -29,6 +30,7 @@ export function initSocket(
 	onUserUpdated,
 	onContactRemoved,
 	onReactionUpdated,
+		onOnetimeDeleted,
 ) {
 	socket = io({
 		withCredentials: true,
@@ -64,6 +66,10 @@ export function initSocket(
 
 	socket.on("reaction:updated", (data) => {
 		onReactionUpdated?.(data);
+	});
+
+	socket.on("message:onetime-deleted", (data) => {
+		try { _onOnetimeDeleted?.(data); } catch (e) { /* ignore */ }
 	});
 
 	socket.on("user:updated", (user) => {
@@ -125,14 +131,17 @@ export function getSocket() {
 	return socket;
 }
 
-export function emitMessage(data) {
+export function emitMessage({ conversationId, text, replyToId, replyToName, replyToText, forwardedFrom, forwardedText, isOneTime = false }) {
 	return new Promise((resolve, reject) => {
-		if (!socket) return reject(new Error("Socket not connected"));
-		socket.emit("message:send", data, (res) => {
-			if (res?.error) reject(res.error);
-			else resolve(res.message);
-		});
-	});
+ 		if (!socket) return reject(new Error("No socket"));
+ 		socket.emit("message:send", {
+ 			conversationId, text, replyToId, replyToName, replyToText,
+ 			forwardedFrom, forwardedText, isOneTime,
+ 		}, (res) => {
+ 			if (res?.error) return reject(new Error(res.error));
+ 			resolve(res?.message || res);
+ 		});
+ 	});
 }
 
 export function emitEditMessage(messageId, text) {
@@ -193,4 +202,8 @@ export function emitReaction(messageId, emoji) {
 			return resolve(res);
 		});
 	});
+}
+
+export function setOnetimeDeletedHandler(fn) {
+ 	_onOnetimeDeleted = fn;
 }

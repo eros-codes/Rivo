@@ -166,6 +166,24 @@ app.use(
 app.use(express.json());
 app.use(cookieParser());
 
+// Serve a small client-config script that injects selected env vars into
+// the browser as `window.__RIVO_CLIENT_CONFIG`. This allows runtime
+// configuration of client pagination limits without rebuilding assets.
+app.get('/chat/client-config.js', (req, res) => {
+	try {
+		const cfg = {
+			DEFAULT_PAGE_LIMIT: Number(process.env.DEFAULT_PAGE_LIMIT) || 50,
+			MAX_CLIENT_PAGE_LIMIT: Number(process.env.MAX_CLIENT_PAGE_LIMIT) || 100,
+			CLIENT_PREFETCH_ON_OPEN: (String(process.env.CLIENT_PREFETCH_ON_OPEN || '').toLowerCase() === '1' || String(process.env.CLIENT_PREFETCH_ON_OPEN || '').toLowerCase() === 'true') || false,
+		};
+		res.setHeader('Content-Type', 'application/javascript');
+		res.send(`window.__RIVO_CLIENT_CONFIG = ${JSON.stringify(cfg)};`);
+	} catch (e) {
+		res.setHeader('Content-Type', 'application/javascript');
+		res.send("window.__RIVO_CLIENT_CONFIG = {};console.warn('client-config error');");
+	}
+});
+
 // Attach Sentry request handler early so it can collect request data
 if (process.env.SENTRY_DSN) {
 	app.use(Sentry.Handlers.requestHandler());

@@ -236,6 +236,7 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
 					isSeen: m.isSeen,
 					isEdited: m.isEdited,
 					isPinned: m.isPinned,
+					isOneTime: m.isOneTime || false,
 					isDeleted: m.isDeleted,
 					replyToId: m.replyToId,
 					replyToName: m.replyToName,
@@ -268,6 +269,7 @@ router.post("/", requireAuth, async (req, res) => {
 		replyToText,
 		forwardedFrom,
 		forwardedText,
+		isOneTime,
 	} = req.body;
 
 	const convId = parseIntSafe(conversationId);
@@ -313,6 +315,7 @@ router.post("/", requireAuth, async (req, res) => {
 				senderId: req.userId,
 				// keep legacy text column null during migration
 				text: null,
+				isOneTime: isOneTime === true,
 				ciphertext,
 				iv,
 				auth_tag: authTag,
@@ -349,6 +352,7 @@ router.post("/", requireAuth, async (req, res) => {
 			sender: message.sender,
 			senderId: message.senderId,
 			text: text.trim(),
+			isOneTime: message.isOneTime || false,
 			replyToText: replyToText || null,
 			forwardedText: forwardedText || null,
 			isSeen: message.isSeen,

@@ -297,3 +297,22 @@
 }
 
 /* note: my-reaction accent removed — color is determined by reactor vs current user */
+
+/* ── One-time message ──────────────────────────────────────────── */
+.onetime-message {
+	border-style: dashed;
+}
+
+/* subtle label placed in the message meta */
+.chat-onetime-meta {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	font-size: 0.72rem;
+	color: var(--text-secondary-color);
+}
+.chat-onetime-meta svg { width: 0.75rem; height: 0.75rem; display: block; }
+
+/* Textual hint for one-time messages: only show for outgoing one-time messages */
+/* Note: textual "send normally" label removed from message meta; only the
+   one-time icon remains. */

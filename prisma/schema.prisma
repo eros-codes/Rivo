@@ -91,6 +91,9 @@ model Message {
   isPinned       Boolean      @default(false)
   isDeleted      Boolean      @default(false)
   isOneTime      Boolean      @default(false)
+  isTimeCapsule  Boolean      @default(false)
+  scheduledFor   DateTime?
+  openedAt       DateTime?
   replyToId      Int?
   replyToName    String?
   replyToText    String?

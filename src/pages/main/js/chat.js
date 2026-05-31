@@ -4,6 +4,7 @@ import {
 	createMessage,
 	markMessagesAsSeen,
 	applyReactionsToMessage,
+	unlockCapsule,
 } from "../../../components/messages/messages.js";
 import {
 	moveToActiveChats,
@@ -33,6 +34,30 @@ import { getCurrentUser } from "./currentUser.js";
 
 // Local notification dedupe fallback (main may expose window._notifQueue)
 const _localNotifQueue = new Set();
+
+// Persisted set of capsule messageIds we've already shown the reveal animation for.
+// Stored in localStorage so reloads don't re-play the reveal.
+const _REVEALED_CAPSULES_KEY = "rivo.revealedCapsules";
+let _revealedCapsuleIds = new Set();
+try {
+	const raw = localStorage.getItem(_REVEALED_CAPSULES_KEY) || "[]";
+	const arr = JSON.parse(raw || "[]");
+	if (Array.isArray(arr)) arr.forEach((id) => _revealedCapsuleIds.add(String(id)));
+} catch (e) {
+	_revealedCapsuleIds = new Set();
+}
+
+function _markCapsuleRevealed(id) {
+	try {
+		if (!id) return;
+		const sid = String(id);
+		if (_revealedCapsuleIds.has(sid)) return;
+		_revealedCapsuleIds.add(sid);
+		try {
+			localStorage.setItem(_REVEALED_CAPSULES_KEY, JSON.stringify(Array.from(_revealedCapsuleIds)));
+		} catch (e) {}
+	} catch (e) {}
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 export const basePadding = 4;
@@ -93,6 +118,29 @@ export const DEFAULT_PAGE_LIMIT = _getClientEnvNumber('DEFAULT_PAGE_LIMIT', 50);
 export const MAX_CLIENT_PAGE_LIMIT = _getClientEnvNumber('MAX_CLIENT_PAGE_LIMIT', 100);
 // Optionally prefetch previous page on open (default: false)
 const CLIENT_PREFETCH_ON_OPEN = _getClientEnvBool('CLIENT_PREFETCH_ON_OPEN', false);
+// Returns a safe preview string for contact cards. For locked time-capsule
+// messages destined for the recipient, return an empty string so nothing
+// is leaked in contact lists or previews.
+export function getContactPreviewText(msg) {
+	try {
+		if (!msg) return "";
+		const isSenderLocal = !!msg.user;
+		// If message is a time-capsule and still locked for the recipient,
+		// don't reveal anything in previews. If it has been opened and the
+		// server provided plaintext, show that; otherwise show a neutral
+		// placeholder.
+		if (msg.isTimeCapsule) {
+			if (msg.isLocked && !isSenderLocal) return "";
+			if (msg.openedAt && !isSenderLocal) {
+				if (msg.text) return msg.text;
+				return "Time capsule unlocked";
+			}
+		}
+		return msg.text || "";
+	} catch (e) {
+		return "";
+	}
+}
 // After server reports messages marked as seen, keep the unread separator
 // visible for at least this many milliseconds before applying the seen state
 const MIN_SEPARATOR_VISIBLE_AFTER_MARK_MS = 600;
@@ -167,6 +215,9 @@ export function canLoadOlder() {
 
 // Cap messages kept per conversation to avoid unbounded client memory growth
 const MAX_MESSAGES_PER_CONVERSATION = 1000;
+
+// Pending capsule reveals received while chat or message element not present
+const _pendingCapsuleReveals = new Map(); // String(messageId) -> { text, openedAt, conversationId }
 
 let _dom = {};
 // Unread messages separator state
@@ -247,7 +298,7 @@ export function scrollChatToBottomAfterPadding(timeout = 400) {
 
 	// debug log removed
 	el.addEventListener("transitionend", function onT(e) {
-		// debug log removed
+		if (!e.propertyName || !e.propertyName.includes("padding")) return;
 		el.removeEventListener("transitionend", onT);
 		doScroll();
 	});
@@ -342,6 +393,10 @@ export async function openChat(fromClick = false) {
 				forwardedText: m.forwardedText || null,
 				reactions: m.reactions || [],
 				isOneTime: m.isOneTime || false,
+				isTimeCapsule: m.isTimeCapsule || false,
+				scheduledFor: m.scheduledFor || null,
+				openedAt: m.openedAt || null,
+				isLocked: m.isLocked || false,
 			}));
 			// debug log removed
 
@@ -523,6 +578,7 @@ export async function openChat(fromClick = false) {
 			try {
 				state.isProgrammaticScroll = false;
 				state.suppressScrollLoad = false;
+				state.initializingChat = false;
 			} catch (e) {}
 		});
 	});
@@ -609,6 +665,9 @@ export function closeChat() {
 	if (typeof state !== "undefined") {
 		state.sendMode = "normal";
 	}
+
+	// Clear any pending capsule reveals tied to this chat
+	try { _pendingCapsuleReveals.clear(); } catch (e) { /* ignore */ }
 	// Notify other UI modules that the chat was closed so they can hide overlays
 	try {
 		document.dispatchEvent(new CustomEvent("chat:closed"));
@@ -870,42 +929,117 @@ export function injectMessages(userId) {
 	_dom.chatEl.appendChild(fragment);
 	// debug log removed
 
+	// After rendering, trigger any pending capsule reveals for this conversation
+	try {
+		if (_pendingCapsuleReveals.size > 0 && state.contactUserId === userId) {
+			_pendingCapsuleReveals.forEach((payload, mid) => {
+				const el = _dom.chatEl.querySelector(`.chat-message[data-message-id="${mid}"]`);
+				if (el) {
+					_pendingCapsuleReveals.delete(mid);
+					setTimeout(() => {
+						try {
+							handleCapsuleOpened({ messageId: Number(mid), ...payload });
+						} catch (e) { /* ignore */ }
+					}, 1200);
+				}
+			});
+		}
+	} catch (e) { /* ignore */ }
+
+	// If any time-capsules were opened while this client was offline (openedAt set
+	// on the server) and we haven't yet shown the reveal animation locally, render
+	// them as locked and trigger the usual reveal flow so the user sees the
+	// unlock animation when they open the chat.
+	try {
+		const userMsgs = userMessages || [];
+		if (state.contactUserId === userId) {
+			userMsgs.forEach((m) => {
+				try {
+					if (!m) return;
+					if (m.isTimeCapsule && m.openedAt && !m.user && !_revealedCapsuleIds.has(String(m.id))) {
+						const existingEl = _dom.chatEl.querySelector(`.chat-message[data-message-id="${m.id}"]`);
+						if (existingEl) {
+							// If element wasn't rendered as locked, replace with a locked rendering
+							if (!existingEl.classList.contains('capsule-locked')) {
+								const newEl = createMessage({ ...m, isLocked: true });
+								newEl.dataset.messageId = m.id;
+								existingEl.parentNode.replaceChild(newEl, existingEl);
+							}
+							// Delay slightly so layout stabilizes before running reveal
+							setTimeout(() => {
+								try {
+									handleCapsuleOpened({ messageId: m.id, text: m.text, openedAt: m.openedAt, conversationId: m.conversationId });
+								} catch (e) {}
+							}, 800);
+						}
+					}
+				} catch (e) { /* ignore per-message errors */ }
+			});
+		}
+	} catch (e) { /* ignore fallback errors */ }
+
 	// After rendering messages, ensure viewport is pinned to the bottom
 	// after the browser paints. Respect `_suppressInjectScroll` so callers
 	// that intentionally suppress auto-scrolling (e.g., `openChat`) keep
 	// control of final positioning.
 	try {
-		if (!_suppressInjectScroll && state.contactUserId === userId) {
+		if (
+			!_suppressInjectScroll &&
+			state.contactUserId === userId &&
+			wasNear
+		) {
 			requestAnimationFrame(() => {
 				requestAnimationFrame(() => {
 					try {
 						const el = _dom.chatEl;
-						const doScroll = () => { try { scrollChatToBottom(); } catch (e) { /* ignore */ } };
+						const doScroll = () => {
+							try {
+								scrollChatToBottom();
+							} catch (e) {
+								/* ignore */
+							}
+						};
 						// Retry a couple of times in case of late layout shifts (images/fonts)
 						const scheduleRetries = () => {
-							try { setTimeout(doScroll, 80); setTimeout(doScroll, 200); } catch (e) { /* ignore */ }
+							try {
+								setTimeout(doScroll, 80);
+								setTimeout(doScroll, 200);
+							} catch (e) {
+								/* ignore */
+							}
 						};
 						if (!el) return doScroll();
-						const imgs = Array.from(el.querySelectorAll('img')).filter(i => !i.complete);
-							if (imgs.length > 0) {
-								let loaded = 0;
-								const onOne = () => {
-									loaded++;
-									if (loaded >= imgs.length) {
-										doScroll();
-										scheduleRetries();
-									}
-								};
-								imgs.forEach((img) => {
-									img.addEventListener('load', onOne, { once: true });
-									img.addEventListener('error', onOne, { once: true });
+						const imgs = Array.from(
+							el.querySelectorAll("img"),
+						).filter((i) => !i.complete);
+						if (imgs.length > 0) {
+							let loaded = 0;
+							const onOne = () => {
+								loaded++;
+								if (loaded >= imgs.length) {
+									doScroll();
+									scheduleRetries();
+								}
+							};
+							imgs.forEach((img) => {
+								img.addEventListener("load", onOne, {
+									once: true,
 								});
-								setTimeout(() => { doScroll(); scheduleRetries(); }, 300);
-							} else {
+								img.addEventListener("error", onOne, {
+									once: true,
+								});
+							});
+							setTimeout(() => {
 								doScroll();
 								scheduleRetries();
-							}
-					} catch (e) { /* ignore */ }
+							}, 300);
+						} else {
+							doScroll();
+							scheduleRetries();
+						}
+					} catch (e) {
+						/* ignore */
+					}
 				});
 			});
 		}
@@ -930,13 +1064,6 @@ export function injectMessages(userId) {
 				// debug log removed
 	} catch (e) {
 		/* ignore */
-	}
-
-	if (!_suppressInjectScroll && state.contactUserId === userId && wasNear) {
-		// debug log removed
-		scrollChatToBottomAfterPadding();
-	} else {
-		// debug log removed
 	}
 }
 
@@ -1038,7 +1165,11 @@ export async function loadOlderMessages() {
 			isEdited: m.isEdited,
 			isPinned: m.isPinned,
 			isSeen: m.isSeen,
-			isOneTime: m.isOneTime || false,
+				isOneTime: m.isOneTime || false,
+				isTimeCapsule: m.isTimeCapsule || false,
+				scheduledFor: m.scheduledFor || null,
+				openedAt: m.openedAt || null,
+				isLocked: m.isLocked || false,
 			replyTo: m.replyToId
 				? {
 					id: m.replyToId,
@@ -1321,6 +1452,10 @@ export async function receiveMessage(message) {
 		isPinned: false,
 		isSeen: message.isSeen || false,
 		isOneTime: message.isOneTime || false,
+		isTimeCapsule: message.isTimeCapsule || false,
+		scheduledFor: message.scheduledFor || null,
+		openedAt: message.openedAt || null,
+		isLocked: message.isLocked || false,
 		replyTo: message.replyToId
 			? {
 					id: message.replyToId,
@@ -1391,7 +1526,8 @@ export async function receiveMessage(message) {
 	}
 
 	// کارت رو آپدیت کن
-	contact.lastMessage = normalized.text;
+	// Use centralized preview helper so locked time-capsule content is never exposed
+	contact.lastMessage = getContactPreviewText(normalized);
 	contact.lastMessageTime = normalized.time;
 	contact.lastMessageDate = normalized.date;
 	// If the chat is currently open, consider the last message seen locally
@@ -1527,7 +1663,7 @@ export function handleOnetimeDeleted({ messageIds }) {
 				if (friend) {
 					if (arr.length > 0) {
 						const lastMsg = arr[arr.length - 1];
-						friend.lastMessage = lastMsg.text || "";
+						friend.lastMessage = getContactPreviewText(lastMsg);
 						friend.lastMessageTime = lastMsg.time || "";
 						friend.lastMessageDate = lastMsg.date || "";
 						friend.lastMessageTs = lastMsg.createdAt || 0;
@@ -1837,6 +1973,199 @@ export async function sendOneTimeMessage() {
 	_dom.messageInput?.focus();
 }
 
+export async function sendTimeCapsuleMessage(scheduledFor) {
+	const text = _dom.messageInput.value.trim();
+	if (!text) return;
+
+	const contact = contacts.find((c) => c.id === state.contactUserId);
+	if (!contact) return;
+
+	if (contact.isArchived) {
+		contact.isArchived = false;
+		apiUpdateContact(contact.id, { isArchived: false }).catch(() => {});
+	}
+
+	const replyTo = state.replyTo;
+	const prevContactState = {
+		lastMessage: contact.lastMessage,
+		lastMessageTime: contact.lastMessageTime,
+		lastMessageDate: contact.lastMessageDate,
+		lastMessageSeen: contact.lastMessageSeen,
+	};
+
+	_sendOutgoingMessage(contact, text, replyTo, prevContactState, false, true, scheduledFor);
+
+	resetInput();
+	state.replyTo = null;
+	scrollChatToBottom();
+	_dom.messageInput?.focus();
+}
+
+export function handleCapsuleOpened({ messageId, text, openedAt, conversationId }) {
+	if (!messageId) return;
+
+	// Update in-memory messages
+	try {
+		for (const [uid, msgs] of Object.entries(messages)) {
+			if (!Array.isArray(msgs)) continue;
+			const idx = msgs.findIndex((m) => String(m.id) === String(messageId));
+			if (idx !== -1) {
+				msgs[idx].text = text;
+				msgs[idx].openedAt = openedAt;
+				msgs[idx].isLocked = false;
+				msgs[idx].isTimeCapsule = true;
+				break;
+			}
+		}
+	} catch (e) {
+		console.error('handleCapsuleOpened update model failed', e);
+	}
+
+	// Update DOM if present; otherwise queue the reveal for later injection
+	if (!_dom || !_dom.chatEl) {
+		try { _pendingCapsuleReveals.set(String(messageId), { text, openedAt, conversationId }); } catch (e) { /* ignore */ }
+		return;
+	}
+	const msgEl = _dom.chatEl.querySelector(`.chat-message[data-message-id="${messageId}"]`);
+	if (!msgEl) {
+		try { _pendingCapsuleReveals.set(String(messageId), { text, openedAt, conversationId }); } catch (e) { /* ignore */ }
+		return;
+	}
+
+	try {
+		// Place the real text into the element (keep hidden until revealed)
+		const textEl = msgEl.querySelector('.chat-message-text');
+		if (textEl) textEl.textContent = text || '';
+
+		// Update in-memory contact preview to a placeholder so lists don't show plaintext yet
+		try {
+			const contact = contacts.find(c => c.conversationId === conversationId);
+			if (contact) {
+				contact.lastMessage = 'Time capsule unlocked';
+				refreshCard(contact);
+				sortActiveChats();
+			}
+		} catch (e) { /* ignore */ }
+
+		// Show an in-app notification and a native notification (if permitted)
+		try {
+			const contact = contacts.find(c => c.conversationId === conversationId);
+			if (contact) {
+				const notifMsg = { text: 'A time capsule was unlocked', id: messageId };
+				try { showNotification(contact, notifMsg); } catch (e) { /* ignore */ }
+				if (window.Notification && Notification.permission === 'granted') {
+					try {
+						const n = new Notification('Time capsule unlocked', {
+							body: 'A time capsule in your chat has been unlocked. Click to view.',
+							data: { conversationId, messageId },
+						});
+						n.onclick = function (ev) {
+							try {
+								window.focus();
+								document.dispatchEvent(new CustomEvent('in-app-notif:open', { detail: { contactId: contact.id, messageId } }));
+								n.close();
+							} catch (e) { /* ignore */ }
+						};
+					} catch (e) { /* ignore */ }
+				}
+			}
+		} catch (e) { /* ignore */ }
+
+		// Schedule unlock animation to run only when the message element becomes visible
+		const runReveal = () => {
+			try {
+				msgEl.classList.add('capsule-unlocking');
+
+				// Update sender label if present (use a simple text label here)
+				const label = msgEl.querySelector('.capsule-sender-label');
+				if (label) label.textContent = 'Time Capsule — Opened';
+
+				try {
+					unlockCapsule(msgEl);
+				} catch (err) {
+					// fallback: quickly reveal if helper missing
+					const center = msgEl.querySelector('.capsule-center');
+					const lines = msgEl.querySelector('.capsule-lines');
+					if (center && center.parentNode) center.parentNode.removeChild(center);
+					if (lines && lines.parentNode) lines.parentNode.removeChild(lines);
+					msgEl.classList.remove('capsule-locked', 'capsule-unlocking');
+					msgEl.classList.add('capsule-opened');
+					if (textEl) textEl.classList.add('capsule-reveal');
+				}
+
+				// Ensure classes reflect final state after animation
+				setTimeout(() => {
+					msgEl.classList.remove('capsule-unlocking');
+					msgEl.classList.add('capsule-opened');
+
+					// mark in-memory message as unlocked and update contact preview to real text
+					try {
+						for (const [uid, msgs] of Object.entries(messages)) {
+							if (!Array.isArray(msgs)) continue;
+							const idx = msgs.findIndex((m) => String(m.id) === String(messageId));
+							if (idx !== -1) {
+								msgs[idx].isLocked = false;
+								msgs[idx].openedAt = openedAt;
+								break;
+							}
+						}
+						const contact = contacts.find(c => c.conversationId === conversationId);
+						if (contact) {
+							contact.lastMessage = text || '';
+							refreshCard(contact);
+							sortActiveChats();
+						}
+					} catch (e) { /* ignore */ }
+
+					// Persist that we've shown the reveal animation for this message
+					try { _markCapsuleRevealed(String(messageId)); } catch (e) { /* ignore */ }
+				}, 950);
+			} catch (e) {
+				console.error('reveal failed', e);
+			}
+		};
+
+		// helper: check visibility
+		const isVisible = (el) => {
+			try {
+				const rect = el.getBoundingClientRect();
+				return rect.top >= 0 && rect.bottom <= (window.innerHeight || document.documentElement.clientHeight);
+			} catch (e) { return false; }
+		};
+
+		if (isVisible(msgEl)) {
+			setTimeout(runReveal, 1000);
+		} else {
+			const obs = new IntersectionObserver((entries) => {
+				for (const ent of entries) {
+					if (ent.isIntersecting) {
+						setTimeout(() => {
+							try { runReveal(); } catch (e) { /* ignore */ }
+						}, 1000);
+						try { obs.disconnect(); } catch (e) { /* ignore */ }
+						break;
+					}
+				}
+			}, { threshold: 0.2 });
+			try { obs.observe(msgEl); } catch (e) { setTimeout(runReveal, 1000); }
+		}
+	} catch (e) {
+		console.error('handleCapsuleOpened DOM update failed', e);
+	}
+}
+
+// Dev helper: manually trigger capsule-open flow from the browser console.
+// Usage: window.__rivo_test_unlockCapsule(messageId, "optional revealed text")
+try {
+	if (typeof window !== 'undefined') {
+		window.__rivo_test_unlockCapsule = (messageId, text = 'Test unlock') => {
+			try {
+				handleCapsuleOpened({ messageId, text, openedAt: new Date().toISOString() });
+			} catch (e) { console.error('test unlock failed', e); }
+		};
+	}
+} catch (e) { /* ignore */ }
+
 // ─── Normalize Outgoing Message ───────────────────────────────────────────────
 function _normalizeOutgoing(m) {
 	return {
@@ -1858,6 +2187,10 @@ function _normalizeOutgoing(m) {
 		forwardedText: m.forwardedText || null,
 		isSeen: m.isSeen || false,
 		isOneTime: m.isOneTime || false,
+		isTimeCapsule: m.isTimeCapsule || false,
+		scheduledFor: m.scheduledFor || null,
+		openedAt: m.openedAt || null,
+		isLocked: false,
 	};
 }
 
@@ -2043,7 +2376,7 @@ async function _confirmPending(pendingId, sent) {
 	// update contact preview
 	const contact = contacts.find((c) => c.id === entry.contactId);
 	if (contact) {
-		contact.lastMessage = normalized.text;
+		contact.lastMessage = getContactPreviewText(normalized);
 		contact.lastMessageTime = normalized.time;
 		contact.lastMessageDate = normalized.date;
 		contact.lastMessageSeen = false;
@@ -2059,6 +2392,8 @@ function _sendOutgoingMessage(
 	replyTo = null,
 	prevContactState = null,
 	isOneTime = false,
+	isTimeCapsule = false,
+	scheduledFor = null,
 ) {
 	if (!contact) return;
 
@@ -2080,6 +2415,9 @@ function _sendOutgoingMessage(
 		time: timeStr,
 		pending: true,
 		isOneTime: !!isOneTime,
+		isTimeCapsule: !!isTimeCapsule,
+		scheduledFor: scheduledFor || null,
+		isLocked: false,
 	});
 	pendingNode.dataset.pendingId = pendingId;
 	pendingNode.dataset.contactId = contact.id;
@@ -2120,6 +2458,8 @@ function _sendOutgoingMessage(
 		time: timeStr,
 		prevContactState,
 		isOneTime: !!isOneTime,
+		isTimeCapsule: !!isTimeCapsule,
+		scheduledFor: scheduledFor || null,
 	});
 
 	// send via socket (don't await here to allow timeout behavior)
@@ -2132,6 +2472,8 @@ function _sendOutgoingMessage(
 				replyToName: replyTo?.sender || replyTo?.name || null,
 				replyToText: replyTo?.text || null,
 				isOneTime: !!isOneTime,
+				isTimeCapsule: !!isTimeCapsule,
+				scheduledFor: scheduledFor || null,
 			});
 			// confirm pending (if still present)
 			await _confirmPending(pendingId, sent);
@@ -2149,7 +2491,7 @@ function _updateContactCard() {
 	const lastMsg = userMsgs?.at(-1);
 	const friend = contacts.find((c) => c.id === state.contactUserId);
 	if (friend && lastMsg) {
-		friend.lastMessage = lastMsg.text;
+		friend.lastMessage = getContactPreviewText(lastMsg);
 		friend.lastMessageTime = lastMsg.time;
 		friend.lastMessageDate = lastMsg.date;
 		friend.lastMessageSeen = false; //new outgoing message which 2nd person has not seen

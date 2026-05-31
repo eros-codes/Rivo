@@ -55,8 +55,9 @@ export function initInAppNotification() {
   // Click opens chat (handled by main via custom event)
   _notif.addEventListener('click', (e) => {
     const cid = Number(_notif.dataset.contactId || 0);
+    const mid = _notif.dataset.messageId ? Number(_notif.dataset.messageId) : null;
     if (!cid) return;
-    document.dispatchEvent(new CustomEvent('in-app-notif:open', { detail: { contactId: cid } }));
+    document.dispatchEvent(new CustomEvent('in-app-notif:open', { detail: { contactId: cid, messageId: mid } }));
     hideNotification(true);
   });
 
@@ -143,6 +144,8 @@ function _render(contact, message) {
   _title.textContent = contact.nickname || contact.name || '';
   _text.textContent = message.text || '';
   _notif.dataset.contactId = String(contact.id || contact.contactId || '');
+  // allow passing message id so click can navigate to a specific message
+  _notif.dataset.messageId = String(message.id || message.messageId || message.id || '');
 }
 
 function _startTimer() {

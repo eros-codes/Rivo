@@ -8,6 +8,7 @@ import { createServer } from "http";
 import { resolve } from "path";
 import { existsSync } from "fs";
 import { initSocket } from "./socket/index.js";
+import { openDueCapsules } from "./jobs/openCapsules.js";
 import { initKeyStore, wrapDEK, generateDEK } from "./utils/encryption.js";
 import * as Sentry from "@sentry/node";
 
@@ -381,7 +382,21 @@ if (process.env.SENTRY_DSN) {
 			);
 		}
 	}
-	initSocket(httpServer);
+	const io = initSocket(httpServer);
+
+	// Start background poll to open due time-capsules every 30 seconds
+	try {
+		setInterval(() => openDueCapsules(io), 30_000);
+	} catch (e) {
+		console.error('failed to start openDueCapsules interval', e);
+	}
+
+	// Run once immediately on startup to open any already-due capsules
+	try {
+		openDueCapsules(io).catch(e => console.error('capsule init error', e));
+	} catch (e) {
+		console.error('capsule init error', e);
+	}
 })();
 
 // ─── Start ────────────────────────────────────────────────────────────────────

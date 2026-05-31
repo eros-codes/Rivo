@@ -2,6 +2,7 @@ import { io } from "/js/socket.io.esm.min.js";
 
 let socket = null;
 let _onOnetimeDeleted = null;
+let _capsuleOpenedHandler = null;
 
 function _showStatus(text) {
 	const el = document.getElementById("connection-status");
@@ -72,6 +73,10 @@ export function initSocket(
 		try { _onOnetimeDeleted?.(data); } catch (e) { /* ignore */ }
 	});
 
+	socket.on("message:capsule:opened", (payload) => {
+		try { _capsuleOpenedHandler?.(payload); } catch (e) { /* ignore */ }
+	});
+
 	socket.on("user:updated", (user) => {
 		try {
 			onUserUpdated?.(user);
@@ -131,12 +136,14 @@ export function getSocket() {
 	return socket;
 }
 
-export function emitMessage({ conversationId, text, replyToId, replyToName, replyToText, forwardedFrom, forwardedText, isOneTime = false }) {
+export function emitMessage({ conversationId, text, replyToId, replyToName, replyToText, forwardedFrom, forwardedText, isOneTime = false, isTimeCapsule = false, scheduledFor = null }) {
 	return new Promise((resolve, reject) => {
  		if (!socket) return reject(new Error("No socket"));
  		socket.emit("message:send", {
- 			conversationId, text, replyToId, replyToName, replyToText,
- 			forwardedFrom, forwardedText, isOneTime,
+			 conversationId, text, replyToId, replyToName, replyToText,
+			 forwardedFrom, forwardedText, isOneTime,
+			 isTimeCapsule,
+			 scheduledFor,
  		}, (res) => {
  			if (res?.error) return reject(new Error(res.error));
  			resolve(res?.message || res);
@@ -207,3 +214,5 @@ export function emitReaction(messageId, emoji) {
 export function setOnetimeDeletedHandler(fn) {
  	_onOnetimeDeleted = fn;
 }
+
+export function setCapsuleOpenedHandler(fn) { _capsuleOpenedHandler = fn; }

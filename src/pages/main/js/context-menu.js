@@ -6,8 +6,9 @@ import {
 	updatePinnedMessage,
 	basePadding,
 	nearBottom,
-	lineHeight,
-	maxLines,
+ 	lineHeight,
+ 	maxLines,
+	getContactPreviewText,
 } from "./chat.js";
 import {
 	refreshCard,
@@ -309,7 +310,7 @@ export function deleteMessage(msg, index) {
 				if (friend) {
 					if (remaining.length > 0) {
 						const lastMsg = remaining.at(-1);
-						friend.lastMessage = lastMsg.text;
+						friend.lastMessage = getContactPreviewText(lastMsg);
 						friend.lastMessageTime = lastMsg.time;
 						friend.lastMessageDate = lastMsg.date || "";
 						// Only explicit `false` means unseen.

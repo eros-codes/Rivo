@@ -24,6 +24,8 @@ import {
 	injectMessages,
 	sendMessage,
 	sendOneTimeMessage,
+	sendTimeCapsuleMessage,
+	handleCapsuleOpened,
 	resetInput,
 	scrollChatToBottom,
 	scrollChatToBottomAfterPadding,
@@ -83,7 +85,10 @@ import {
 	handleDeleteContact,
 } from "./js/profile.js";
 import { initCardContextMenu, closeAllSwipes } from "./js/card-context-menu.js";
-import { initInAppNotification, showNotification } from "./js/in-app-notification.js";
+import {
+	initInAppNotification,
+	showNotification,
+} from "./js/in-app-notification.js";
 import { initSearch, runSearch } from "./js/search.js";
 import { initEditProfile, openEditProfile } from "./js/edit-profile.js";
 import { initSettings, openSettings, closeSettings } from "./js/settings.js";
@@ -95,17 +100,29 @@ import {
 	emitMessageSeen,
 	getSocket,
 	emitReaction,
- 	setOnetimeDeletedHandler,
+	setOnetimeDeletedHandler,
+	setCapsuleOpenedHandler,
 } from "./js/socket.js";
 import { applyReactionsToMessage } from "../../components/messages/messages.js";
 import { findMessageById } from "./js/state.js";
 import { loadThemeFromStorage } from "../../utils/theme.js";
 import { parseSvg } from "../../utils/svg.js";
-import { safeSrc, updateThemeImages, observeThemeChanges, createAvatarElement, mountAvatar, refreshUserAvatars } from "../../utils/dom.js";
+import {
+	safeSrc,
+	updateThemeImages,
+	observeThemeChanges,
+	createAvatarElement,
+	mountAvatar,
+	refreshUserAvatars,
+} from "../../utils/dom.js";
 import { getCurrentUser } from "./js/currentUser.js";
 const _notifQueue = new Set();
 // expose to other modules (e.g., chat) for notification deduplication
-try { window._notifQueue = _notifQueue; } catch (e) { /* ignore */ }
+try {
+	window._notifQueue = _notifQueue;
+} catch (e) {
+	/* ignore */
+}
 
 document.addEventListener("DOMContentLoaded", async function () {
 	// Initialize client-side Sentry (loaded from CDN if `window.__SENTRY_DSN__` set)
@@ -153,12 +170,15 @@ document.addEventListener("DOMContentLoaded", async function () {
 	try {
 		initInAppNotification();
 		// open chat when in-app notification is clicked — use same flow as archived dialog
-		document.addEventListener("in-app-notif:open", (e) => {
+		document.addEventListener("in-app-notif:open", async (e) => {
 			try {
 				const id = e?.detail?.contactId;
+				const messageId = e?.detail?.messageId || null;
 				if (!id) return;
 				// Mirror contact-click flow exactly
-				const prevFriend = contacts.find((c) => c.id === state.contactUserId);
+				const prevFriend = contacts.find(
+					(c) => c.id === state.contactUserId,
+				);
 				if (prevFriend && prevFriend.id !== Number(id)) {
 					try {
 						const sock = getSocket();
@@ -184,7 +204,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 				}
 
 				state.contactUserId = Number(id);
-				const friend = contacts.find((c) => c.id === state.contactUserId);
+				const friend = contacts.find(
+					(c) => c.id === state.contactUserId,
+				);
 				if (!friend) return;
 
 				// join the new conversation room so server considers us present
@@ -216,25 +238,54 @@ document.addEventListener("DOMContentLoaded", async function () {
 					wrapper.replaceWith(createActiveChatCard(friend));
 				} else {
 					// remove from contacts list if present and append to active
-					const card = document.querySelector(`[data-user-id="${friend.id}"]`);
+					const card = document.querySelector(
+						`[data-user-id="${friend.id}"]`,
+					);
 					if (card) card.remove();
-					activeChatsContainer.appendChild(createActiveChatCard(friend));
+					activeChatsContainer.appendChild(
+						createActiveChatCard(friend),
+					);
 				}
 
 				mountAvatar(chatProfilePicture, {
 					name: friend.name,
 					nickname: friend.nickname,
 					profilePics: friend.profilePics,
-					className: 'chat-profile-picture',
+					className: "chat-profile-picture",
 					isOnline: friend.isOnline,
 				});
 				try {
-					const chatProfileWrapper = document.querySelector('.chat-profile');
-					if (chatProfileWrapper) chatProfileWrapper.setAttribute('data-user-id', String(friend.id));
-				} catch (e) { /* ignore */ }
+					const chatProfileWrapper =
+						document.querySelector(".chat-profile");
+					if (chatProfileWrapper)
+						chatProfileWrapper.setAttribute(
+							"data-user-id",
+							String(friend.id),
+						);
+				} catch (e) {
+					/* ignore */
+				}
 				chatName.textContent = friend.nickname || friend.name;
 				closeSettings();
-				openChat(true);
+				try {
+					await openChat(true);
+				} catch (e) { /* ignore */ }
+
+				// If notification supplied a messageId, try to scroll to it after messages load
+				if (messageId) {
+					let attempts = 0;
+					const tryScroll = () => {
+						const el = document.querySelector(`.chat-message[data-message-id="${messageId}"]`);
+						if (el) {
+							el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+							try { highlightMessage(el); } catch (e) { /* ignore */ }
+						} else if (attempts < 6) {
+							attempts++;
+							setTimeout(tryScroll, 500);
+						}
+					};
+					tryScroll();
+				}
 
 				if (friend.isBlocked) {
 					messageContainer.style.display = "none";
@@ -262,30 +313,30 @@ document.addEventListener("DOMContentLoaded", async function () {
 	if (!currentUser || !currentUser.id) {
 		try {
 			const me = await getMe();
-				if (me && me.id) {
-					// store only non-sensitive fields
-					const safeUser = {
-						id: me.id,
-						name: me.name || "",
-						username: me.username || "",
-						nickname: me.nickname || me.username || "",
-						profilePics: me.profilePics || [],
-						isSaved: me.isSaved || false,
-						isOnline: me.isOnline || false,
-						conversationId: me.conversationId || null,
-						bio: me.bio || "",
-						email: me.email || "",
-					};
-					localStorage.setItem("user", JSON.stringify(safeUser));
-					currentUser = safeUser;
-				} else {
-						window.location.href = "/auth/auth.html";
+			if (me && me.id) {
+				// store only non-sensitive fields
+				const safeUser = {
+					id: me.id,
+					name: me.name || "",
+					username: me.username || "",
+					nickname: me.nickname || me.username || "",
+					profilePics: me.profilePics || [],
+					isSaved: me.isSaved || false,
+					isOnline: me.isOnline || false,
+					conversationId: me.conversationId || null,
+					bio: me.bio || "",
+					email: me.email || "",
+				};
+				localStorage.setItem("user", JSON.stringify(safeUser));
+				currentUser = safeUser;
+			} else {
+				window.location.href = "/auth/auth.html";
 				return;
 			}
-				} catch (e) {
-					window.location.href = "/auth/auth.html";
-					return;
-				}
+		} catch (e) {
+			window.location.href = "/auth/auth.html";
+			return;
+		}
 	}
 
 	// Theme
@@ -295,7 +346,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 	loadThemeFromStorage();
 
 	// Ensure any static/default profile images reflect the active theme
-	try { updateThemeImages(); observeThemeChanges(); } catch (e) { /* ignore */ }
+	try {
+		updateThemeImages();
+		observeThemeChanges();
+	} catch (e) {
+		/* ignore */
+	}
 
 	// ─── DOM references ───────────────────────────────────────────────────────
 	const logoutBtn = document.getElementById("logout");
@@ -372,7 +428,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 	const detailUsernames = document.querySelectorAll("#contact-username h3");
 	const detailEmails = document.querySelectorAll("#contact-email h3");
 	const deleteChatBtns = document.querySelectorAll("#delete-chat-btn");
-	const archiveContactBtns = document.querySelectorAll("#archive-contact-btn")
+	const archiveContactBtns = document.querySelectorAll(
+		"#archive-contact-btn",
+	);
 	const editNameBtns = document.querySelectorAll("#edit-name-btn");
 	const editNameDoneBtn = document.querySelectorAll(
 		".contact-detail-name #edit-name-done-btn",
@@ -505,23 +563,40 @@ document.addEventListener("DOMContentLoaded", async function () {
 	const archivedDialogList = document.getElementById("archived-dialog-list");
 
 	// Delete account dialog elements
-	const deleteAccountDialog = document.getElementById("delete-account-dialog");
-	const deleteAccountPassword = document.getElementById("delete-account-password");
+	const deleteAccountDialog = document.getElementById(
+		"delete-account-dialog",
+	);
+	const deleteAccountPassword = document.getElementById(
+		"delete-account-password",
+	);
 	const deleteAccountError = document.getElementById("delete-account-error");
-	const deleteAccountCancel = document.getElementById("delete-account-cancel");
-	const deleteAccountConfirm = document.getElementById("delete-account-confirm");
+	const deleteAccountCancel = document.getElementById(
+		"delete-account-cancel",
+	);
+	const deleteAccountConfirm = document.getElementById(
+		"delete-account-confirm",
+	);
 
 	// Delete account dialog listeners
 	deleteAccountCancel?.addEventListener("click", () => {
-		try { deleteAccountDialog.close(); } catch (e) { /* ignore */ }
+		try {
+			deleteAccountDialog.close();
+		} catch (e) {
+			/* ignore */
+		}
 		if (deleteAccountPassword) deleteAccountPassword.value = "";
 		if (deleteAccountError) deleteAccountError.textContent = "";
 	});
 
 	deleteAccountConfirm?.addEventListener("click", async () => {
-		const password = (deleteAccountPassword && deleteAccountPassword.value && deleteAccountPassword.value.trim()) || "";
+		const password =
+			(deleteAccountPassword &&
+				deleteAccountPassword.value &&
+				deleteAccountPassword.value.trim()) ||
+			"";
 		if (!password) {
-			if (deleteAccountError) deleteAccountError.textContent = "Please enter your password.";
+			if (deleteAccountError)
+				deleteAccountError.textContent = "Please enter your password.";
 			return;
 		}
 		if (deleteAccountError) deleteAccountError.textContent = "";
@@ -529,14 +604,17 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 		try {
 			const res = await deleteAccount(password);
-				if (res?.success) {
-					window.location.href = "/auth/auth.html";
-				} else {
-				if (deleteAccountError) deleteAccountError.textContent = res?.error || "Incorrect password.";
+			if (res?.success) {
+				window.location.href = "/auth/auth.html";
+			} else {
+				if (deleteAccountError)
+					deleteAccountError.textContent =
+						res?.error || "Incorrect password.";
 				if (deleteAccountConfirm) deleteAccountConfirm.disabled = false;
 			}
 		} catch (err) {
-			if (deleteAccountError) deleteAccountError.textContent = "Connection error.";
+			if (deleteAccountError)
+				deleteAccountError.textContent = "Connection error.";
 			if (deleteAccountConfirm) deleteAccountConfirm.disabled = false;
 		}
 	});
@@ -734,13 +812,20 @@ document.addEventListener("DOMContentLoaded", async function () {
 				name: contact.name,
 				nickname: contact.nickname,
 				profilePics: contact.profilePics,
-				className: 'chat-profile-picture',
+				className: "chat-profile-picture",
 				isOnline: contact.isOnline,
 			});
 			try {
-				const chatProfileWrapper = document.querySelector('.chat-profile');
-				if (chatProfileWrapper) chatProfileWrapper.setAttribute('data-user-id', String(contact.id));
-			} catch (e) { /* ignore */ }
+				const chatProfileWrapper =
+					document.querySelector(".chat-profile");
+				if (chatProfileWrapper)
+					chatProfileWrapper.setAttribute(
+						"data-user-id",
+						String(contact.id),
+					);
+			} catch (e) {
+				/* ignore */
+			}
 			chatName.textContent = contact.nickname || contact.name;
 			openChat(true);
 
@@ -871,13 +956,20 @@ document.addEventListener("DOMContentLoaded", async function () {
 				name: normalized.name,
 				nickname: normalized.nickname,
 				profilePics: normalized.profilePics,
-				className: 'chat-profile-picture',
+				className: "chat-profile-picture",
 				isOnline: normalized.isOnline,
 			});
 			try {
-				const chatProfileWrapper = document.querySelector('.chat-profile');
-				if (chatProfileWrapper) chatProfileWrapper.setAttribute('data-user-id', String(normalized.id));
-			} catch (e) { /* ignore */ }
+				const chatProfileWrapper =
+					document.querySelector(".chat-profile");
+				if (chatProfileWrapper)
+					chatProfileWrapper.setAttribute(
+						"data-user-id",
+						String(normalized.id),
+					);
+			} catch (e) {
+				/* ignore */
+			}
 			chatName.textContent = normalized.nickname || normalized.name;
 
 			state.contactUserId = normalized.id;
@@ -909,9 +1001,15 @@ document.addEventListener("DOMContentLoaded", async function () {
 					// `name` to "Deleted account" and replace username/email with
 					// generated placeholders like `deleted_user_<id>_<ts>` / `@deleted.rivo`.
 					// We should not display those garbled values in the UI — clear them.
-					const isDeletedAccount = user.name && String(user.name).toLowerCase() === 'deleted account';
-					const isAnonUsername = user.username && String(user.username).startsWith('deleted_user_');
-					const isAnonEmail = user.email && String(user.email).endsWith('@deleted.rivo');
+					const isDeletedAccount =
+						user.name &&
+						String(user.name).toLowerCase() === "deleted account";
+					const isAnonUsername =
+						user.username &&
+						String(user.username).startsWith("deleted_user_");
+					const isAnonEmail =
+						user.email &&
+						String(user.email).endsWith("@deleted.rivo");
 					if (isDeletedAccount || isAnonUsername || isAnonEmail) {
 						c.username = "";
 						c.email = "";
@@ -925,12 +1023,19 @@ document.addEventListener("DOMContentLoaded", async function () {
 				}
 			}
 			// Update DOM avatars immediately
-			try { refreshUserAvatars(user); } catch (e) { /* ignore */ }
+			try {
+				refreshUserAvatars(user);
+			} catch (e) {
+				/* ignore */
+			}
 
 			// If the currently open chat is with this user, update header
-			if (state.contactUserId && Number(state.contactUserId) === Number(user.id)) {
+			if (
+				state.contactUserId &&
+				Number(state.contactUserId) === Number(user.id)
+			) {
 				const friend = contacts.find((c) => c.id === Number(user.id));
-				if (friend && typeof chatName !== 'undefined' && chatName) {
+				if (friend && typeof chatName !== "undefined" && chatName) {
 					chatName.textContent = friend.nickname || friend.name;
 				}
 			}
@@ -963,7 +1068,14 @@ document.addEventListener("DOMContentLoaded", async function () {
 			// If this edited message is the conversation's last message, update contact preview
 			const friend = contacts.find((c) => c.id === foundUserId);
 			if (friend && foundIndex === userMsgs.length - 1) {
-				friend.lastMessage = data.text;
+				const lastMsg = userMsgs.at(-1);
+				friend.lastMessage =
+					lastMsg &&
+					lastMsg.isTimeCapsule &&
+					lastMsg.isLocked &&
+					!lastMsg.user
+						? ""
+						: lastMsg?.text || "";
 				refreshCard(friend);
 				sortActiveChats();
 				sortContacts();
@@ -1007,8 +1119,16 @@ document.addEventListener("DOMContentLoaded", async function () {
 			// so the contact preview reflects the deletion.
 			try {
 				const friend = contacts.find((c) => c.id === foundUserId);
-				if (friend && removedMsg && !removedMsg.user && !removedMsg.isSeen) {
-					friend.unreadCount = Math.max(0, (friend.unreadCount || 0) - 1);
+				if (
+					friend &&
+					removedMsg &&
+					!removedMsg.user &&
+					!removedMsg.isSeen
+				) {
+					friend.unreadCount = Math.max(
+						0,
+						(friend.unreadCount || 0) - 1,
+					);
 					updateTotalUnreadCount();
 				}
 			} catch (e) {
@@ -1031,7 +1151,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 			if (friend) {
 				if (userMsgs.length > 0) {
 					const lastMsg = userMsgs.at(-1);
-					friend.lastMessage = lastMsg.text;
+					friend.lastMessage =
+						lastMsg &&
+						lastMsg.isTimeCapsule &&
+						lastMsg.isLocked &&
+						!lastMsg.user
+							? ""
+							: lastMsg.text || "";
 					friend.lastMessageTime = lastMsg.time;
 					friend.lastMessageDate = lastMsg.date || "";
 					friend.lastMessageTs = lastMsg.createdAt;
@@ -1109,92 +1235,144 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}
 		},
 		_handleUserUpdated,
-			// contact removed handler
-			(payload) => {
-				try {
-					const partnerUserId = payload?.contactUserId || payload?.userId || payload?.contactId;
-					if (!partnerUserId) return;
-					const idx = contacts.findIndex((c) => c.contactId === partnerUserId);
-					if (idx === -1) return;
-					const removed = contacts.splice(idx, 1)[0];
-					// remove DOM card if present
-					const card = document.querySelector(`[data-user-id="${removed.id}"]`);
-					if (card) card.remove();
-					updateContactsEmptyState();
-					// if this conversation is currently open, close it
-					if (state.contactUserId === removed.id) {
-						try { closeChat(); } catch (e) { /* ignore */ }
-					}
-					updateTotalUnreadCount();
-					sortActiveChats();
-					sortContacts();
-				} catch (e) {
-					/* ignore handler errors */
-				}
-			},
-				// onReactionUpdated
-				({ messageId, reactions, actorId, emoji, action }) => {
-					const currentUser = getCurrentUser();
-					const currentUserId = currentUser?.id || null;
-
-					// Update reactions in messages array and capture which conversation/user it belongs to
-					let foundUserId = null;
-					let belongsToMe = false;
-					for (const [uid, msgs] of Object.entries(messages)) {
-						if (!Array.isArray(msgs)) continue;
-						// Compare IDs as strings to avoid type-mismatch (number vs string)
-						const idx = msgs.findIndex((m) => String(m.id) === String(messageId));
-						if (idx !== -1) {
-							foundUserId = Number(uid);
-							msgs[idx].reactions = reactions;
-							belongsToMe = !!msgs[idx].user;
-							break;
-						}
-					}
-
-					// Update DOM message elements for this messageId
-					document.querySelectorAll(`.chat-message[data-message-id="${messageId}"]`).forEach((msgEl) => {
-						try { applyReactionsToMessage(msgEl, reactions, currentUserId); } catch (e) { /* ignore */ }
-					});
-
-
-
-						// Notification logic:
-					// - Do NOT show a local toast for my own reaction.
-					// - Show an in-app notification for others reacting to my message
-					//   only when I'm NOT currently viewing that conversation.
+		// contact removed handler
+		(payload) => {
+			try {
+				const partnerUserId =
+					payload?.contactUserId ||
+					payload?.userId ||
+					payload?.contactId;
+				if (!partnerUserId) return;
+				const idx = contacts.findIndex(
+					(c) => c.contactId === partnerUserId,
+				);
+				if (idx === -1) return;
+				const removed = contacts.splice(idx, 1)[0];
+				// remove DOM card if present
+				const card = document.querySelector(
+					`[data-user-id="${removed.id}"]`,
+				);
+				if (card) card.remove();
+				updateContactsEmptyState();
+				// if this conversation is currently open, close it
+				if (state.contactUserId === removed.id) {
 					try {
-						if (action !== "removed") {
-							const actorNum = Number(actorId);
-							// Skip local toast entirely for my own actions
-							if (actorNum !== Number(currentUserId)) {
-								// Only notify if the reaction was on one of my messages
-								// and the conversation is not currently open.
-								if (belongsToMe && state.contactUserId !== foundUserId) {
-									let reactorContact = contacts.find((c) => Number(c.contactId) === actorNum || Number(c.id) === actorNum);
-									if (!reactorContact) {
-										const possible = contacts.find((c) => c.conversationId === foundUserId) || {};
-										reactorContact = {
-											id: possible.id || actorNum,
-											contactId: possible.contactId || actorNum,
-											name: possible.nickname || possible.name || "Someone",
-											nickname: possible.nickname || possible.name || "Someone",
-											profilePics: possible.profilePics || [],
-										};
-									}
-									try {
-										showNotification(reactorContact, { text: `${reactorContact.nickname || reactorContact.name || 'Someone'} reacted ${emoji} to your message` });
-									} catch (e) { /* ignore */ }
-								}
+						closeChat();
+					} catch (e) {
+						/* ignore */
+					}
+				}
+				updateTotalUnreadCount();
+				sortActiveChats();
+				sortContacts();
+			} catch (e) {
+				/* ignore handler errors */
+			}
+		},
+		// onReactionUpdated
+		({ messageId, reactions, actorId, emoji, action }) => {
+			const currentUser = getCurrentUser();
+			const currentUserId = currentUser?.id || null;
+
+			// Update reactions in messages array and capture which conversation/user it belongs to
+			let foundUserId = null;
+			let belongsToMe = false;
+			for (const [uid, msgs] of Object.entries(messages)) {
+				if (!Array.isArray(msgs)) continue;
+				// Compare IDs as strings to avoid type-mismatch (number vs string)
+				const idx = msgs.findIndex(
+					(m) => String(m.id) === String(messageId),
+				);
+				if (idx !== -1) {
+					foundUserId = Number(uid);
+					msgs[idx].reactions = reactions;
+					belongsToMe = !!msgs[idx].user;
+					break;
+				}
+			}
+
+			// Update DOM message elements for this messageId
+			document
+				.querySelectorAll(
+					`.chat-message[data-message-id="${messageId}"]`,
+				)
+				.forEach((msgEl) => {
+					try {
+						applyReactionsToMessage(
+							msgEl,
+							reactions,
+							currentUserId,
+						);
+					} catch (e) {
+						/* ignore */
+					}
+				});
+
+			// Notification logic:
+			// - Do NOT show a local toast for my own reaction.
+			// - Show an in-app notification for others reacting to my message
+			//   only when I'm NOT currently viewing that conversation.
+			try {
+				if (action !== "removed") {
+					const actorNum = Number(actorId);
+					// Skip local toast entirely for my own actions
+					if (actorNum !== Number(currentUserId)) {
+						// Only notify if the reaction was on one of my messages
+						// and the conversation is not currently open.
+						if (
+							belongsToMe &&
+							state.contactUserId !== foundUserId
+						) {
+							let reactorContact = contacts.find(
+								(c) =>
+									Number(c.contactId) === actorNum ||
+									Number(c.id) === actorNum,
+							);
+							if (!reactorContact) {
+								const possible =
+									contacts.find(
+										(c) => c.conversationId === foundUserId,
+									) || {};
+								reactorContact = {
+									id: possible.id || actorNum,
+									contactId: possible.contactId || actorNum,
+									name:
+										possible.nickname ||
+										possible.name ||
+										"Someone",
+									nickname:
+										possible.nickname ||
+										possible.name ||
+										"Someone",
+									profilePics: possible.profilePics || [],
+								};
+							}
+							try {
+								showNotification(reactorContact, {
+									text: `${reactorContact.nickname || reactorContact.name || "Someone"} reacted ${emoji} to your message`,
+								});
+							} catch (e) {
+								/* ignore */
 							}
 						}
-					} catch (e) {
-						// Protect notification path from crashing the handler (errors suppressed)
 					}
 				}
-		);
-		// Wire one-time-deleted events from socket to chat handler
-		try { setOnetimeDeletedHandler(handleOnetimeDeleted); } catch (e) { /* ignore */ }
+			} catch (e) {
+				// Protect notification path from crashing the handler (errors suppressed)
+			}
+		},
+	);
+	// Wire one-time-deleted events from socket to chat handler
+	try {
+		setOnetimeDeletedHandler(handleOnetimeDeleted);
+	} catch (e) {
+		/* ignore */
+	}
+	try {
+		setCapsuleOpenedHandler(handleCapsuleOpened);
+	} catch (e) {
+		/* ignore */
+	}
 	// Rejoin active conversation after socket reconnect and emit leave on unload
 	try {
 		const sock = getSocket();
@@ -1238,7 +1416,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 		const empty = document.getElementById("contacts-empty");
 		if (!empty) return;
 		// Show placeholder when there are no contacts
-		empty.style.display = (Array.isArray(contacts) && contacts.length > 0) ? "none" : "flex";
+		empty.style.display =
+			Array.isArray(contacts) && contacts.length > 0 ? "none" : "flex";
 	}
 
 	function _onContactAction(action, userId) {
@@ -1378,7 +1557,22 @@ document.addEventListener("DOMContentLoaded", async function () {
 				email: c.isSaved ? "" : c.contact?.email || "",
 				contactId: c.isSaved ? c.ownerId : c.contact?.id || null,
 				isSaved: c.isSaved ?? false,
-				lastMessage: c.conversation?.messages?.[0]?.text || "",
+				lastMessage: (() => {
+					const lastMsg = c.conversation?.messages?.[0];
+					if (!lastMsg) return "";
+					const isFromPartner = lastMsg.senderId !== currentUser?.id;
+					if (lastMsg.isTimeCapsule) {
+						// still locked for recipient -> hide preview
+						if (lastMsg.isLocked && isFromPartner) return "";
+						// opened on server -> if server provided plaintext show it,
+						// otherwise show neutral placeholder
+						if (lastMsg.openedAt && isFromPartner) {
+							if (lastMsg.text) return lastMsg.text;
+							return 'Time capsule unlocked';
+						}
+					}
+					return lastMsg.text || "";
+				})(),
 				lastMessageTime: c.conversation?.messages?.[0]
 					? new Date(
 							c.conversation.messages[0].createdAt,
@@ -1407,6 +1601,40 @@ document.addEventListener("DOMContentLoaded", async function () {
 				_previousContainer: "contacts",
 			});
 		});
+
+		// If the service worker posts messages (push click), handle them and open the conversation
+		try {
+			if (navigator.serviceWorker && navigator.serviceWorker.addEventListener) {
+				navigator.serviceWorker.addEventListener('message', (ev) => {
+					try {
+						const data = ev.data || {};
+						if (data && data.type === 'push:click') {
+							const payload = data.payload || {};
+							const convId = payload.conversationId || payload.conversationId;
+							const messageId = payload.messageId || null;
+							if (!convId) return;
+							const contact = contacts.find((x) => String(x.conversationId) === String(convId));
+							if (contact) {
+								document.dispatchEvent(new CustomEvent('in-app-notif:open', { detail: { contactId: contact.id, messageId } }));
+							}
+						}
+					} catch (e) { /* ignore */ }
+				});
+			}
+		} catch (e) { /* ignore */ }
+
+		// Handle deep link via query params (e.g. opened by notificationclick opening a URL)
+		try {
+			const params = new URLSearchParams(window.location.search);
+			const convParam = params.get('conversationId');
+			const midParam = params.get('messageId');
+			if (convParam) {
+				const contact = contacts.find((x) => String(x.conversationId) === String(convParam));
+				if (contact) {
+					document.dispatchEvent(new CustomEvent('in-app-notif:open', { detail: { contactId: contact.id, messageId: midParam ? Number(midParam) : null } }));
+				}
+			}
+		} catch (e) { /* ignore */ }
 	} catch (err) {
 		console.error("Failed to load contacts", err);
 	}
@@ -1513,7 +1741,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 			chatEl.textContent = "";
 			const friend = contacts.find((c) => c.id === state.contactUserId);
 			if (friend) {
-				if (friend.isSaved) { closeChat(); return; }
+				if (friend.isSaved) {
+					closeChat();
+					return;
+				}
 				if (
 					!friend.isPinned &&
 					friend.unreadCount === 0 &&
@@ -1590,39 +1821,53 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 			if (friend.isSaved) {
 				// hide any current avatar element and show saved-icon
-				const _imgEl = chatProfilePicture.querySelector('img, .contact-profile, .initial-avatar');
+				const _imgEl = chatProfilePicture.querySelector(
+					"img, .contact-profile, .initial-avatar",
+				);
 				if (_imgEl) _imgEl.style.display = "none";
 				chatProfilePicture.classList.add("saved-icon");
-				const existingSavedIcon = chatProfilePicture.querySelector(
-					".saved-icon-svg",
-				);
+				const existingSavedIcon =
+					chatProfilePicture.querySelector(".saved-icon-svg");
 				if (existingSavedIcon) existingSavedIcon.remove();
 				const _savedIcon = parseSvg(savedIconSvg);
 				if (_savedIcon) {
 					_savedIcon.classList.add("saved-icon-svg");
 					chatProfilePicture.appendChild(_savedIcon);
 				}
-				if (_imgEl && _imgEl.tagName && _imgEl.tagName.toLowerCase() === 'img') _imgEl.src = "";
+				if (
+					_imgEl &&
+					_imgEl.tagName &&
+					_imgEl.tagName.toLowerCase() === "img"
+				)
+					_imgEl.src = "";
 			} else {
 				// ensure avatar container shows avatar and remove saved icon
-				const _imgEl = chatProfilePicture.querySelector('img, .contact-profile, .initial-avatar');
+				const _imgEl = chatProfilePicture.querySelector(
+					"img, .contact-profile, .initial-avatar",
+				);
 				if (_imgEl) _imgEl.style.display = "";
 				chatProfilePicture.classList.remove("saved-icon");
-				const existingSavedIcon = chatProfilePicture.querySelector(
-					".saved-icon-svg",
-				);
+				const existingSavedIcon =
+					chatProfilePicture.querySelector(".saved-icon-svg");
 				if (existingSavedIcon) existingSavedIcon.remove();
 				mountAvatar(chatProfilePicture, {
 					name: friend.name,
 					nickname: friend.nickname,
 					profilePics: friend.profilePics,
-					className: 'chat-profile-picture',
+					className: "chat-profile-picture",
 					isOnline: friend.isOnline,
 				});
 				try {
-					const chatProfileWrapper = document.querySelector('.chat-profile');
-					if (chatProfileWrapper) chatProfileWrapper.setAttribute('data-user-id', String(friend.id));
-				} catch (e) { /* ignore */ }
+					const chatProfileWrapper =
+						document.querySelector(".chat-profile");
+					if (chatProfileWrapper)
+						chatProfileWrapper.setAttribute(
+							"data-user-id",
+							String(friend.id),
+						);
+				} catch (e) {
+					/* ignore */
+				}
 			}
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
@@ -1710,17 +1955,24 @@ document.addEventListener("DOMContentLoaded", async function () {
 			card.remove();
 			activeChatsContainer.appendChild(createActiveChatCard(friend));
 
-						mountAvatar(chatProfilePicture, {
-							name: friend.name,
-							nickname: friend.nickname,
-							profilePics: friend.profilePics,
-							className: 'chat-profile-picture',
-							isOnline: friend.isOnline,
-						});
-						try {
-							const chatProfileWrapper = document.querySelector('.chat-profile');
-							if (chatProfileWrapper) chatProfileWrapper.setAttribute('data-user-id', String(friend.id));
-						} catch (e) { /* ignore */ }
+			mountAvatar(chatProfilePicture, {
+				name: friend.name,
+				nickname: friend.nickname,
+				profilePics: friend.profilePics,
+				className: "chat-profile-picture",
+				isOnline: friend.isOnline,
+			});
+			try {
+				const chatProfileWrapper =
+					document.querySelector(".chat-profile");
+				if (chatProfileWrapper)
+					chatProfileWrapper.setAttribute(
+						"data-user-id",
+						String(friend.id),
+					);
+			} catch (e) {
+				/* ignore */
+			}
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 			if (friend.isBlocked) {
@@ -1732,7 +1984,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 				const _ub = unblockActionBtn[0];
 				if (_ub) _ub.style.display = "none";
 			}
-            
 		});
 	}
 
@@ -1817,7 +2068,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 		});
 
 		// Capture original send button icon so we can swap it temporarily
-		const originalSendBtnInner = sendMessageBtn ? sendMessageBtn.innerHTML : null;
+		const originalSendBtnInner = sendMessageBtn
+			? sendMessageBtn.innerHTML
+			: null;
 		const oneTimeSendIcon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.2" stroke-dasharray="47 10" stroke-linecap="round" stroke-dashoffset="-5"/><text x="12" y="16.5" text-anchor="middle" font-size="9" font-weight="700" fill="currentColor">1</text></svg>`;
 
 		// Timestamp until which the immediate release click after activating the
@@ -1828,7 +2081,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 		let suppressNextSendClick = false;
 
 		function performSendActionFromUI(e) {
-			if (e && typeof e.preventDefault === 'function') {
+			if (e && typeof e.preventDefault === "function") {
 				e.preventDefault();
 			}
 			// If we recently activated the one-time overlay, swallow the immediate
@@ -1846,42 +2099,133 @@ document.addEventListener("DOMContentLoaded", async function () {
 					return;
 				} else {
 					try {
-						document.dispatchEvent(new Event('chat:closed'));
-					} catch (e) { /* ignore */ }
+						document.dispatchEvent(new Event("chat:closed"));
+					} catch (e) {
+						/* ignore */
+					}
 					// continue to normal send
 				}
 			}
 			// If user selected one-time mode, send as one-time and reset UI
-			if (state.sendMode === 'one-time') {
+			if (state.sendMode === "time-capsule") {
+				const sf = window._pendingCapsuleScheduledFor || null;
+				if (!sf) {
+					try {
+						showToast("No unlock time set for Time Capsule");
+					} catch (e) {}
+					state.sendMode = "normal";
+					window._pendingCapsuleScheduledFor = null;
+					if (sendMessageBtn && originalSendBtnInner)
+						sendMessageBtn.innerHTML = originalSendBtnInner;
+					return;
+				}
+				try {
+					sendTimeCapsuleMessage(sf);
+				} catch (err) {
+					/* ignore */
+				}
+				state.sendMode = "normal";
+				window._pendingCapsuleScheduledFor = null;
+				if (sendMessageBtn && originalSendBtnInner)
+					sendMessageBtn.innerHTML = originalSendBtnInner;
+				return;
+			}
+			if (state.sendMode === "one-time") {
 				try {
 					sendOneTimeMessage();
 				} catch (err) {
 					/* ignore */
 				}
 				// reset to default mode after sending
-				state.sendMode = 'normal';
+				state.sendMode = "normal";
 				if (sendMessageBtn && originalSendBtnInner)
 					sendMessageBtn.innerHTML = originalSendBtnInner;
 				return;
 			}
 			// Normal send
-			try { sendMessage(); } catch (err) { /* ignore */ }
+			try {
+				sendMessage();
+			} catch (err) {
+				/* ignore */
+			}
 		}
 
-		sendMessageBtn.addEventListener("click", (e) => performSendActionFromUI(e));
+		sendMessageBtn.addEventListener("click", (e) =>
+			performSendActionFromUI(e),
+		);
 		// One-time message: long-press on send button
 		(function initOneTimePress() {
 			if (!sendMessageBtn || !messageContainer) return;
+
+			// Slot ordering: [main, top-popup, bottom-popup]
+			let sendModeSlots = ["normal", "time-capsule", "one-time"];
+
+			const capsuleSvg = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="5" y="10" width="14" height="10" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M8 10V7.5C8 5.57 9.57 4 11.5 4H12.5C14.43 4 16 5.57 16 7.5V10" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="15" r="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M12 15V13.8M12 15L13 15.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+			const MODE_ICON = {
+				"normal": () => originalSendBtnInner || "",
+				"one-time": () => oneTimeSendIcon,
+				"time-capsule": () => capsuleSvg,
+			};
+			const MODE_LABEL = {
+				"normal": "Send normally",
+				"one-time": "One-time message",
+				"time-capsule": "Time Capsule",
+			};
+
+			function applyMainSlot() {
+				const mode = sendModeSlots[0];
+				state.sendMode = mode;
+				const icon = MODE_ICON[mode];
+				if (icon && sendMessageBtn) sendMessageBtn.innerHTML = icon();
+			}
+
+			function renderPopup() {
+				const topMode = sendModeSlots[1];
+				const botMode = sendModeSlots[2];
+				if (capsuleBtn) capsuleBtn.innerHTML = MODE_ICON[topMode]?.() || "";
+				if (capsuleLabel) capsuleLabel.textContent = MODE_LABEL[topMode] || "";
+				if (onetimeBtn) onetimeBtn.innerHTML = MODE_ICON[botMode]?.() || "";
+				if (onetimeLabel) onetimeLabel.textContent = MODE_LABEL[botMode] || "";
+			}
+
+			function swapWithMain(slotIdx) {
+				// If main was time-capsule, clear its pending state
+				if (sendModeSlots[0] === "time-capsule") {
+					window._pendingCapsuleScheduledFor = null;
+				}
+				[sendModeSlots[0], sendModeSlots[slotIdx]] =
+					[sendModeSlots[slotIdx], sendModeSlots[0]];
+				applyMainSlot();
+				try { renderPopup(); } catch (e) { /* ignore */ }
+			}
+
+			function resetSlots() {
+				sendModeSlots = ["normal", "time-capsule", "one-time"];
+				window._pendingCapsuleScheduledFor = null;
+				state.sendMode = "normal";
+				if (sendMessageBtn && originalSendBtnInner) sendMessageBtn.innerHTML = originalSendBtnInner;
+			}
+
+			// Ensure main slot reflects initial mode
+			applyMainSlot();
 
 			let pressTimer = null;
 			let onetimeWrap = null;
 			let onetimeBtn = null;
 			let onetimeLabel = null;
+			let triggerContainer = null;
+			let capsuleWrap = null;
+			let capsuleBtn = null;
+			let capsuleLabel = null;
 			let triggered = false;
 
 			function showOneTime() {
 				// Guard against creating multiple overlays if one already exists.
-				if (onetimeWrap || messageContainer.querySelector('.onetime-trigger')) return;
+				if (
+					triggerContainer ||
+					messageContainer.querySelector(".send-trigger-popup")
+				)
+					return;
 				triggered = true;
 				// Mark that the one-time overlay is active so we can suppress the
 				// immediate release click and allow the user to tap the floating btn.
@@ -1900,50 +2244,191 @@ document.addEventListener("DOMContentLoaded", async function () {
 				// Bring send area above overlay
 				messageContainer.style.zIndex = "501";
 
+				// Single parent container — holds both buttons
+				triggerContainer = document.createElement("div");
+				triggerContainer.className = "send-trigger-popup";
 				// Create wrapper and floating button with label
 				onetimeWrap = document.createElement("div");
 				onetimeWrap.className = "onetime-trigger";
 
 				onetimeLabel = document.createElement("span");
 				onetimeLabel.className = "onetime-trigger-label";
-				// If one-time mode is already selected, show a hint that this
-				// action will send normally; otherwise show the one-time hint.
-				onetimeLabel.textContent = state.sendMode === 'one-time' ? "Send normally" : "One-time message";
+				// If any special send mode is active (one-time or time-capsule),
+				// offer a quick "Send normally" hint; otherwise show the one-time hint.
+				onetimeLabel.textContent =
+					state.sendMode !== "normal"
+						? "Send normally"
+						: "One-time message";
 
 				onetimeBtn = document.createElement("button");
 				onetimeBtn.type = "button";
 				onetimeBtn.className = "onetime-trigger-btn";
-				onetimeBtn.setAttribute("aria-label", state.sendMode === 'one-time' ? "Send normally" : "Send as one-time message");
-				// Show floating button content. If we've already selected one-time mode,
-				// show the normal send icon so long-press toggles the mode.
-				if (state.sendMode === 'one-time' && originalSendBtnInner) {
-					onetimeBtn.innerHTML = originalSendBtnInner;
+				onetimeBtn.setAttribute(
+					"aria-label",
+					state.sendMode !== "normal"
+						? "Send normally"
+						: "Send as one-time message",
+				);
+				// Show floating button content. Use specific mode checks so the
+				// correct floating icon swaps with the main send icon.
+				if (state.sendMode === "one-time" && originalSendBtnInner) {
+				    onetimeBtn.innerHTML = originalSendBtnInner;
 				} else {
-					onetimeBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-							<circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.2"
-									stroke-dasharray="47 10" stroke-linecap="round" stroke-dashoffset="-5"/>
-							<text x="12" y="16.5" text-anchor="middle" font-size="9.5"
-									font-weight="700" fill="currentColor">1</text>
-							</svg>`;
+				    onetimeBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+					    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.2"
+						    stroke-dasharray="47 10" stroke-linecap="round" stroke-dashoffset="-5"/>
+					    <text x="12" y="16.5" text-anchor="middle" font-size="9.5"
+						    font-weight="700" fill="currentColor">1</text>
+					    </svg>`;
 				}
+
+				// clicking the label should behave like clicking the one-time button
+				onetimeLabel.addEventListener("click", (e) => {
+					e.stopPropagation();
+					onetimeBtn.click();
+				});
+
+				// Time Capsule button (sits ABOVE one-time button)
+				capsuleBtn = document.createElement("button");
+				capsuleBtn.type = "button";
+				capsuleBtn.className =
+					"onetime-trigger-btn capsule-trigger-btn";
+				capsuleBtn.setAttribute("aria-label", "Send as Time Capsule");
+				const capsuleSvg = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="5" y="10" width="14" height="10" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M8 10V7.5C8 5.57 9.57 4 11.5 4H12.5C14.43 4 16 5.57 16 7.5V10" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="15" r="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M12 15V13.8M12 15L13 15.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+				// Show capsule icon or swap-in the main send icon when time-capsule is active
+				if (state.sendMode === "time-capsule" && originalSendBtnInner) {
+					capsuleBtn.innerHTML = originalSendBtnInner;
+				} else {
+					capsuleBtn.innerHTML = capsuleSvg;
+				}
+
+				capsuleLabel = document.createElement("span");
+				capsuleLabel.className = "onetime-trigger-label";
+				capsuleLabel.textContent = "Time Capsule";
+
+				// trigger rendering uses slot model; see renderPopup/swapWithMain
+
+				capsuleWrap = document.createElement("div");
+				capsuleWrap.className = "onetime-trigger capsule-trigger";
+				capsuleWrap.appendChild(capsuleLabel);
+				capsuleWrap.appendChild(capsuleBtn);
+
+
+				// Capsule click: open datetime picker (attach while capsuleBtn is in scope)
+				function toLocalDatetimeInputValue(d) {
+					const pad = (n) => String(n).padStart(2, "0");
+					return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+				}
+
+				const openCapsulePicker = (slotIndex, e) => {
+					if (e && e.stopPropagation) e.stopPropagation();
+					hideOneTime();
+
+					const pickerWrap = document.createElement("div");
+					pickerWrap.className = "capsule-picker-wrap";
+					pickerWrap.innerHTML = `
+						<div class="capsule-picker-dialog">
+							<div class="capsule-picker-title">⏳ Set unlock time</div>
+							<input id="capsule-datetime-input" class="capsule-datetime-input" type="datetime-local" />
+							<div class="capsule-picker-actions">
+								<button type="button" id="capsule-cancel">Cancel</button>
+								<button type="button" id="capsule-confirm">Set &amp; Arm 💣</button>
+							</div>
+						</div>
+					`;
+
+					// Set min = now +5 minutes, max = now +1 year (minute-precision: ignore seconds)
+					const truncateToMinute = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), 0, 0);
+					const nowTrunc = truncateToMinute(new Date());
+					const minDate = new Date(nowTrunc.getTime() + 5 * 60 * 1000);
+					const maxDate = new Date(nowTrunc.getTime() + 365 * 24 * 60 * 60 * 1000);
+					const dtInput = pickerWrap.querySelector(
+						"#capsule-datetime-input",
+					);
+					dtInput.min = toLocalDatetimeInputValue(minDate);
+					dtInput.max = toLocalDatetimeInputValue(maxDate);
+					dtInput.value = toLocalDatetimeInputValue(minDate);
+
+					document.body.appendChild(pickerWrap);
+
+					pickerWrap
+						.querySelector("#capsule-cancel")
+						.addEventListener("click", () => {
+							pickerWrap.remove();
+						});
+
+					pickerWrap
+						.querySelector("#capsule-confirm")
+						.addEventListener("click", () => {
+							const val = dtInput.value;
+							if (!val) return;
+							const sfLocal = new Date(val);
+							const truncateToMinute = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), 0, 0);
+							const scheduledTrunc = truncateToMinute(sfLocal);
+							const nowTrunc2 = truncateToMinute(new Date());
+							const minTime = new Date(nowTrunc2.getTime() + 5 * 60 * 1000);
+							const maxTime = new Date(nowTrunc2.getTime() + 365 * 24 * 60 * 60 * 1000);
+							if (
+								isNaN(scheduledTrunc.getTime()) ||
+								scheduledTrunc < minTime ||
+								scheduledTrunc > maxTime
+							) {
+								try {
+									showToast(
+										"Selected time out of range (min +5 minutes, max +1 year)",
+									);
+								} catch (e) {}
+								return;
+							}
+							const scheduledFor = scheduledTrunc.toISOString();
+							pickerWrap.remove();
+
+							// swap the chosen slot with main and set pending scheduled time
+							const prevMain = sendModeSlots[0];
+							sendModeSlots[0] = 'time-capsule';
+							sendModeSlots[slotIndex] = prevMain;
+							state.sendMode = 'time-capsule';
+							window._pendingCapsuleScheduledFor = scheduledFor;
+							if (sendMessageBtn) sendMessageBtn.innerHTML = capsuleSvg;
+							try { renderPopup(); } catch (e) { /* ignore */ }
+						});
+				};
+
+				capsuleBtn.addEventListener("click", (e) => {
+					e.stopPropagation();
+					if (sendModeSlots[1] === 'time-capsule') {
+						openCapsulePicker(1, e);
+					} else {
+						swapWithMain(1);
+						hideOneTime();
+					}
+				});
+				// clicking the label/area should behave same as clicking the button
+				capsuleWrap.addEventListener("click", (e) => {
+					// if clicked directly on the button, its handler already ran; otherwise open/swap
+					if (e.target === capsuleBtn) return;
+					if (sendModeSlots[1] === 'time-capsule') openCapsulePicker(1, e);
+					else { swapWithMain(1); hideOneTime(); }
+				});
 
 				onetimeWrap.appendChild(onetimeLabel);
 				onetimeWrap.appendChild(onetimeBtn);
-				messageContainer.appendChild(onetimeWrap);
+				// Ensure popup icons/labels reflect current slot ordering
+				try { renderPopup(); } catch (e) { /* ignore */ }
+				// group both trigger buttons into a single container to simplify
+				// outside-click handling and DOM management
+				triggerContainer.appendChild(capsuleWrap);
+				triggerContainer.appendChild(onetimeWrap);
+				messageContainer.appendChild(triggerContainer);
 
 				onetimeBtn.addEventListener("click", (e) => {
 					e.stopPropagation();
-					// Toggle send mode: if not one-time, enable it; otherwise go back to normal.
-					if (state.sendMode !== 'one-time') {
-						state.sendMode = 'one-time';
-						if (sendMessageBtn) sendMessageBtn.innerHTML = oneTimeSendIcon;
+					if (sendModeSlots[2] === 'time-capsule') {
+						openCapsulePicker(2, e);
 					} else {
-						state.sendMode = 'normal';
-						if (sendMessageBtn && originalSendBtnInner)
-							sendMessageBtn.innerHTML = originalSendBtnInner;
+						swapWithMain(2);
+						hideOneTime();
 					}
-					oneTimeOverlayActive = false;
-					hideOneTime();
 				});
 			}
 
@@ -1959,36 +2444,33 @@ document.addEventListener("DOMContentLoaded", async function () {
 					chatOverlay.style.zIndex = "";
 				}
 				messageContainer.style.zIndex = "";
-				if (onetimeWrap && onetimeWrap.parentNode) {
-					onetimeWrap.parentNode.removeChild(onetimeWrap);
+				if (triggerContainer && triggerContainer.parentNode) {
+					triggerContainer.parentNode.removeChild(triggerContainer);
 				}
+				triggerContainer = null;
 				onetimeWrap = null;
 				onetimeBtn = null;
 				onetimeLabel = null;
+				capsuleWrap = null;
+				capsuleBtn = null;
+				capsuleLabel = null;
 				oneTimeIgnoreClickUntil = 0;
 				suppressNextSendClick = false;
 
-				// If the chat has been closed, also clear any lingering send-mode selection
-					try {
-						if (typeof state !== 'undefined' && (state.contactUserId === null || typeof state.contactUserId === 'undefined')) {
-							state.sendMode = 'normal';
-							oneTimeOverlayActive = false;
-							if (sendMessageBtn && originalSendBtnInner) sendMessageBtn.innerHTML = originalSendBtnInner;
-						}
-					} catch (e) { /* ignore */ }
+				// do not reset canonical sendMode here; chat close handler will reset slots
 			}
 
 			// Ensure overlay and one-time UI are hidden when chat is closed elsewhere
-		document.addEventListener('chat:closed', () => {
-			try {
-				if (triggered) hideOneTime();
-				// ensure overlay state cleared and send icon reset (do NOT reset
-				// canonical `sendMode` here — actual chat close handler in chat.js
-				// is responsible for resetting the send mode)
-				oneTimeOverlayActive = false;
-				if (sendMessageBtn && originalSendBtnInner) sendMessageBtn.innerHTML = originalSendBtnInner;
-			} catch (e) { /* ignore */ }
-		});
+			document.addEventListener("chat:closed", () => {
+				try {
+					if (triggered) hideOneTime();
+					oneTimeOverlayActive = false;
+					// reset slot ordering and canonical send mode when chat fully closes
+					try { resetSlots(); } catch (e) { /* ignore */ }
+				} catch (e) {
+					/* ignore */
+				}
+			});
 
 			// Pointer events (works for both mouse and touch)
 			sendMessageBtn.addEventListener("pointerdown", (e) => {
@@ -2013,14 +2495,16 @@ document.addEventListener("DOMContentLoaded", async function () {
 			// floating action remains available for the user to tap.
 			document.addEventListener("click", (e) => {
 				if (!triggered) return;
-				// If user clicked the one-time wrapper itself, let its handler run.
-				if (onetimeWrap && onetimeWrap.contains(e.target)) return;
+				// If user clicked the trigger container itself, let its handler run.
+				if (triggerContainer && triggerContainer.contains(e.target)) return;
 				// Ignore the synthetic/initial release click that may occur
 				// right after the long-press activation.
 				if (Date.now() < oneTimeIgnoreClickUntil) return;
 				if (sendMessageBtn.contains(e.target)) return;
 				hideOneTime();
 			});
+
+			// Capsule click handler attached inside showOneTime() where it is created
 
 			// Also dismiss if chat overlay is tapped
 			if (chatOverlay) {
@@ -2235,19 +2719,44 @@ document.addEventListener("DOMContentLoaded", async function () {
 		let _lastUserScrollTop = null;
 		const _markUserInteraction = () => {
 			_lastUserInteractionAt = Date.now();
-			try { state.suppressAutoLoadUntil = 0; } catch (e) {}
-			try { _lastUserScrollTop = chatEl.scrollTop; } catch (e) { _lastUserScrollTop = null; }
-			try { clearOpenSuppression(state.contactUserId); } catch (e) {}
-		};
-		chatEl.addEventListener('wheel', _markUserInteraction, { passive: true });
-		chatEl.addEventListener('touchstart', _markUserInteraction, { passive: true });
-		chatEl.addEventListener('pointerdown', _markUserInteraction, { passive: true });
-		window.addEventListener('keydown', (ev) => {
 			try {
-				const keys = ['ArrowUp','PageUp','Home','ArrowDown','PageDown','End'];
-				if (keys.includes(ev.key)) _markUserInteraction();
+				state.suppressAutoLoadUntil = 0;
 			} catch (e) {}
-		}, true);
+			try {
+				_lastUserScrollTop = chatEl.scrollTop;
+			} catch (e) {
+				_lastUserScrollTop = null;
+			}
+			try {
+				clearOpenSuppression(state.contactUserId);
+			} catch (e) {}
+		};
+		chatEl.addEventListener("wheel", _markUserInteraction, {
+			passive: true,
+		});
+		chatEl.addEventListener("touchstart", _markUserInteraction, {
+			passive: true,
+		});
+		chatEl.addEventListener("pointerdown", _markUserInteraction, {
+			passive: true,
+		});
+		window.addEventListener(
+			"keydown",
+			(ev) => {
+				try {
+					const keys = [
+						"ArrowUp",
+						"PageUp",
+						"Home",
+						"ArrowDown",
+						"PageDown",
+						"End",
+					];
+					if (keys.includes(ev.key)) _markUserInteraction();
+				} catch (e) {}
+			},
+			true,
+		);
 
 		chatEl.addEventListener("scroll", (e) => {
 			// Ignore programmatic scrolls and non-user-initiated events
@@ -2257,9 +2766,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 			// temporary suppression during initial rendering. Use `nearTop`
 			// to handle reversed layouts reliably.
 			const recentUser = Date.now() - _lastUserInteractionAt < 1000;
-			const suppressAuto = (state.suppressAutoLoadUntil || 0) > Date.now();
+			const suppressAuto =
+				(state.suppressAutoLoadUntil || 0) > Date.now();
 			const userScrolledUp =
-				typeof _lastUserScrollTop === 'number' &&
+				typeof _lastUserScrollTop === "number" &&
 				_lastUserScrollTop - chatEl.scrollTop > 80; // px threshold
 
 			const scrollableHeight = chatEl.scrollHeight - chatEl.clientHeight;
@@ -2269,17 +2779,14 @@ document.addEventListener("DOMContentLoaded", async function () {
 			) {
 				loadOlderMessages();
 			} else if (nearTop(chatEl, 60) && state.initializingChat) {
-				
 			} else if (
 				nearTop(chatEl, 60) &&
 				suppressAuto &&
 				!userScrolledUp &&
 				!recentUser
 			) {
-				
 			} else if (nearTop(chatEl, 60) && !userScrolledUp && !recentUser) {
 				// Suppress layout-driven/top proximity triggers unless user initiated.
-				
 			}
 			const distanceFromBottom =
 				chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight;
@@ -2410,17 +2917,24 @@ document.addEventListener("DOMContentLoaded", async function () {
 			].user
 				? "You"
 				: contacts.find((c) => c.id === state.contactUserId)?.name;
-						mountAvatar(chatProfilePicture, {
-							name: friend.name,
-							nickname: friend.nickname,
-							profilePics: friend.profilePics,
-							className: 'chat-profile-picture',
-							isOnline: friend.isOnline,
-						});
-						try {
-							const chatProfileWrapper = document.querySelector('.chat-profile');
-							if (chatProfileWrapper) chatProfileWrapper.setAttribute('data-user-id', String(friend.id));
-						} catch (e) { /* ignore */ }
+			mountAvatar(chatProfilePicture, {
+				name: friend.name,
+				nickname: friend.nickname,
+				profilePics: friend.profilePics,
+				className: "chat-profile-picture",
+				isOnline: friend.isOnline,
+			});
+			try {
+				const chatProfileWrapper =
+					document.querySelector(".chat-profile");
+				if (chatProfileWrapper)
+					chatProfileWrapper.setAttribute(
+						"data-user-id",
+						String(friend.id),
+					);
+			} catch (e) {
+				/* ignore */
+			}
 			chatName.textContent = friend.nickname || friend.name;
 			openChat(true);
 			if (friend.isBlocked) {
@@ -2511,7 +3025,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 				);
 				if (remaining.length > 0) {
 					const lastMsg = remaining.at(-1);
-					friend.lastMessage = lastMsg.text;
+					friend.lastMessage =
+						lastMsg &&
+						lastMsg.isTimeCapsule &&
+						lastMsg.isLocked &&
+						!lastMsg.user
+							? ""
+							: lastMsg.text || "";
 					friend.lastMessageTime = lastMsg.time;
 					friend.lastMessageDate = lastMsg.date || "";
 					// Only explicit false means unseen
@@ -2822,13 +3342,20 @@ document.addEventListener("DOMContentLoaded", async function () {
 								name: friend.name,
 								nickname: friend.nickname,
 								profilePics: friend.profilePics,
-								className: 'chat-profile-picture',
+								className: "chat-profile-picture",
 								isOnline: friend.isOnline,
 							});
 							try {
-								const chatProfileWrapper = document.querySelector('.chat-profile');
-								if (chatProfileWrapper) chatProfileWrapper.setAttribute('data-user-id', String(friend.id));
-							} catch (e) { /* ignore */ }
+								const chatProfileWrapper =
+									document.querySelector(".chat-profile");
+								if (chatProfileWrapper)
+									chatProfileWrapper.setAttribute(
+										"data-user-id",
+										String(friend.id),
+									);
+							} catch (e) {
+								/* ignore */
+							}
 							chatName.textContent =
 								friend.nickname || friend.name;
 							openChat(true);

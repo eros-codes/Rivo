@@ -21,8 +21,8 @@ export const state = {
 	currentUndoAction: null,
 	isProfileDialogOpen : false,
 	skipShowChatOnProfileClose: false,
-	// One-time message send state: canonical source-of-truth for how the
-	// next send should be performed. Possible values: 'normal', 'one-time'
+	// Send mode: canonical source-of-truth for how the next send should be performed.
+	// Possible values: 'normal', 'one-time', 'time-capsule'
 	sendMode: "normal",
 	// When true, the UI should not trigger scroll-top pagination (used
 	// during initial load to avoid accidental background fetches).

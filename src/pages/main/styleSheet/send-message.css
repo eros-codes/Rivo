@@ -126,15 +126,26 @@
 		inset 1px 1px 0 rgba(255, 255, 255, 0.1),
 		inset -1px -1px 0 rgba(0, 0, 0, 0.16);
 }
+
+
+/* Parent container — positioned above input */
+.send-trigger-popup {
+    position: absolute;
+    bottom: calc(100% + 0.75rem);
+    right: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.5rem;
+    z-index: 502;
+    animation: onetimeFadeIn 0.18s ease;
+}
+
+/* Individual row (label + button) — no more positioning */
 .onetime-trigger {
-	position: absolute;
-	bottom: calc(100% + 0.75rem);
-	right: 1rem;
-	display: flex;
-	align-items: center;
-	gap: 0.5rem;
-	z-index: 502;
-	animation: onetimeFadeIn 0.18s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
 }
 
 .onetime-trigger-label {
@@ -327,3 +338,213 @@ emoji-picker {
 		transform: translateY(0) scale(1);
 	}
 }
+
+
+.capsule-locked {
+	position: relative;
+	border-radius: 14px;
+	padding: 0.6rem 0.75rem 0.35rem;
+	min-height: 118px;
+	min-width: 195px;
+	max-width: 230px;
+	overflow: hidden;
+
+	background: rgba(8, 8, 16, 0.6);
+	border: 1px solid rgba(255, 255, 255, 0.09);
+	backdrop-filter: blur(16px);
+	-webkit-backdrop-filter: blur(16px);
+	box-shadow: 0 10px 28px rgba(0, 0, 0, 0.3),
+				inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* Blurred lines — fake content behind the lock */
+.capsule-lines {
+	position: absolute;
+	top: 0.6rem;
+	left: 0.75rem;
+	right: 0.75rem;
+	bottom: 2.2rem;
+	pointer-events: none;
+	z-index: 1;
+	display: flex;
+	flex-direction: column;
+	justify-content: flex-start;
+	gap: 8px;
+	padding-top: 3px;
+	transition: opacity 0.45s ease;
+}
+
+.capsule-line {
+	height: 9px;
+	border-radius: 99px;
+	background: rgba(255, 255, 255, 0.1);
+	filter: blur(2px);
+}
+
+/* Gradient overlay + lock */
+.capsule-center {
+	position: absolute;
+	inset: 0;
+	bottom: 1.7rem;      /* leave space for meta timestamp */
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	z-index: 3;
+	pointer-events: none;
+	border-radius: 14px 14px 0 0;
+	transition: opacity 0.45s ease;
+
+	/* Gradient overlay behind the lock */
+	background: linear-gradient(
+		to bottom,
+		transparent 0%,
+		rgba(8, 8, 16, 0.55) 35%,
+		rgba(8, 8, 16, 0.92) 100%
+	);
+}
+
+.capsule-lock-icon {
+	font-size: 2.4rem;
+	line-height: 1;
+	filter: drop-shadow(0 3px 10px rgba(0, 0, 0, 0.5));
+	animation: capsulePulse 2.8s ease-in-out infinite;
+	will-change: transform;
+}
+
+/* Ensure inline SVG matches expected emoji sizing */
+.capsule-lock-icon svg {
+    width: 2.4rem;
+    height: 2.4rem;
+    display: block;
+    color: inherit;
+}
+
+.capsule-unlock-time {
+	font-size: 0.7rem;
+	color: rgba(255, 255, 255, 0.6);
+	text-align: center;
+	letter-spacing: 0.02em;
+	padding: 0 0.5rem;
+	line-height: 1.5;
+}
+
+@keyframes capsulePulse {
+	0%, 100% { transform: scale(1);    opacity: 0.85; }
+	50%       { transform: scale(1.1); opacity: 1;    }
+}
+
+/* ── Unlock animation ───────────────────────── */
+.capsule-lock-icon.capsule-zoom {
+	animation: capsuleZoom 0.4s cubic-bezier(.15,.8,.25,1) forwards;
+}
+@keyframes capsuleZoom {
+	0%   { transform: scale(1);   }
+	55%  { transform: scale(1.5); }
+	100% { transform: scale(1.2); }
+}
+
+.capsule-fading {
+	opacity: 0 !important;
+	transition: opacity 0.45s ease !important;
+}
+
+/* Revealed text */
+@keyframes capsuleReveal {
+	from { opacity: 0; transform: translateY(4px); }
+	to   { opacity: 1; transform: none; }
+}
+.capsule-reveal {
+	animation: capsuleReveal 380ms cubic-bezier(.15,.8,.25,1) forwards;
+}
+
+/* ── Sender label ────────────────────────────── */
+.capsule-sender-label {
+	display: flex;
+	font-size: 0.72rem;
+	color: var(--sub-text-main-color);
+	padding: 0.12rem 0.45rem;
+	border-radius: 5px;
+	border-left: 2.5px solid var(--accent);
+	margin-bottom: 0.2rem;
+	opacity: 0.85;
+	align-items: center;
+	justify-content: center;
+}
+.capsule-sender-text {
+	font-size: 0.72rem;
+	color: var(--sub-text-main-color);
+	margin-left: 0.25rem;
+}
+.capsule-sender-icon {
+	width: 1rem;
+	height: 1rem;
+	color: var(--sub-text-main-color);
+	color: inherit;
+	
+}
+.capsule-sender-icon svg {
+	width: 100%;
+	height: 100%;
+	display: block;
+	color: inherit;
+}
+
+/* ── Picker dialog ───────────────────────────── */
+.capsule-picker-wrap {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.5);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 9999;
+	backdrop-filter: blur(4px);
+}
+.capsule-picker-dialog {
+	background: var(--contact-bg-color);
+	border-radius: 14px;
+	padding: 1.1rem 1.25rem;
+	min-width: 300px;
+	display: flex;
+	flex-direction: column;
+	gap: 0.8rem;
+	border: 1px solid var(--contact-border-color);
+	box-shadow: var(--shadow);
+}
+.capsule-picker-title {
+	font-size: 1rem;
+	font-weight: 600;
+	color: var(--text-main-color);
+}
+.capsule-datetime-input {
+	border: 1px solid var(--glass-input-border-color);
+	border-radius: 8px;
+	padding: 0.5rem;
+	font-size: 0.95rem;
+	background: var(--glass-bg-input-color);
+	color: var(--text-main-color);
+	width: 100%;
+}
+.capsule-picker-actions {
+	display: flex;
+	gap: 0.5rem;
+	justify-content: flex-end;
+}
+.capsule-picker-actions button {
+	border: 1px solid var(--glass-border);
+	border-radius: 8px;
+	padding: 0.45rem 0.9rem;
+	cursor: pointer;
+	font-size: 0.88rem;
+	background: transparent;
+	color: var(--text-main-color);
+	transition: background 0.15s;
+}
+#capsule-confirm {
+	background: var(--accent);
+	color: #fff;
+	border-color: transparent;
+}
+

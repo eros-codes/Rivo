@@ -6,6 +6,10 @@ const pinIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" 
 
 const oneTimeIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.2" stroke-dasharray="47 10" stroke-linecap="round" stroke-dashoffset="-5"/><text x="12" y="16.5" text-anchor="middle" font-size="9.5" font-weight="700" fill="currentColor">1</text></svg>`;
 
+// Capsule lock/clock icons (locked / unlocked)
+const capsuleClockLockIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="5" y="10" width="14" height="10" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M8 10V7.5C8 5.57 9.57 4 11.5 4H12.5C14.43 4 16 5.57 16 7.5V10" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="15" r="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M12 15V13.8M12 15L13 15.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+const capsuleClockUnlockIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="5" y="10" width="14" height="10" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M15.5 6.2C15.5 4.64 14.36 3.5 12.8 3.5H12.2C10.64 3.5 9.5 4.64 9.5 6.2V8" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="15" r="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M12 15V13.8M12 15L13 15.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+
 const pendingSpinnerSvg = `<svg class="msg-pending-spinner" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-dasharray="52 10" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.9s" repeatCount="indefinite"/></circle></svg>`;
 
 const failedIconSvg = `<svg class="msg-failed-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="var(--danger-color)" stroke-width="2"/><line x1="12" y1="7" x2="12" y2="13" stroke="var(--danger-color)" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="17" r="1" fill="var(--danger-color)"/></svg>`;
@@ -55,7 +59,11 @@ export function applyReactionsToMessage(msgEl, reactions, currentUserId) {
 		badge.appendChild(span);
 
 		// Determine if the current user reacted to this emoji
-		const currentReacted = currentUserId ? reactions.some((r) => r.userId === currentUserId && r.emoji === emoji) : false;
+		const currentReacted = currentUserId
+			? reactions.some(
+					(r) => r.userId === currentUserId && r.emoji === emoji,
+				)
+			: false;
 		const othersReacted = counts[emoji] - (currentReacted ? 1 : 0) > 0;
 
 		if (multiEmoji) {
@@ -71,7 +79,8 @@ export function applyReactionsToMessage(msgEl, reactions, currentUserId) {
 			if (counts[emoji] > 1 && currentReacted && othersReacted) {
 				// Exception: both of us reacted to the same emoji -> color by
 				// the message direction (incoming/outgoing)
-				if (msgEl.classList.contains("outgoing")) badge.classList.add("outgoing-reaction");
+				if (msgEl.classList.contains("outgoing"))
+					badge.classList.add("outgoing-reaction");
 				else badge.classList.add("incoming-reaction");
 				// keep pill/number styling below
 			} else {
@@ -79,7 +88,8 @@ export function applyReactionsToMessage(msgEl, reactions, currentUserId) {
 				if (currentReacted) badge.classList.add("outgoing-reaction");
 				else badge.classList.add("incoming-reaction");
 				// circular when single reaction total
-				if (counts[emoji] === 1 && reactions.length === 1) badge.classList.add("single");
+				if (counts[emoji] === 1 && reactions.length === 1)
+					badge.classList.add("single");
 			}
 		}
 
@@ -113,6 +123,10 @@ export function createMessage({
 	pending = false,
 	failed = false,
 	isOneTime = false,
+	isTimeCapsule = false,
+	scheduledFor = null,
+	openedAt = null,
+	isLocked = false,
 }) {
 	const message = document.createElement("div");
 
@@ -128,8 +142,8 @@ export function createMessage({
 
 	// "user ?" means that if the sender is user itself or not
 	message.className = `chat-message ${user ? "outgoing" : "incoming"}`;
-	if (pending) message.classList.add('pending');
-	if (failed) message.classList.add('failed');
+	if (pending) message.classList.add("pending");
+	if (failed) message.classList.add("failed");
 	if (typeof index !== "undefined") message.dataset.index = index; // Add index to message element for styling purposes
 	message.dataset.messageId = id || "";
 	if (_localId) message.dataset.localId = _localId;
@@ -264,7 +278,141 @@ export function createMessage({
 
 	message.appendChild(meta);
 
+	// ─── Time Capsule — Locked (recipient view) ───────────────────
+	if (isTimeCapsule && isLocked && !user) {
+		message.classList.add("capsule-locked");
+
+		// Real text — blurred behind the overlay
+		const existingText = message.querySelector(".chat-message-text");
+		if (existingText) {
+			existingText.style.cssText =
+				"filter:blur(7px);opacity:.18;user-select:none;pointer-events:none;";
+		}
+
+		// Blurred placeholder lines (simulate content)
+		const lines = document.createElement("div");
+		lines.className = "capsule-lines";
+		[82, 65, 90, 50].forEach((w) => {
+			const l = document.createElement("div");
+			l.className = "capsule-line";
+			l.style.width = w + "%";
+			lines.appendChild(l);
+		});
+
+		// Center overlay — lock + opens at
+		const center = document.createElement("div");
+		center.className = "capsule-center";
+
+		const lockEl = document.createElement("div");
+		lockEl.className = "capsule-lock-icon";
+		// Insert SVG lock icon
+		try {
+			const _sv = parseSvg(capsuleClockLockIcon);
+			if (_sv) lockEl.appendChild(_sv.cloneNode(true));
+		} catch (e) {
+			// fallback to emoji if parsing fails
+			lockEl.textContent = "🔒";
+		}
+
+		const timeEl2 = document.createElement("div");
+		timeEl2.className = "capsule-unlock-time";
+		if (scheduledFor) {
+			const d = new Date(scheduledFor);
+			timeEl2.textContent = `Opens ${d.toLocaleDateString([], { month: "short", day: "numeric" })} at ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+		}
+
+		center.appendChild(lockEl);
+		center.appendChild(timeEl2);
+
+		message.insertBefore(lines, meta);
+		message.insertBefore(center, meta);
+	}
+
+	// ─── Time Capsule — Sender view ───────────────────────────────
+	if (isTimeCapsule && user) {
+		const label = document.createElement("div");
+		label.className = "capsule-sender-label";
+
+		// icon
+		const iconWrap = document.createElement("span");
+		iconWrap.className = "capsule-sender-icon";
+		try {
+			const _sv = parseSvg(
+				openedAt ? capsuleClockUnlockIcon : capsuleClockLockIcon,
+			);
+			if (_sv) iconWrap.appendChild(_sv.cloneNode(true));
+		} catch (e) {
+			iconWrap.textContent = openedAt ? "🔓" : "📦";
+		}
+		label.appendChild(iconWrap);
+
+		// text
+		const textWrap = document.createElement("span");
+		textWrap.className = "capsule-sender-text";
+		if (openedAt) {
+			textWrap.textContent = "Opened";
+		} else if (scheduledFor) {
+			const d = new Date(scheduledFor);
+			textWrap.textContent = `Unlocks ${d.toLocaleDateString([], { month: "short", day: "numeric" })} at ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+		} else {
+			textWrap.textContent = "Time Capsule";
+		}
+		label.appendChild(textWrap);
+
+		// insert before the main text so label appears above message body
+		const textNode = message.querySelector(".chat-message-text");
+		if (textNode) message.insertBefore(label, textNode);
+	}
+
 	return message;
+}
+
+export function unlockCapsule(msgEl) {
+	const lockIcon = msgEl.querySelector(".capsule-lock-icon");
+	const center = msgEl.querySelector(".capsule-center");
+	const lines = msgEl.querySelector(".capsule-lines");
+	const realText = msgEl.querySelector(".chat-message-text");
+	if (!lockIcon || !center) return;
+
+	// 1 — stop the ongoing pulse animation then trigger zoom
+	try {
+		lockIcon.style.animation = "none"; // kill pulse
+		// force reflow so the animation restarts cleanly
+		void lockIcon.offsetWidth;
+		lockIcon.style.animation = "";
+	} catch (e) {
+		/* ignore */
+	}
+	lockIcon.classList.add("capsule-zoom");
+
+	// 2 — change to unlocked icon
+	setTimeout(() => {
+		try {
+			// replace with unlocked SVG
+			lockIcon.textContent = "";
+			const _sv = parseSvg(capsuleClockUnlockIcon);
+			if (_sv) lockIcon.appendChild(_sv.cloneNode(true));
+		} catch (e) {
+			lockIcon.textContent = "🔓";
+		}
+	}, 300);
+
+	// 3 — fade overlay out
+	setTimeout(() => {
+		center.classList.add("capsule-fading");
+		if (lines) lines.classList.add("capsule-fading");
+	}, 500);
+
+	// 4 — reveal text
+	setTimeout(() => {
+		if (center && center.parentNode) center.parentNode.removeChild(center);
+		if (lines && lines.parentNode) lines.parentNode.removeChild(lines);
+		msgEl.classList.remove("capsule-locked");
+		if (realText) {
+			realText.style.cssText = "";
+			realText.classList.add("capsule-reveal");
+		}
+	}, 900);
 }
 
 export function markMessagesAsSeen(chatEl, indices) {

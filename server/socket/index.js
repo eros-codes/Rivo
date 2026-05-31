@@ -239,6 +239,9 @@ export function initSocket(httpServer) {
 				forwardedText,
 			} = data;
 			const isOneTime = data.isOneTime === true;
+			const isTimeCapsule = data.isTimeCapsule === true;
+			const scheduledForRaw = data.scheduledFor || null;
+			let scheduledForToStore = null;
 
 			const convId = parseIntSafe(conversationId);
 			if (!convId) return callback?.({ error: "Invalid conversationId" });
@@ -269,6 +272,25 @@ export function initSocket(httpServer) {
 					return callback?.({ error: "Forbidden" });
 				}
 
+				// Validate time-capsule constraints (if requested).
+				// We operate at minute precision: truncate both the provided time
+				// and "now" to minute boundaries (seconds=0) so seconds are ignored.
+				if (isTimeCapsule) {
+					if (!scheduledForRaw) return callback?.({ error: "scheduledFor required" });
+					const sfRawDate = new Date(scheduledForRaw);
+					if (isNaN(sfRawDate.getTime())) return callback?.({ error: "scheduledFor invalid" });
+					const truncateToMinute = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), 0, 0);
+					const scheduledTrunc = truncateToMinute(sfRawDate);
+					const nowTrunc = truncateToMinute(new Date());
+					const minTime = new Date(nowTrunc.getTime() + 5 * 60 * 1000); // +5 minutes (minute-precision)
+					const maxTime = new Date(nowTrunc.getTime() + 365 * 24 * 60 * 60 * 1000); // +1 year
+					if (scheduledTrunc < minTime || scheduledTrunc > maxTime) {
+						return callback?.({ error: "scheduledFor out of range" });
+					}
+					// Use the truncated time for storage so seconds are ignored.
+					scheduledForToStore = scheduledTrunc;
+				}
+
 				// Encrypt message before persisting. Do NOT store plaintext.
 				const plaintext = text.trim();
 				const dek = generateDEK();
@@ -294,6 +316,8 @@ export function initSocket(httpServer) {
 						senderId: socket.userId,
 						text: null,
 						isOneTime,
+						isTimeCapsule: isTimeCapsule === true,
+						...(isTimeCapsule && scheduledForToStore ? { scheduledFor: scheduledForToStore } : {}),
 						ciphertext,
 						iv,
 						auth_tag: authTag,
@@ -385,7 +409,23 @@ export function initSocket(httpServer) {
 					createdAt: message.createdAt,
 				};
 
-				// Self-conversation (Saved Messages) — skip unread increment
+				// Include capsule metadata in the safe payload returned to the sender
+				safe.isTimeCapsule = message.isTimeCapsule || false;
+				safe.scheduledFor = message.scheduledFor ? message.scheduledFor.toISOString() : null;
+				safe.openedAt = message.openedAt ? message.openedAt.toISOString() : null;
+
+				// Determine locked state: receivers (non-senders) should not see text
+				const now = new Date();
+				const isLocked = message.isTimeCapsule && !message.openedAt && message.scheduledFor && new Date(message.scheduledFor) > now;
+
+				// Build recipient-safe payload (masked when locked)
+				const recipientSafe = {
+					...safe,
+					text: isLocked ? null : safe.text,
+					isLocked: !!isLocked,
+				};
+
+				// Sender should receive unmasked safe payload (they can see their own text)
 				const isSelfConversation =
 					(await prisma.conversationMember.count({ where: { conversationId: convId } })) === 1;
 				if (isSelfConversation) {
@@ -413,7 +453,8 @@ export function initSocket(httpServer) {
 						.catch((e) => console.error("update unread failed", e));
 				}
 
-				socket.to(`conversation:${convId}`).emit("message:new", safe);
+				// Broadcast masked/unmasked appropriately
+				socket.to(`conversation:${convId}`).emit("message:new", recipientSafe);
 
 				// Also deliver the message directly to connected sockets belonging to
 				// recipients who are not actively joined to the conversation room
@@ -426,7 +467,7 @@ export function initSocket(httpServer) {
 						for (const sid of sidSet) {
 							const s = io.sockets.sockets.get(sid);
 							if (s) {
-								s.emit("message:new", safe);
+								s.emit("message:new", recipientSafe);
 							}
 						}
 					}

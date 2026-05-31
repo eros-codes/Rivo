@@ -32,36 +32,45 @@ router.get("/search", requireAuth, async (req, res) => {
             },
             orderBy: { createdAt: "desc" },
             take: MAX_SCAN,
-            select: {
-                id: true,
-                conversationId: true,
-                senderId: true,
-                text: true,
-                ciphertext: true,
-                iv: true,
-                auth_tag: true,
-                wrapped_dek: true,
-                key_id: true,
-                createdAt: true,
-                isEdited: true,
-                isPinned: true,
-                isSeen: true,
-            },
+			select: {
+					id: true,
+					conversationId: true,
+					senderId: true,
+					text: true,
+					ciphertext: true,
+					iv: true,
+					auth_tag: true,
+					wrapped_dek: true,
+					key_id: true,
+					createdAt: true,
+					isEdited: true,
+					isPinned: true,
+					isSeen: true,
+					// time-capsule metadata needed for search filtering
+					isTimeCapsule: true,
+					scheduledFor: true,
+					openedAt: true,
+				},
         });
 
         const results = [];
         for (const m of rows) {
             if (results.length >= MAX_RESULTS) break;
 
-            let plaintext = m.text || "";
-            if (!plaintext && m.ciphertext && m.wrapped_dek) {
-                try {
-                    const dek = unwrapDEK(m.wrapped_dek, m.key_id || "v1");
-                    plaintext = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
-                } catch {
-                    continue;
-                }
-            }
+			// Respect time-capsule locks: do not reveal plaintext for locked capsules
+			if (m.isTimeCapsule && !m.openedAt && m.scheduledFor && new Date(m.scheduledFor) > new Date() && m.senderId !== req.userId) {
+				continue;
+			}
+
+			let plaintext = m.text || "";
+			if (!plaintext && m.ciphertext && m.wrapped_dek) {
+				try {
+					const dek = unwrapDEK(m.wrapped_dek, m.key_id || "v1");
+					plaintext = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
+				} catch {
+					continue;
+				}
+			}
 
             if (!plaintext.toLowerCase().includes(q)) continue;
 
@@ -227,16 +236,25 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
 					}
 				}
 
+				// time-capsule lock logic: hide real text for non-senders until opened
+				const isLocked = m.isTimeCapsule && !m.openedAt && m.scheduledFor && new Date(m.scheduledFor) > new Date();
+				const isSender = m.senderId === req.userId;
+				const exposedText = (isLocked && !isSender) ? null : text;
+
 				return {
 					id: m.id,
 					conversationId: m.conversationId,
 					sender: m.sender,
 					senderId: m.senderId,
-					text,
+					text: exposedText,
 					isSeen: m.isSeen,
 					isEdited: m.isEdited,
 					isPinned: m.isPinned,
 					isOneTime: m.isOneTime || false,
+					isTimeCapsule: m.isTimeCapsule || false,
+					scheduledFor: m.scheduledFor ? m.scheduledFor.toISOString() : null,
+					openedAt: m.openedAt ? m.openedAt.toISOString() : null,
+					isLocked: isLocked && !isSender,
 					isDeleted: m.isDeleted,
 					replyToId: m.replyToId,
 					replyToName: m.replyToName,
@@ -270,6 +288,8 @@ router.post("/", requireAuth, async (req, res) => {
 		forwardedFrom,
 		forwardedText,
 		isOneTime,
+		isTimeCapsule,
+		scheduledFor,
 	} = req.body;
 
 	const convId = parseIntSafe(conversationId);
@@ -292,6 +312,24 @@ router.post("/", requireAuth, async (req, res) => {
 		}
 
 		// Encrypt message before persisting. Do NOT store plaintext.
+		// Validate time-capsule constraints. Use minute-precision: truncate
+		// both provided time and "now" to minutes (seconds=0) so seconds are ignored.
+		let scheduledForToStore = null;
+		if (isTimeCapsule) {
+			if (!scheduledFor) return res.status(400).json({ error: "scheduledFor required" });
+			const sfRawDate = new Date(scheduledFor);
+			if (isNaN(sfRawDate.getTime())) return res.status(400).json({ error: "scheduledFor invalid" });
+			const truncateToMinute = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), 0, 0);
+			const scheduledTrunc = truncateToMinute(sfRawDate);
+			const nowTrunc = truncateToMinute(new Date());
+			const minTime = new Date(nowTrunc.getTime() + 5 * 60 * 1000); // +5 minutes
+			const maxTime = new Date(nowTrunc.getTime() + 365 * 24 * 60 * 60 * 1000); // +1 year
+			if (scheduledTrunc < minTime || scheduledTrunc > maxTime) {
+				return res.status(400).json({ error: "scheduledFor out of range" });
+			}
+			scheduledForToStore = scheduledTrunc;
+		}
+
 		const dek = generateDEK();
 		const { ciphertext, iv, authTag } = encryptMessage(text.trim(), dek);
 		const keyId = "v1"; // KEK version (change when rotating)
@@ -316,6 +354,8 @@ router.post("/", requireAuth, async (req, res) => {
 				// keep legacy text column null during migration
 				text: null,
 				isOneTime: isOneTime === true,
+				isTimeCapsule: isTimeCapsule === true,
+						...(isTimeCapsule && scheduledForToStore ? { scheduledFor: scheduledForToStore } : {}),
 				ciphertext,
 				iv,
 				auth_tag: authTag,
@@ -353,6 +393,9 @@ router.post("/", requireAuth, async (req, res) => {
 			senderId: message.senderId,
 			text: text.trim(),
 			isOneTime: message.isOneTime || false,
+			isTimeCapsule: message.isTimeCapsule || false,
+			scheduledFor: message.scheduledFor ? message.scheduledFor.toISOString() : null,
+			openedAt: message.openedAt ? message.openedAt.toISOString() : null,
 			replyToText: replyToText || null,
 			forwardedText: forwardedText || null,
 			isSeen: message.isSeen,

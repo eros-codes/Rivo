@@ -80,7 +80,10 @@ router.get("/", requireAuth, async (req, res) => {
 
 		// Attempt to decrypt the latest message for each contact so the
 		// client can display a readable preview in contact lists.
-		// If decryption fails, fall back to a generic placeholder.
+		// For time-capsule messages, NEVER reveal plaintext in contact previews
+		// for non-senders. If the current user is the sender, decrypt so they
+		// can see their own message; otherwise show a neutral placeholder even
+		// if the capsule has been opened on the server (openedAt set).
 		for (const cc of sanitized) {
 			try {
 				const conv = cc.conversation;
@@ -88,7 +91,36 @@ router.get("/", requireAuth, async (req, res) => {
 				const m = conv.messages[0];
 				// prefer plaintext if present
 				if (m.text) continue;
-				if (m.ciphertext && m.wrapped_dek) {
+				// Respect time-capsule privacy: never decrypt previews for non-senders
+				if (m.isTimeCapsule && m.senderId !== req.userId) {
+					// If still scheduled, show unlock time. If already opened, attempt
+					// to decrypt and return the plaintext so contact lists show the
+					// real last message after unlock. If decryption fails, fall back to
+					// a neutral "unlocked" placeholder.
+					try {
+						const now = new Date();
+						const scheduled = m.scheduledFor ? new Date(m.scheduledFor) : null;
+						if (scheduled && !m.openedAt && scheduled > now) {
+							const d = scheduled;
+							m.text = `Time capsule — unlocks ${d.toLocaleDateString([], {month:"short",day:"numeric"})} at ${d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}`;
+						} else {
+							// opened or no schedule: attempt to decrypt to provide plaintext preview
+							if (m.ciphertext && m.wrapped_dek) {
+								try {
+									const dek = unwrapDEK(m.wrapped_dek, m.key_id || "v1");
+									m.text = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
+								} catch (e) {
+									m.text = "Time capsule unlocked";
+								}
+							} else {
+								m.text = "Time capsule unlocked";
+							}
+						}
+					} catch (e) {
+						m.text = "Time capsule";
+					}
+				} else if (m.ciphertext && m.wrapped_dek) {
+					// Non-capsule or sender's own message: attempt decryption
 					try {
 						const dek = unwrapDEK(m.wrapped_dek, m.key_id || "v1");
 						m.text = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);

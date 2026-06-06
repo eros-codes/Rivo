@@ -1,4 +1,4 @@
-import { safeFetch } from "/utils/fetch.js";
+import { safeFetch } from "../../../utils/fetch.js";
 
 export async function loginUser(identifier, password) {
 	try {

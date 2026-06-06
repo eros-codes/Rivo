@@ -1,18 +1,16 @@
+import { safeFetch } from "../../../utils/fetch.js";
+
 let _resendTimerInterval = null;
 
 export async function sendCode(email) {
 	if (!email || typeof email !== 'string') throw new Error('email required');
-	const res = await fetch('/api/auth/send-code', {
+	const data = await safeFetch('/api/auth/send-code', {
 		method: 'POST',
 		credentials: 'include',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ email }),
 	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({}));
-		throw new Error(err.error || 'Failed to send code');
-	}
-	return res.json();
+	return data;
 }
 
 export function startResendTimer(codeResendTimer) {

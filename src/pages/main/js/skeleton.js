@@ -83,7 +83,6 @@ export function makeActiveChatSkeleton(count = 4) {
 
     wrapper.appendChild(leftActions);
     wrapper.appendChild(active);
-    wrapper.appendChild(document.createElement('div'));
 
     frag.appendChild(wrapper);
   }

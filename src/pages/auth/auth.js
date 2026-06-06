@@ -23,7 +23,7 @@ document.addEventListener("DOMContentLoaded", function () {
 	const signupForm = document.querySelector(".form.signup");
 	const signupName = document.getElementById("name");
 	const signupEmail = document.getElementById("email");
-	const signupBtn = document.getElementById("signup-btn");
+	
 	const signupUsername = document.getElementById("username");
 	const showLogIn = document.getElementById("show-login");
 
@@ -106,10 +106,7 @@ document.addEventListener("DOMContentLoaded", function () {
 			let valid = true;
 
 			if (!loginUsername.value.trim()) {
-				showError(
-					loginUsername,
-					"Please enter your email or username.",
-				);
+				showError(loginUsername, "Please enter your username.");
 				valid = false;
 			} else {
 				clearError(loginUsername);
@@ -215,7 +212,7 @@ document.addEventListener("DOMContentLoaded", function () {
 			if (!isValidUsername(signupUsername.value.trim())) {
 				showError(
 					signupUsername,
-					"Username must be 3-20 characters, letters, numbers, or underscores only.",
+					"Username must be 3-30 characters, letters, numbers, or underscores only.",
 				);
 				valid = false;
 			} else {
@@ -462,25 +459,24 @@ document.addEventListener("DOMContentLoaded", function () {
 		forgotForm.addEventListener("submit", async function (e) {
 			e.preventDefault();
 
-			if (
-				!forgotInput.value.trim() ||
-				forgotInput.value.trim().length < 6
-			) {
-				showError(
-					forgotInput,
-					"Please enter a valid email or username.",
-				);
+			const val = (forgotInput.value || '').trim();
+			if (!isValidEmail(val) && !isValidUsername(val)) {
+				showError(forgotInput, "Please enter a valid email or username.");
 				return;
 			}
 			clearError(forgotInput);
 
+			// Disable controls to prevent repeat submits (same style as signup)
+			setFormControlsDisabled(forgotForm, true);
+
 			forgotPass = true;
 			clearCodeInputs(verifyForm);
 			try {
-				await sendCode(forgotInput.value.trim());
-				_verificationEmail = forgotInput.value.trim();
+				await sendCode(val);
+				_verificationEmail = val;
 			} catch (err) {
 				showError(forgotInput, err.message || 'Failed to send code');
+				setFormControlsDisabled(forgotForm, false);
 				return;
 			}
 			startResendTimer(codeResendTimer);

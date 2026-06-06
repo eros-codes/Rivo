@@ -31,7 +31,6 @@ export function initSocket(
 	onUserUpdated,
 	onContactRemoved,
 	onReactionUpdated,
-		onOnetimeDeleted,
 ) {
 	socket = io({
 		withCredentials: true,

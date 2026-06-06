@@ -16,8 +16,8 @@ export function initChatLogic(dom) {
 
 // ─── Unread count ─────────────────────────────────────────────────────────────
 export function updateTotalUnreadCount() {
-	const total = contacts.reduce((sum, c) => sum + c.unreadCount, 0);
-	_dom.unreadMessageCount.textContent = total;
+	const total = contacts.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+	_dom.unreadMessageCount.textContent = String(total);
 	_dom.unreadMessageCount.style.opacity = total === 0 ? "0" : "1";
 }
 

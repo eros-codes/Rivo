@@ -1,4 +1,4 @@
-import { updatePrivacy, deleteAccount, changePassword, logout } from "./api.js";
+import { updatePrivacy, changePassword, logout } from "./api.js";
 import { showToast } from "./ui.js";
 import { applyAccentColor, applyWallpaper } from "../../../utils/theme.js";
 import { updateThemeImages } from "../../../utils/dom.js";
@@ -106,8 +106,13 @@ export function initSettings(dom, currentUser) {
 
 		if (_dom.settingsWallpaperInput) {
 			_dom.settingsWallpaperInput.addEventListener("change", (e) => {
-				const file = e.target.files?.[0];
+					const file = e.target.files?.[0];
 				if (!file) return;
+					// Enforce a sane maximum file size to avoid blowing localStorage.
+					if (file.size > 5 * 1024 * 1024) {
+						showToast("Image too large (max 5MB)");
+						return;
+					}
 				const reader = new FileReader();
 				reader.onload = (ev) => {
 					const base64 = ev.target.result;

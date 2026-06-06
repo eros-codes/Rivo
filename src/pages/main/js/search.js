@@ -1,6 +1,7 @@
 import { contacts, messages } from "./state.js";
 import { createContactCard } from "../../../components/contact-cards/contact-card.js";
 import { createMessage } from "../../../components/messages/messages.js";
+import { safeFetch } from "../../../utils/fetch.js";
 import { getCurrentUserId } from "../../../utils/user.js";
 
 let _dom = {};
@@ -44,12 +45,7 @@ function _renderContactResults(query) {
 
 	const MAX_CONTACT_RESULTS = 50;
 	const matched = contacts
-		.filter(
-			(c) =>
-				!c.isArchived &&
-				!c.isBlocked &&
-				(c.nickname || c.name).toLowerCase().includes(query),
-		)
+		.filter((c) => !c.isBlocked && (c.nickname || c.name).toLowerCase().includes(query))
 		.slice(0, MAX_CONTACT_RESULTS);
 
 	if (matched.length === 0) {
@@ -90,12 +86,9 @@ async function _renderMessageResults(query) {
 	list.appendChild(loading);
 
 	try {
-		const res = await fetch(
+		const data = await safeFetch(
 			`/api/messages/search?q=${encodeURIComponent(query)}`,
-			{ credentials: "include" },
 		);
-		if (!res.ok) throw new Error();
-		const data = await res.json();
 
 		list.textContent = "";
 
@@ -122,6 +115,12 @@ async function _renderMessageResults(query) {
 			sender.className = "search-message-sender";
 			sender.textContent = contact.nickname || contact.name;
 
+			// Try to resolve the message index within the local conversation
+			const msgIndex = (messages[contact.id] || []).findIndex(
+				(m) => String(m.id) === String(result.id),
+			);
+			const indexForCreate = msgIndex === -1 ? undefined : msgIndex;
+
 			const msgEl = createMessage({
 				user: result.senderId === myId,
 				text: result.text,
@@ -130,17 +129,20 @@ async function _renderMessageResults(query) {
 					minute: "2-digit",
 					hour12: false,
 				}),
-				index: null,
+				index: indexForCreate,
 				isEdited: result.isEdited,
 				isPinned: result.isPinned,
 				isSeen: result.isSeen,
+				isTimeCapsule: !!result.isTimeCapsule,
+				isLocked: !!result.isLocked,
+				scheduledFor: result.scheduledFor || null,
 			});
 
 			wrapper.appendChild(sender);
 			wrapper.appendChild(msgEl);
 
 			wrapper.addEventListener("click", () => {
-				_onMessageClick(contact, null);
+				_onMessageClick(contact, msgIndex === -1 ? null : msgIndex);
 			});
 
 			list.appendChild(wrapper);

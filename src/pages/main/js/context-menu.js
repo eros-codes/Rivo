@@ -4,6 +4,8 @@ import {
 	// Scroll helper that waits for padding transition
 	scrollChatToBottomAfterPadding,
 	updatePinnedMessage,
+	getPinnedData,
+	updatePinnedData,
 	basePadding,
 	nearBottom,
  	lineHeight,
@@ -25,6 +27,8 @@ const unpinIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24
 
 const REACTION_PRESETS = ["👍", "❤️", "😂", "😮", "😢", "🔥"];
 const REACTION_BAR_GAP = 10; // px - fixed gap between message and reaction bar
+// gap between message and the context/menu (px). Tweakable (smaller than reaction gap)
+const MESSAGE_MENU_GAP = 5;
 
 const reactionBarEl = document.createElement("div");
 reactionBarEl.className = "reaction-bar";
@@ -36,7 +40,6 @@ REACTION_PRESETS.forEach((emoji) => {
 	btn.dataset.emoji = emoji;
 	reactionBarEl.appendChild(btn);
 });
-document.body.appendChild(reactionBarEl);
 
 let _dom = {};
 let _prevBodyOverflow = null;
@@ -76,6 +79,14 @@ function _enableScrollAfterMenuClose() {
   */
 export function initContextMenu(dom) {
 	_dom = dom;
+	// Append reaction bar to body when context menu is initialized. Avoid
+	// doing this at module-load time to prevent crashes when document.body
+	// is not yet available (e.g., early module evaluation).
+	try {
+		if (!reactionBarEl.parentNode && typeof document !== 'undefined' && document.body) {
+			document.body.appendChild(reactionBarEl);
+		}
+	} catch (e) { /* ignore */ }
 }
 
 // Reaction bar click handler
@@ -100,22 +111,37 @@ reactionBarEl.addEventListener("click", async (e) => {
 // ─── Open ─────────────────────────────────────────────────────────────────────
 export function openContextMenu(msg, e) {
 	if (state.isMenuOpen) {
-		if (msg.dataset.index == state.msgIndex) {
+		if (Number(msg.dataset.index) === Number(state.msgIndex)) {
 			closeContextMenu();
 			return;
 		}
-		closeContextMenu();
-	}
-	state.msgIndex = msg.dataset.index;
-	state.selectedMsg = msg;
+			closeContextMenu();
+		}
+		state.msgIndex = msg.dataset.index;
+		state.selectedMsg = msg;
 
 	_dom.messageMenu.style.display = "block";
 
-	// Compute whether message needs to be nudged up to fit the menu,
-	// apply the transform first, then position the reaction bar using
-	// the message's post-transform bounding rect so the bar sits
-	// visually above the message itself (not the original position).
+	// Determine message object and ownership; forwarded messages can't be edited
 	const preRect = msg.getBoundingClientRect();
+	const messageObj = getMessageByIndex(state.contactUserId, state.msgIndex);
+	const forwardedFrom = messageObj?.forwardedFrom;
+	const isOwner = messageObj
+		? !!messageObj.user
+		: msg.classList.contains("outgoing");
+
+	// Set visibility for edit/delete BEFORE measuring menu height so
+	// the measured size reflects the actual rendered menu content.
+	const editMsg0 = _dom.editMsg?.[0];
+	if (editMsg0) {
+		editMsg0.style.display = !forwardedFrom && isOwner ? "flex" : "none";
+	}
+	const deleteMsg0 = _dom.messageMenu.querySelector(".delete-message");
+	if (deleteMsg0) {
+		deleteMsg0.style.display = isOwner ? "flex" : "none";
+	}
+
+	// Now measure menu height for positioning
 	const menuHeight = _dom.messageMenu.getBoundingClientRect().height;
 	let translateAmount = 0;
 	if (window.innerHeight - preRect.bottom < menuHeight) {
@@ -153,9 +179,11 @@ export function openContextMenu(msg, e) {
 	msg.style.zIndex = 500;
 
 	// Pin/Unpin label & icon
-	const pinLabels = document.querySelectorAll(".pin-message p");
-	const pinIconEl = document.querySelector(".pin-message span");
-	const isPinned = state.pinnedIndexes.includes(Number(msg.dataset.index));
+	const pinLabels = _dom.messageMenu.querySelectorAll(".pin-message p");
+	const pinIconEl = _dom.messageMenu.querySelector(".pin-message span");
+	const messageIdForPin = messageObj?.id || msg.dataset?.messageId;
+	const allPinned = getPinnedData(state.contactUserId) || [];
+	const isPinned = (messageObj?.isPinned === true) || (Array.isArray(allPinned) && allPinned.some((p) => String(p.id) === String(messageIdForPin))) || state.pinnedIndexes.includes(Number(msg.dataset.index));
 	if (pinLabels[0]) pinLabels[0].textContent = isPinned ? "Unpin" : "Pin";
 	if (pinIconEl) {
 		pinIconEl.textContent = "";
@@ -163,29 +191,16 @@ export function openContextMenu(msg, e) {
 		if (_i) pinIconEl.appendChild(_i.cloneNode(true));
 	}
 
-	// Determine message object and ownership; forwarded messages can't be edited
-	const messageObj = getMessageByIndex(state.contactUserId, state.msgIndex);
-	const forwardedFrom = messageObj?.forwardedFrom;
-	const isOwner = messageObj
-		? !!messageObj.user
-		: msg.classList.contains("outgoing");
-	const editMsg0 = _dom.editMsg?.[0];
-	if (editMsg0) {
-		editMsg0.style.display = !forwardedFrom && isOwner ? "flex" : "none";
-	}
-
-	// Hide delete for incoming messages (only show for owner's messages)
-	const deleteMsg0 = document.querySelectorAll(".delete-message")[0];
-	if (deleteMsg0) {
-		deleteMsg0.style.display = isOwner ? "flex" : "none";
-	}
+	// (ownership and visibility already handled above)
 
 	// Position menu
 	// Position the context menu below the (possibly shifted) message using
 	// the same pre-transform rectangle and translateAmount so it moves
 	// together with the message and reaction bar.
-	_dom.messageMenu.style.top =
-		preRect.top + preRect.height - translateAmount + basePadding + "px";
+	// Position the message menu immediately below the message using the
+	// same translateAmount, with the vertical gap matching the reaction
+	// bar gap so spacing is consistent.
+	_dom.messageMenu.style.top = preRect.top + preRect.height - translateAmount + MESSAGE_MENU_GAP + "px";
 
 	if (msg.classList.contains("outgoing")) {
 		_dom.messageMenu.style.right = window.innerWidth - preRect.right + "px";
@@ -217,7 +232,7 @@ export function closeContextMenu() {
 	reactionBarEl.style.display = "none";
 	if (state.selectedMsg) {
 		state.selectedMsg.style.zIndex = "";
-		state.selectedMsg.style.transform = "translateY(0px)";
+		state.selectedMsg.style.transform = "";
 	}
 	// Re-enable scrolling now that menu is closed
 	_enableScrollAfterMenuClose();
@@ -291,16 +306,21 @@ export function deleteMessage(msg, index) {
 				}
 				currentArr.forEach((m, i) => (m.index = i));
 
-				// Re-index DOM elements
-				document
-					.querySelectorAll(".chat-message")
-					.forEach((msgEl, i) => {
+				// Re-index DOM elements scoped to the active chat container
+				try {
+					const root = _dom?.chatEl || document;
+					root.querySelectorAll(".chat-message").forEach((msgEl, i) => {
 						msgEl.dataset.index = i;
 					});
+				} catch (e) { /* ignore */ }
 
 				state.pinnedIndexes = currentArr
 					.map((m, i) => (m.isPinned ? i : -1))
 					.filter((i) => i !== -1);
+				// Ensure pinnedData cache does not retain deleted messages
+				try {
+					if (messageId) updatePinnedData(capturedContactId, messageId, removedCandidate, false);
+				} catch (e) {}
 
 				const remaining = currentArr;
 
@@ -457,6 +477,7 @@ export async function pinMessage(pinIconSvg) {
 					.filter(i => i !== -1)
 					.sort((a,b)=>a-b);
 			}
+			try { updatePinnedData(contactId, messageId, msg, true); } catch (e) {}
 		} else {
 			msg.isPinned = false;
 			if (msgEl) {
@@ -469,6 +490,7 @@ export async function pinMessage(pinIconSvg) {
 					.filter(i => i !== -1)
 					.sort((a,b)=>a-b);
 			}
+			try { updatePinnedData(contactId, messageId, msg, false); } catch (e) {}
 		}
 
 		// Refresh the pinned banner for the conversation we updated.
@@ -517,8 +539,7 @@ export function editMessage() {
 		_dom.msgActionmsg.textContent = msg.text;
 	}
 
-	const msgInputEl =
-		_dom.messageInput || document.querySelector(".message-input");
+	const msgInputEl = _dom.messageInput;
 	if (msgInputEl) {
 		msgInputEl.value = msg.text;
 		if (typeof msgInputEl.focus === "function") msgInputEl.focus();
@@ -573,8 +594,7 @@ export function replyMessage() {
 		basePadding + state.actionPreviewHeight + "rem";
 	_dom.msgActionText.textContent = "Replying to " + senderName;
 	_dom.msgActionmsg.textContent = msg.text;
-	const msgInputEl2 =
-		_dom.messageInput || document.querySelector(".message-input");
+	const msgInputEl2 = _dom.messageInput;
 	if (msgInputEl2 && typeof msgInputEl2.focus === "function") {
 		msgInputEl2.focus();
 		if (msgInputEl2.style) msgInputEl2.style.borderRadius = "0 0 2rem 2rem";

@@ -1,4 +1,4 @@
-import { buildHeaders, safeFetch } from "./api.js";
+import { buildHeaders, safeFetch } from "../../../utils/fetch.js";
 
 let _dom = {};
 let _onContactAdded = null;

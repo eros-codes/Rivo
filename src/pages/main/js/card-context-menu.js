@@ -6,6 +6,9 @@ const SWIPE_REVEAL_PX_LEFT = 140;
 let mouseWrapper = null;
 let mouseStartX = 0;
 let mouseDiff = 0;
+let _activeCloseAll = null;
+// single flag to suppress the next click after a drag
+let _pendingSuppressClick = false;
 
 export function initCardContextMenu(container, onCardAction) {
 	// Use event delegation so dynamically added cards are covered too
@@ -14,6 +17,18 @@ export function initCardContextMenu(container, onCardAction) {
 	container.addEventListener("touchmove", _onTouchMove, { passive: false });
 	container.addEventListener("touchend", _onTouchEnd, { passive: true });
 	container.addEventListener("click", _onClick);
+
+	// ensure we have a single click handler that will consume one click
+	// after a drag (avoid adding many 'once' handlers on each drag)
+	if (!container._cardContextMenuSuppressAdded) {
+		container.addEventListener('click', (ev) => {
+			if (_pendingSuppressClick) {
+				_pendingSuppressClick = false;
+				ev.stopPropagation();
+			}
+		}, { capture: true });
+		container._cardContextMenuSuppressAdded = true;
+	}
 
 	container.addEventListener("mousedown", (e) => {
 		mouseWrapper = e.target.closest(".active-chat-wrapper");
@@ -48,7 +63,7 @@ export function initCardContextMenu(container, onCardAction) {
 
 		if (Math.abs(mouseDiff) > 5) {
 			e.stopPropagation();
-			container.addEventListener('click', (ev) => ev.stopPropagation(), { once: true, capture: true});
+			_pendingSuppressClick = true; // set flag instead of adding listeners
 		}
 
 		const s = _getState(mouseWrapper);
@@ -237,7 +252,6 @@ export function initCardContextMenu(container, onCardAction) {
 	}
 }
 
-let _activeCloseAll = null;
 export function closeAllSwipes() {
 	_activeCloseAll?.();
 }

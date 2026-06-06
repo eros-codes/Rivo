@@ -5,7 +5,7 @@ import { generateDEK, wrapDEK } from '../utils/encryption.js';
 
 try {
   const dek = generateDEK();
-  const wrapped = wrapDEK(dek);
+  const _wrapped = wrapDEK(dek);
   console.log('KEK check: OK');
   process.exit(0);
 } catch (e) {

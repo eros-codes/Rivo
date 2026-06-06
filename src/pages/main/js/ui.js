@@ -20,8 +20,15 @@ export function showToast(message, icon= "", showUndo = false) {
 	clearTimeout(_toastTimer2);
 
 	_t.toaster.style.display = "flex";
-	_t.toaster.style.bottom =
-		_t.messageContainer.getBoundingClientRect().height + 14 + "px";
+	// If message container is hidden or missing, fall back to a small offset
+	let bottomOffset = 14;
+	try {
+		const rect = _t.messageContainer && _t.messageContainer.getBoundingClientRect();
+		if (rect && rect.height > 0) bottomOffset = rect.height + 14;
+	} catch (e) {
+		/* ignore */
+	}
+	_t.toaster.style.bottom = bottomOffset + "px";
 	_t.toaster.style.opacity = 1;
 	_t.toastMessage.textContent = message;
 		// Safely insert SVG icon without assigning to innerHTML

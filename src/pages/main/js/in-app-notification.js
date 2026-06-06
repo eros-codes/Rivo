@@ -1,6 +1,7 @@
 // Lightweight in-app notification module
-import { safeSrc, mountAvatar } from "../../../utils/dom.js";
+import { mountAvatar } from "../../../utils/dom.js";
 const QUEUE = [];
+const MAX_QUEUE = 5;
 let _container = null;
 let _notif = null;
 let _avatar = null;
@@ -8,6 +9,8 @@ let _title = null;
 let _text = null;
 let _timer = null;
 let _visible = false;
+// flag set when hideNotification(true) is used so transitionend shouldn't trigger next
+let _hideWasImmediate = false;
 
 export function initInAppNotification() {
   if (_container) return;
@@ -53,7 +56,7 @@ export function initInAppNotification() {
   _text = text;
 
   // Click opens chat (handled by main via custom event)
-  _notif.addEventListener('click', (e) => {
+  _notif.addEventListener('click', () => {
     const cid = Number(_notif.dataset.contactId || 0);
     const mid = _notif.dataset.messageId ? Number(_notif.dataset.messageId) : null;
     if (!cid) return;
@@ -74,7 +77,7 @@ export function initInAppNotification() {
     lastDelta = 0;
     try {
       _notif.setPointerCapture(pointerId);
-    } catch (e) {
+    } catch (_e) {
       // ignore
     }
     _notif.style.transition = 'none';
@@ -116,7 +119,9 @@ export function initInAppNotification() {
   _notif.addEventListener('transitionend', (ev) => {
     if (ev.propertyName && ev.propertyName.includes('transform') && !_visible) {
       _notif.setAttribute('aria-hidden', 'true');
-      if (QUEUE.length > 0) {
+      // If the hide was immediate, we call _showNext directly from hideNotification
+      // and must not trigger it here (would interrupt the next animation).
+      if (!_hideWasImmediate && QUEUE.length > 0) {
         _showNext();
       }
     }
@@ -145,7 +150,7 @@ function _render(contact, message) {
   _text.textContent = message.text || '';
   _notif.dataset.contactId = String(contact.id || contact.contactId || '');
   // allow passing message id so click can navigate to a specific message
-  _notif.dataset.messageId = String(message.id || message.messageId || message.id || '');
+  _notif.dataset.messageId = String(message.messageId || message.id || '');
 }
 
 function _startTimer() {
@@ -169,7 +174,12 @@ export function showNotification(contact, message) {
     return;
   }
 
-  QUEUE.push({ contact, message });
+  // Avoid queue growth and duplicates for the same contact+message
+  if (MAX_QUEUE && QUEUE.length >= MAX_QUEUE) QUEUE.shift();
+  const incomingId = String(message.messageId || message.id || '');
+  const contactIdStr = String(contact.id || contact.contactId || '');
+  const dup = QUEUE.some((q) => String(q.message?.messageId || q.message?.id || '') === incomingId && String(q.contact?.id || q.contact?.contactId || '') === contactIdStr);
+  if (!dup) QUEUE.push({ contact, message });
   if (!_visible) _showNext();
 }
 
@@ -183,10 +193,19 @@ export function hideNotification(immediate = false) {
   _notif.classList.remove('show');
   // if immediate, force transform so transition occurs
   if (immediate) {
+    _hideWasImmediate = true;
+    // remove transition and move instantly off-screen, then restore transition
+    _notif.style.transition = 'none';
     _notif.style.transform = 'translateY(-140%)';
-    // schedule a small timeout to clear style and allow transitionend
+    // force reflow so the instant transform is applied
+    void _notif.offsetHeight;
+    // restore transition so future shows animate normally
+    _notif.style.transition = '';
+    _notif.style.transform = '';
+    // call next show directly (do not rely on transitionend)
     setTimeout(() => {
-      _notif.style.transform = '';
-    }, 20);
+      _hideWasImmediate = false;
+      _showNext();
+    }, 0);
   }
 }

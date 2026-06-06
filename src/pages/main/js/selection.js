@@ -3,7 +3,6 @@ import { showToast } from "./ui.js";
 import { deleteMessage, buildForwardedMsg } from "./context-menu.js";
 import {
 	openChat,
-	injectMessages,
 	scrollChatToBottom,
 	basePadding,
 	getContactPreviewText,
@@ -15,8 +14,7 @@ import {
 	sortContacts,
 	moveToContacts,
 } from "./chat-logic.js";
-import { emitMessageSeen } from "./socket.js";
-import { safeSrc, mountAvatar } from "../../../utils/dom.js";
+import { mountAvatar } from "../../../utils/dom.js";
 
 let _dom = {};
 
@@ -32,7 +30,7 @@ let _dom = {};
 export function initSelection(dom) {
 	_dom = dom;
 	// ensure we have a reference to the toolbar delete button
-	_dom.selectionDeleteBtn = dom.selectionDeleteBtn || document.querySelector(".selection-delete-btn");
+	_dom.selectionDeleteBtn = dom.selectionDeleteBtn;
 }
 
 // ─── Enter / cancel selection mode ───────────────────────────────────────────
@@ -85,12 +83,12 @@ export function updateSelectionCount() {
 export function handleBulkDelete() {
 	const msgsToDelete = [...state.selectedMessages].sort((a, b) => b - a);
 
-	// Prevent deleting if selection contains only incoming messages
-	const allIncoming = msgsToDelete.every((idx) => {
+	// Only allow bulk delete when all selected messages belong to the current user.
+	const allOutgoing = msgsToDelete.every((idx) => {
 		const msg = messages[state.contactUserId]?.[idx];
-		return msg && !msg.user;
+		return msg && !!msg.user;
 	});
-	if (allIncoming) {
+	if (!allOutgoing) {
 		showToast("You can only delete your own messages");
 		cancelSelection();
 		return;
@@ -179,7 +177,7 @@ export function prepareBulkForward() {
 - @param {{ id, profilePics, name, nickname }} friend
 - @param {string} sourceName
   */
-export function executeBulkForward(friend, sourceName) {
+export async function executeBulkForward(friend, sourceName) {
 	const forwardingMsgs = [...state.selectedMessages]
 		.sort((a, b) => a - b)
 		.map((idx) =>
@@ -213,8 +211,7 @@ export function executeBulkForward(friend, sourceName) {
 		isOnline: friend.isOnline,
 	});
 	_dom.chatName.textContent = friend.nickname || friend.name;
-	openChat(true);
-	injectMessages(friend.id);
+	await openChat(true);
 	scrollChatToBottom();
 
 	_dom.msgAction.style.display = "flex";

@@ -1,12 +1,13 @@
 /* global Cropper */
 import { updateMe, uploadAvatar, deleteAvatar } from "./api.js";
-import { safeSrc, mountAvatar, refreshUserAvatars } from "../../../utils/dom.js";
+import { mountAvatar, refreshUserAvatars } from "../../../utils/dom.js";
 import { getCurrentUser } from "./currentUser.js";
 import { isValidUsername } from "../../auth/js/auth-validate.js";
 import { showToast } from "./ui.js";
 let _dom = {};
 let _currentUser = null;
 let _cropper = null;
+let _avatarBlobUrl = null;
 
 /**
  * @param {{
@@ -37,8 +38,12 @@ export function initEditProfile(dom) {
 	_dom.avatarFileInput.addEventListener("change", (e) => {
 		const file = e.target.files[0];
 		if (!file) return;
-		const url = URL.createObjectURL(file);
-		_dom.avatarCropImage.src = url;
+		if (_avatarBlobUrl) {
+			try { URL.revokeObjectURL(_avatarBlobUrl); } catch (e) { /* ignore */ }
+			_avatarBlobUrl = null;
+		}
+		_avatarBlobUrl = URL.createObjectURL(file);
+		_dom.avatarCropImage.src = _avatarBlobUrl;
 		_dom.avatarCropDialog.showModal();
 
 		if (_cropper) {
@@ -62,6 +67,10 @@ export function initEditProfile(dom) {
 			_cropper = null;
 		}
 		_dom.avatarFileInput.value = "";
+		if (_avatarBlobUrl) {
+			try { URL.revokeObjectURL(_avatarBlobUrl); } catch (e) { /* ignore */ }
+			_avatarBlobUrl = null;
+		}
 	});
 
 	_dom.avatarCropConfirm.addEventListener("click", async () => {
@@ -82,9 +91,7 @@ export function initEditProfile(dom) {
 					// prefer mounting into the wrapper so we always replace the
 					// current avatar element (handles cases where the img was
 					// previously replaced by a div)
-					const wrapper = (_dom.editProfileAvatar && _dom.editProfileAvatar.closest)
-						? _dom.editProfileAvatar.closest('.edit-profile-avatar-wrapper')
-						: document.querySelector('.edit-profile-avatar-wrapper');
+					const wrapper = _dom.editProfileAvatar?.closest?.('.edit-profile-avatar-wrapper') || null;
 					const target = wrapper || _dom.editProfileAvatar;
 					mountAvatar(target, {
 						name: _currentUser?.name || "",
@@ -110,14 +117,18 @@ export function initEditProfile(dom) {
 					_dom.avatarCropDialog.close();
 					// update avatars across the UI immediately
 					try { refreshUserAvatars(_currentUser); } catch (e) { /* ignore */ }
-				} else {
-					alert(res?.error || "Upload failed. Please try again.");
+					} else {
+					showToast(res?.error || "Upload failed. Please try again.");
 				}
 				if (_cropper) {
 					_cropper.destroy();
 					_cropper = null;
 				}
 				_dom.avatarFileInput.value = "";
+				if (_avatarBlobUrl) {
+					try { URL.revokeObjectURL(_avatarBlobUrl); } catch (e) { /* ignore */ }
+					_avatarBlobUrl = null;
+				}
 			},
 			"image/jpeg",
 			0.9,
@@ -130,9 +141,7 @@ export function initEditProfile(dom) {
 		try {
 			await deleteAvatar();
 			// render initial-letter fallback
-			const wrapperTarget = (_dom.editProfileAvatar && _dom.editProfileAvatar.closest)
-				? _dom.editProfileAvatar.closest('.edit-profile-avatar-wrapper')
-				: document.querySelector('.edit-profile-avatar-wrapper');
+			const wrapperTarget = _dom.editProfileAvatar?.closest?.('.edit-profile-avatar-wrapper') || null;
 			const target = wrapperTarget || _dom.editProfileAvatar;
 			mountAvatar(target, {
 				name: _currentUser?.name || "",
@@ -169,9 +178,7 @@ export function openEditProfile(user) {
 	_dom.editUsernameInput.value = user.username || "";
 	_dom.editBioInput.value = user.bio || "";
 	if (_dom.editProfileAvatar) {
-		const wrapperTarget = (_dom.editProfileAvatar && _dom.editProfileAvatar.closest)
-			? _dom.editProfileAvatar.closest('.edit-profile-avatar-wrapper')
-			: document.querySelector('.edit-profile-avatar-wrapper');
+		const wrapperTarget = _dom.editProfileAvatar?.closest?.('.edit-profile-avatar-wrapper') || null;
 		const target = wrapperTarget || _dom.editProfileAvatar;
 		mountAvatar(target, {
 			name: user.name,
@@ -201,7 +208,11 @@ export function openEditProfile(user) {
 export function closeEditProfile() {
 	if (window.innerWidth > 700) {
 		_dom.editProfileDialog.close();
-		_dom.editProfileDialog.textContent = "";
+		try {
+			if (_dom.editProfileDialog.contains(_dom.editProfilePanel)) {
+				_dom.editProfileDialog.removeChild(_dom.editProfilePanel);
+			}
+		} catch (e) { /* ignore */ }
 	} else {
 		_dom.editProfilePanel.classList.remove("slide-in");
 		_dom.editProfilePanel.classList.add("slide-out");
@@ -228,7 +239,7 @@ async function _handleSave() {
 	}
 
 	if (username && !isValidUsername(username)) {
-		showToast("Username must be 3-20 characters, letters, numbers, or underscores only.");
+		showToast("Username must be 3-30 characters, letters, numbers, or underscores only.");
 		_dom.editUsernameInput.focus();
 		return;
 	}

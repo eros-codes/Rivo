@@ -270,15 +270,10 @@ async function initKeyStore() {
 async function refreshKeyStore() {
   const provider = (process.env.SECRET_PROVIDER || "env").toLowerCase();
   if (provider !== "vault") return;
-  try {
-    const data = await _fetchVaultSecrets();
-    if (data && typeof data === "object") {
-      _vaultCache = data;
-      _vaultCacheTs = Date.now();
-    }
-  } catch (e) {
-    // propagate error to caller; caller should log but must not crash
-    throw e;
+  const data = await _fetchVaultSecrets();
+  if (data && typeof data === "object") {
+    _vaultCache = data;
+    _vaultCacheTs = Date.now();
   }
 }
 

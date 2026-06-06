@@ -116,7 +116,7 @@ async function main() {
       const u = new URL(url);
       const httpx = u.protocol === "https:" ? https : http;
       const opts = { method: "GET", hostname: u.hostname, port: u.port || (u.protocol === "https:" ? 443 : 80), path: u.pathname + u.search, headers: { "X-Vault-Token": token, Accept: "application/json" } };
-      return await new Promise((resolve, reject) => {
+      return await new Promise((resolve, _reject) => {
         const req = httpx.request(opts, (res) => {
           let body = "";
           res.setEncoding("utf8");

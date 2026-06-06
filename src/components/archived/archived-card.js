@@ -1,4 +1,4 @@
-import { safeSrc, createAvatarElement } from "../../utils/dom.js";
+import { createAvatarElement } from "../../utils/dom.js";
 import { parseSvg } from "../../utils/svg.js";
 
 const unarchiveIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M20.54 5.23L19.13 3.81A2 2 0 0 0 17.72 3H6.28A2 2 0 0 0 4.87 3.81L3.46 5.23A2 2 0 0 0 3 6.5V19a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6.5a2 2 0 0 0-.46-1.27zM12 7l5 5h-3v3H10v-3H7z"/></svg>`;

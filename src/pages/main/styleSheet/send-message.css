@@ -396,13 +396,8 @@ emoji-picker {
 	border-radius: 14px 14px 0 0;
 	transition: opacity 0.45s ease;
 
-	/* Gradient overlay behind the lock */
-	background: linear-gradient(
-		to bottom,
-		transparent 0%,
-		rgba(8, 8, 16, 0.55) 35%,
-		rgba(8, 8, 16, 0.92) 100%
-	);
+	/* Remove gradient overlay; keep transparent so message base color shows through */
+	background: transparent;
 }
 
 .capsule-lock-icon {

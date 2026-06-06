@@ -14,6 +14,10 @@ const pendingSpinnerSvg = `<svg class="msg-pending-spinner" xmlns="http://www.w3
 
 const failedIconSvg = `<svg class="msg-failed-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="var(--danger-color)" stroke-width="2"/><line x1="12" y1="7" x2="12" y2="13" stroke="var(--danger-color)" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="17" r="1" fill="var(--danger-color)"/></svg>`;
 
+// URL matcher (anchored) — reuse across createMessage calls to avoid
+// allocating a RegExp on every message render.
+const LINK_REGEX = /^(?:https?:\/\/)?(?:www\.)[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s]*)?$|^https?:\/\/[^\s]+$/i;
+
 // This file contains functions related to creating and manipulating message elements in the chat, as well as the context menu for messages.
 export function escapeHtml(str) {
 	if (!str) return "";
@@ -176,11 +180,8 @@ export function createMessage({
 	const p = document.createElement("p");
 	p.className = "chat-message-text";
 
-	const fullUrlRegex =
-		/(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9-]+\.(?:com|net|org|io|app|dev|ir|co|me|info|xyz|ai|gg)(?:\/[^\s]*)?)/i;
-
 	(text || "").split(/(\s+)/).forEach((word) => {
-		if (fullUrlRegex.test(word)) {
+		if (LINK_REGEX.test(word)) {
 			const a = document.createElement("a");
 			const href = word.startsWith("http") ? word : `https://${word}`;
 			a.href = href;

@@ -31,11 +31,13 @@ import {
 	scrollChatToBottomAfterPadding,
 	nearBottom,
 	nearTop,
-	canLoadOlder,
 	clearOpenSuppression,
 	loadOlderMessages,
-	updatePinCount,
-	updatePinnedMessage,
+		updatePinCount,
+		updatePinnedMessage,
+		updatePinnedData,
+		getPinnedData,
+		scrollToPinnedMessage,
 	basePadding,
 	lineHeight,
 	maxLines,
@@ -97,21 +99,18 @@ import {
 	initSocket,
 	emitTypingStart,
 	emitTypingStop,
-	emitMessageSeen,
 	getSocket,
 	emitReaction,
 	setOnetimeDeletedHandler,
 	setCapsuleOpenedHandler,
 } from "./js/socket.js";
 import { applyReactionsToMessage } from "../../components/messages/messages.js";
-import { findMessageById } from "./js/state.js";
+// findMessageById imported via chat/state when needed
 import { loadThemeFromStorage } from "../../utils/theme.js";
 import { parseSvg } from "../../utils/svg.js";
 import {
-	safeSrc,
 	updateThemeImages,
 	observeThemeChanges,
-	createAvatarElement,
 	mountAvatar,
 	refreshUserAvatars,
 } from "../../utils/dom.js";
@@ -659,6 +658,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 		mainContent,
 		peoplePart,
 		chatEl,
+		contactsContainer,
+		activeChatsContainer,
 		contactProfileDetails,
 		messageInput,
 		sendMessageBtn,
@@ -670,6 +671,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 		chatHeader,
 		emptyStateEl,
 		chatProfilePicture,
+		scrollToBottomBtn,
 		onContactAction: _onContactAction,
 	});
 
@@ -802,7 +804,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 		searchContactsList,
 		searchMessagesList,
 		onContactAction: _onContactAction,
-		onMessageClick: (contact, msgIndex) => {
+		onMessageClick: async (contact, msgIndex) => {
 			searchbar.classList.remove("open");
 			searchInput.value = "";
 			runSearch("");
@@ -823,11 +825,11 @@ document.addEventListener("DOMContentLoaded", async function () {
 						"data-user-id",
 						String(contact.id),
 					);
-			} catch (e) {
+			} catch (_e) {
 				/* ignore */
 			}
 			chatName.textContent = contact.nickname || contact.name;
-			openChat(true);
+			try { await openChat(true); } catch (e) { /* ignore */ }
 
 			if (msgIndex === null) return;
 
@@ -912,7 +914,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			addContactSubmit,
 			addFriendsBtn,
 		},
-		(newContact) => {
+		async (newContact) => {
 			const normalized = {
 				...newContact,
 				contactId: newContact.contact?.id,
@@ -973,7 +975,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			chatName.textContent = normalized.nickname || normalized.name;
 
 			state.contactUserId = normalized.id;
-			openChat(true);
+			try { await openChat(true); } catch (e) { /* ignore */ }
 
 			// Ensure the send input and unblock action reflect the contact's
 			// blocked state immediately after adding.
@@ -1114,6 +1116,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 			// preserve the removed message so we can adjust unread counters
 			const removedMsg = userMsgs[foundIndex];
 			userMsgs.splice(foundIndex, 1);
+			// Ensure pinnedData cache reflects deletions
+			try { updatePinnedData(Number(foundUserId), data.messageId, removedMsg, false); } catch (e) {}
 
 			// If the deleted message was incoming and unseen, decrement unread
 			// so the contact preview reflects the deletion.
@@ -1227,6 +1231,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 				const idx = msgs.findIndex((m) => m.id === messageId);
 				if (idx !== -1) {
 					msgs[idx].isPinned = isPinned;
+					try { updatePinnedData(Number(uid), messageId, msgs[idx], isPinned); } catch (e) {}
 					if (state.contactUserId === Number(uid)) {
 						injectMessages(Number(uid));
 					}
@@ -1467,7 +1472,18 @@ document.addEventListener("DOMContentLoaded", async function () {
 	function openPinnedView() {
 		pinnedViewList.textContent = "";
 
-		if (state.pinnedIndexes.length === 0) {
+		const allPinned = getPinnedData(state.contactUserId);
+		const friend = contacts.find((c) => c.id === state.contactUserId);
+
+		let source = [];
+		if (Array.isArray(allPinned) && allPinned.length > 0) {
+			source = allPinned.slice().reverse();
+		} else if (Array.isArray(state.pinnedIndexes) && state.pinnedIndexes.length > 0) {
+			const msgs = messages[state.contactUserId] || [];
+			source = [...state.pinnedIndexes].reverse().map((idx) => msgs[idx]).filter(Boolean);
+		}
+
+		if (source.length === 0) {
 			const empty = document.createElement("p");
 			empty.className = "pinned-view-empty";
 			empty.textContent = "No pinned messages";
@@ -1476,11 +1492,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			return;
 		}
 
-		const msgs = messages[state.contactUserId];
-		const friend = contacts.find((c) => c.id === state.contactUserId);
-
-		[...state.pinnedIndexes].reverse().forEach((idx) => {
-			const msg = msgs[idx];
+		source.forEach((msg) => {
 			if (!msg) return;
 
 			const item = document.createElement("div");
@@ -1490,12 +1502,11 @@ document.addEventListener("DOMContentLoaded", async function () {
 			meta.className = "pinned-view-item-meta";
 			const sender = document.createElement("span");
 			sender.className = "pinned-view-item-sender";
-			sender.textContent = msg.user
-				? "You"
-				: friend?.nickname || friend?.name || "";
+			const senderLabel = (msg.senderId && Number(msg.senderId) === Number(getCurrentUser()?.id)) ? 'You' : (friend?.nickname || friend?.name || '');
+			sender.textContent = senderLabel;
 			const time = document.createElement("span");
 			time.className = "pinned-view-item-time";
-			time.textContent = msg.time;
+			time.textContent = msg.time || (msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '');
 			meta.appendChild(sender);
 			meta.appendChild(time);
 
@@ -1506,16 +1517,33 @@ document.addEventListener("DOMContentLoaded", async function () {
 			item.appendChild(meta);
 			item.appendChild(text);
 
-			item.addEventListener("click", () => {
+			item.addEventListener("click", async () => {
 				pinnedViewDialog.close();
-				const msgEl = chatEl.querySelector(`[data-index="${idx}"]`);
-				if (!msgEl) return;
-				state.isProgrammaticScroll = true;
-				msgEl.scrollIntoView({ behavior: "smooth", block: "center" });
-				setTimeout(() => {
-					state.isProgrammaticScroll = false;
-				}, 800);
-				highlightMessage(msgEl);
+				// If item from pinnedData has id, use scrollToPinnedMessage
+				if (msg.id) {
+					try {
+						await scrollToPinnedMessage(msg.id);
+						const msgEl = chatEl.querySelector(`[data-message-id="${msg.id}"]`);
+						if (msgEl) {
+							highlightMessage(msgEl);
+						}
+					} catch (e) {
+						/* ignore */
+					}
+					return;
+				}
+
+				// Fallback for index-based source
+				if (typeof msg.index !== 'undefined') {
+					const msgEl = chatEl.querySelector(`[data-index="${msg.index}"]`);
+					if (!msgEl) return;
+					state.isProgrammaticScroll = true;
+					msgEl.scrollIntoView({ behavior: "smooth", block: "center" });
+					setTimeout(() => {
+						state.isProgrammaticScroll = false;
+					}, 800);
+					highlightMessage(msgEl);
+				}
 			});
 
 			pinnedViewList.appendChild(item);
@@ -1761,7 +1789,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 	// ─── Open chat — active-chats ─────────────────────────────────────────────
 	if (activeChatsContainer) {
-		activeChatsContainer.addEventListener("click", (e) => {
+		activeChatsContainer.addEventListener("click", async (e) => {
 			const active = e.target.closest(".active-chat");
 			if (!active) return;
 
@@ -1870,7 +1898,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 				}
 			}
 			chatName.textContent = friend.nickname || friend.name;
-			openChat(true);
+			try { await openChat(true); } catch (e) { /* ignore */ }
 
 			if (friend.isBlocked) {
 				messageContainer.style.display = "none";
@@ -1896,7 +1924,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 	// ─── Open chat — contacts ─────────────────────────────────────────────────
 	if (contactsContainer) {
-		contactsContainer.addEventListener("click", (e) => {
+		contactsContainer.addEventListener("click", async (e) => {
 			const card = e.target.closest(".contacts-card");
 			if (!card) return;
 
@@ -1974,7 +2002,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 				/* ignore */
 			}
 			chatName.textContent = friend.nickname || friend.name;
-			openChat(true);
+			try { await openChat(true); } catch (e) { /* ignore */ }
 			if (friend.isBlocked) {
 				messageContainer.style.display = "none";
 				const _ub = unblockActionBtn[0];
@@ -2220,6 +2248,18 @@ document.addEventListener("DOMContentLoaded", async function () {
 			let triggered = false;
 
 			function showOneTime() {
+				// Sync slots with actual state (fix out-of-sync slot state after send)
+				if (sendModeSlots[0] !== state.sendMode) {
+					const idx = sendModeSlots.indexOf(state.sendMode);
+					if (idx > 0) {
+						const tmp = sendModeSlots[0];
+						sendModeSlots[0] = sendModeSlots[idx];
+						sendModeSlots[idx] = tmp;
+					} else {
+						resetSlots();
+					}
+				}
+
 				// Guard against creating multiple overlays if one already exists.
 				if (
 					triggerContainer ||
@@ -2294,7 +2334,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 				capsuleBtn.className =
 					"onetime-trigger-btn capsule-trigger-btn";
 				capsuleBtn.setAttribute("aria-label", "Send as Time Capsule");
-				const capsuleSvg = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="5" y="10" width="14" height="10" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M8 10V7.5C8 5.57 9.57 4 11.5 4H12.5C14.43 4 16 5.57 16 7.5V10" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="15" r="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M12 15V13.8M12 15L13 15.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
 				// Show capsule icon or swap-in the main send icon when time-capsule is active
 				if (state.sendMode === "time-capsule" && originalSendBtnInner) {
 					capsuleBtn.innerHTML = originalSendBtnInner;
@@ -2466,14 +2505,14 @@ document.addEventListener("DOMContentLoaded", async function () {
 					if (triggered) hideOneTime();
 					oneTimeOverlayActive = false;
 					// reset slot ordering and canonical send mode when chat fully closes
-					try { resetSlots(); } catch (e) { /* ignore */ }
+					try { resetSlots(); } catch (_e) { /* ignore */ }
 				} catch (e) {
 					/* ignore */
 				}
 			});
 
 			// Pointer events (works for both mouse and touch)
-			sendMessageBtn.addEventListener("pointerdown", (e) => {
+			sendMessageBtn.addEventListener("pointerdown", () => {
 				if (state.isMenuOpen) return;
 				// Do not start another long-press while overlay is active
 				if (oneTimeOverlayActive) return;
@@ -2795,20 +2834,64 @@ document.addEventListener("DOMContentLoaded", async function () {
 				distanceFromBottom > 300,
 			);
 
-			if (state.pinnedIndexes.length === 0) return;
-			for (let i = state.pinnedIndexes.length - 1; i >= 0; i--) {
-				const idx = state.pinnedIndexes[i];
-				const msg = chatEl.querySelector(`[data-index="${idx}"]`);
-				if (!msg) continue;
-				const rect = msg.getBoundingClientRect();
-				const chatRect = chatEl.getBoundingClientRect();
-				if (rect.top >= chatRect.top && rect.top <= chatRect.bottom) {
-					pinnedMessageText.dataset.index = idx;
-					const msgs = messages[state.contactUserId][idx];
-					if (!msgs) return;
-					pinnedMessageText.textContent = msgs.text;
-					updatePinCount(idx);
-					break;
+			// If server-provided pinned data exists, prefer locating by messageId
+			const allPinned = getPinnedData(state.contactUserId);
+			if (Array.isArray(allPinned) && allPinned.length > 0) {
+				for (let i = allPinned.length - 1; i >= 0; i--) {
+					const mid = allPinned[i].id;
+					const msgEl = chatEl.querySelector(`[data-message-id="${mid}"]`);
+					if (!msgEl) continue;
+					const rect = msgEl.getBoundingClientRect();
+					const chatRect = chatEl.getBoundingClientRect();
+					// consider the message visible if any part overlaps the chat viewport
+					if (rect.bottom >= chatRect.top && rect.top <= chatRect.bottom) {
+						pinnedMessageText.dataset.messageId = String(mid);
+						pinnedMessageText.textContent = allPinned[i].text || '';
+						// update pin-count UI (mirror chat.js helper)
+						pinnedMessageCount.textContent = '';
+						const total = Math.min(allPinned.length, 3);
+						if (total > 0) {
+							const pos = i;
+							let activeSpan;
+							if (allPinned.length <= 3) {
+								activeSpan = pos;
+							} else {
+								if (pos === 0) activeSpan = 0;
+								else if (pos === allPinned.length - 1) activeSpan = 2;
+								else activeSpan = 1;
+							}
+							for (let s = 0; s < total; s++) {
+								const span = document.createElement('span');
+								if (s === activeSpan) {
+									span.style.height = '1.2rem';
+									span.style.opacity = '1';
+								} else {
+									span.style.height = '0.6rem';
+									span.style.opacity = '0.4';
+								}
+								pinnedMessageCount.appendChild(span);
+							}
+						}
+						break;
+					}
+				}
+			} else {
+				if (state.pinnedIndexes.length === 0) return;
+				for (let i = state.pinnedIndexes.length - 1; i >= 0; i--) {
+					const idx = state.pinnedIndexes[i];
+					const msg = chatEl.querySelector(`[data-index="${idx}"]`);
+					if (!msg) continue;
+					const rect = msg.getBoundingClientRect();
+					const chatRect = chatEl.getBoundingClientRect();
+					// consider the message visible if any part overlaps the chat viewport
+					if (rect.bottom >= chatRect.top && rect.top <= chatRect.bottom) {
+						pinnedMessageText.dataset.index = idx;
+						const msgs = messages[state.contactUserId][idx];
+						if (!msgs) return;
+						pinnedMessageText.textContent = msgs.text;
+						updatePinCount(idx);
+						break;
+					}
 				}
 			}
 		});
@@ -2828,43 +2911,82 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 	// ─── Pinned message bar ───────────────────────────────────────────────────
 	if (pinnedMessageContainer) {
-		pinnedMessageContainer.addEventListener("click", () => {
-			if (state.pinnedIndexes.length === 0) return;
+		pinnedMessageContainer.addEventListener("click", async () => {
+			const allPinned = getPinnedData(state.contactUserId);
 
-			const currentIdx = Number(pinnedMessageText.dataset.index);
-			const pos = state.pinnedIndexes.indexOf(currentIdx);
-			if (pos === -1) return;
-			const prevPos =
-				(pos - 1 + state.pinnedIndexes.length) %
-				state.pinnedIndexes.length;
-			const prevIdx = state.pinnedIndexes[prevPos];
+			if (Array.isArray(allPinned) && allPinned.length > 0) {
+				const currentId =
+					Number(pinnedMessageText.dataset.messageId) || null;
+				const pos = allPinned.findIndex(
+					(m) => Number(m.id) === Number(currentId),
+				);
+				if (pos === -1) return;
 
-			const targetMsg = chatEl.querySelector(
-				`[data-index="${currentIdx}"]`,
-			);
-			if (targetMsg) {
-				state.isProgrammaticScroll = true;
-				targetMsg.scrollIntoView({
-					behavior: "smooth",
-					block: "center",
-				});
-				highlightMessage(targetMsg);
+				const currentMsg = allPinned[pos]; // ← scroll میریم اینجا
+				const nextPos = (pos - 1 + allPinned.length) % allPinned.length;
+				const nextMsg = allPinned[nextPos]; // ← بعد از scroll اینو نشون میده
 
-				// when reached to pinned message, show next pinned message in the bar after short delay
-				setTimeout(() => {
-					state.isProgrammaticScroll = false;
-					const msgs = messages[state.contactUserId][prevIdx];
-					if (!msgs) return;
-					pinnedMessageText.textContent = msgs.text;
-					pinnedMessageText.dataset.index = prevIdx;
-					pinnedMessageContainer.style.animation =
-						"highlightPin 0.5s";
-					setTimeout(
-						() => (pinnedMessageContainer.style.animation = ""),
-						500,
-					);
-					updatePinCount(prevIdx);
-				}, 800);
+				pinnedMessageContainer.style.animation = "highlightPin 0.5s";
+				setTimeout(
+					() => (pinnedMessageContainer.style.animation = ""),
+					500,
+				);
+
+				// اول scroll به currentMsg
+				try {
+					await scrollToPinnedMessage(currentMsg.id);
+				} catch (e) {
+					/* ignore */
+				}
+
+				// بعد banner رو advance کن به nextMsg
+				pinnedMessageText.textContent = nextMsg.text || "";
+				pinnedMessageText.dataset.messageId = String(nextMsg.id);
+
+				// pin count
+				pinnedMessageCount.textContent = "";
+				const total = Math.min(allPinned.length, 3);
+				for (let s = 0; s < total; s++) {
+					const span = document.createElement("span");
+					if (s === nextPos % total) {
+						span.style.height = "1.2rem";
+						span.style.opacity = "1";
+					} else {
+						span.style.height = "0.6rem";
+						span.style.opacity = "0.4";
+					}
+					pinnedMessageCount.appendChild(span);
+				}
+			} else {
+				// fallback index-based (قدیمی)
+				if (state.pinnedIndexes.length === 0) return;
+				const currentIdx = Number(pinnedMessageText.dataset.index);
+				const pos = state.pinnedIndexes.indexOf(currentIdx);
+				if (pos === -1) return;
+				const prevPos =
+					(pos - 1 + state.pinnedIndexes.length) %
+					state.pinnedIndexes.length;
+				const prevIdx = state.pinnedIndexes[prevPos];
+
+				const targetMsg = chatEl.querySelector(
+					`[data-index="${currentIdx}"]`,
+				);
+				if (targetMsg) {
+					state.isProgrammaticScroll = true;
+					targetMsg.scrollIntoView({
+						behavior: "smooth",
+						block: "center",
+					});
+					highlightMessage(targetMsg);
+					setTimeout(() => {
+						state.isProgrammaticScroll = false;
+						const msgs = messages[state.contactUserId][prevIdx];
+						if (!msgs) return;
+						pinnedMessageText.textContent = msgs.text;
+						pinnedMessageText.dataset.index = prevIdx;
+						updatePinCount(prevIdx);
+					}, 800);
+				}
 			}
 		});
 	}
@@ -2894,7 +3016,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			forwardDialog.close(),
 		);
 
-		forwardDialog.addEventListener("click", (e) => {
+		forwardDialog.addEventListener("click", async (e) => {
 			const card = e.target.closest(".forwarded-contact-card");
 			if (!card) return;
 
@@ -2932,11 +3054,11 @@ document.addEventListener("DOMContentLoaded", async function () {
 						"data-user-id",
 						String(friend.id),
 					);
-			} catch (e) {
+			} catch (_e) {
 				/* ignore */
 			}
 			chatName.textContent = friend.nickname || friend.name;
-			openChat(true);
+			try { await openChat(true); } catch (e) { /* ignore */ }
 			if (friend.isBlocked) {
 				messageContainer.style.display = "none";
 				const _ub = unblockActionBtn[0];
@@ -3313,7 +3435,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 				archivedDialogList.appendChild(
 					createArchivedCard(
 						contact,
-						(id) => {
+						async (id) => {
 							// Unarchive
 							_unarchiveContact(id);
 							const card = archivedDialogList.querySelector(
@@ -3331,7 +3453,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 								archivedDialogList.appendChild(empty);
 							}
 						},
-						(id) => {
+						async (id) => {
 							// Open chat
 							archivedDialog.close();
 							closeSettings();
@@ -3358,7 +3480,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 							}
 							chatName.textContent =
 								friend.nickname || friend.name;
-							openChat(true);
+							try { await openChat(true); } catch (e) { /* ignore */ }
 
 							if (friend.isBlocked) {
 								messageContainer.style.display = "none";

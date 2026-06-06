@@ -9,7 +9,7 @@ import {
 } from "./chat-logic.js";
 import { createContactCard } from "../../../components/contact-cards/contact-card.js";
 import { createActiveChatCard } from "../../../components/active-chats/active-chats.js";
-import { safeSrc, mountAvatar } from "../../../utils/dom.js";
+import { mountAvatar } from "../../../utils/dom.js";
 import {
 	updateContact,
 	deleteContact as apiDeleteContact,
@@ -18,6 +18,8 @@ import {
 } from "./api.js";
 
 let _dom = {};
+const _searchUsersCache = new Map();
+const SEARCH_USERS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 /**
 
@@ -83,10 +85,20 @@ export async function openProfile(friend) {
 	_dom.detailUsernames.forEach((el) => (el.textContent = hidePersonal ? "" : "@" + (friend.username || "")));
 	_dom.detailEmails.forEach((el) => (el.textContent = hidePersonal ? "" : (friend.email || "")));
 
-	// If bio is missing, try to resolve via username lookup
+	// If bio is missing, try to resolve via username lookup. Use a simple
+	// in-memory cache to avoid repeated network calls when the profile is
+	// opened/closed quickly.
 	if ((!friend.bio || friend.bio === "") && friend.username) {
 		try {
-			const users = await searchUsers(friend.username);
+			let users;
+			const key = friend.username;
+			const entry = _searchUsersCache.get(key);
+			if (entry && Date.now() - entry.ts < SEARCH_USERS_CACHE_TTL) {
+				users = entry.data;
+			} else {
+				users = await searchUsers(friend.username);
+				_searchUsersCache.set(key, { data: users, ts: Date.now() });
+			}
 			if (Array.isArray(users) && users.length > 0) {
 				const found = users.find(
 					(u) =>
@@ -184,19 +196,14 @@ export async function openProfile(friend) {
 		);
 	}
 
-	document
-		.querySelectorAll("#block-contact-btn")
-		.forEach(
-			(btn) =>
-				(btn.textContent = friend.isBlocked
-					? "Unblock contact"
-					: "Block contact"),
-		);
+	const blockBtns = _dom.contactProfileDetails.querySelectorAll("#block-contact-btn");
+	blockBtns.forEach((btn) =>
+		(btn.textContent = friend.isBlocked ? "Unblock contact" : "Block contact"),
+	);
 
-	document.querySelectorAll("#archive-contact-btn").forEach((btn) => {
-		btn.textContent = friend.isArchived
-			? "Unarchive Chat"
-			: "Archive Chat";
+	const archiveBtns = _dom.contactProfileDetails.querySelectorAll("#archive-contact-btn");
+	archiveBtns.forEach((btn) => {
+		btn.textContent = friend.isArchived ? "Unarchive Chat" : "Archive Chat";
 	});
 	state.isProfileDialogOpen = true;
 }
@@ -214,7 +221,11 @@ export function closeProfile() {
 	if (cancelEditNameBtn0) cancelEditNameBtn0.style.display = "none";
 	if (state.contactUserId !== null && window.innerWidth >= 700) {
 		_dom.profileDialog.close();
-		_dom.profileDialog.textContent = "";
+		try {
+			if (_dom.profileDialog.contains && _dom.profileDialog.contains(_dom.contactProfileDetails)) {
+				_dom.profileDialog.removeChild(_dom.contactProfileDetails);
+			}
+		} catch (e) { /* ignore */ }
 	} else {
 		_dom.contactProfileDetails.classList.remove("slide-in");
 		_dom.contactProfileDetails.classList.add("slide-out");
@@ -266,10 +277,7 @@ export function handleDeleteChat() {
 			);
 		if (_dom.contactsContainer)
 			matches.push(..._dom.contactsContainer.querySelectorAll(selector));
-		// fallback to document if nothing found (dynamic containers may differ)
-		if (matches.length === 0) {
-			matches = Array.from(document.querySelectorAll(selector));
-		}
+		// rely on injected containers (_dom.activeChatsContainer / _dom.contactsContainer)
 
 		matches.forEach((el) => {
 			const wrapper = el.closest(".active-chat-wrapper") ?? el;
@@ -501,21 +509,19 @@ export function handleBlockContact() {
 	contact.isBlocked = !contact.isBlocked;
 	updateContact(contact.id, { isBlocked: contact.isBlocked });
 
-	const messageContainer = document.querySelector(".chat-send-message");
-	const unblockActionBtn = document.querySelectorAll("#unblock-action-btn");
+	const messageContainer = _dom.chatEl.querySelector(".chat-send-message");
+	const unblockActionBtn = _dom.contactProfileDetails.querySelectorAll("#unblock-action-btn");
 
 	if (contact.isBlocked) {
-		document
-			.querySelectorAll("#block-contact-btn")
-			.forEach((btn) => (btn.textContent = "Unblock contact"));
-		messageContainer.style.display = "none";
+		const blockBtns = _dom.contactProfileDetails.querySelectorAll("#block-contact-btn");
+		blockBtns.forEach((btn) => (btn.textContent = "Unblock contact"));
+		if (messageContainer) messageContainer.style.display = "none";
 		const _ub = unblockActionBtn[0];
 		if (_ub) _ub.style.display = "flex";
 	} else {
-		document
-			.querySelectorAll("#block-contact-btn")
-			.forEach((btn) => (btn.textContent = "Block contact"));
-		messageContainer.style.display = "flex";
+		const blockBtns = _dom.contactProfileDetails.querySelectorAll("#block-contact-btn");
+		blockBtns.forEach((btn) => (btn.textContent = "Block contact"));
+		if (messageContainer) messageContainer.style.display = "flex";
 		const _ub = unblockActionBtn[0];
 		if (_ub) _ub.style.display = "none";
 	}

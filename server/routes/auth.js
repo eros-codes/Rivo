@@ -124,13 +124,11 @@ async function _sendEmail({ to, subject, text, html }) {
     }
 
     const maxAttempts = 3;
-    let lastErr = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
             const info = await transporter.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, text, html });
             return info;
         } catch (e) {
-            lastErr = e;
             // auth errors should not be retried
             const isAuthErr = e && (e.code === 'EAUTH' || e.responseCode === 535 || e.responseCode === 534);
             if (isAuthErr) {
@@ -148,37 +146,55 @@ async function _sendEmail({ to, subject, text, html }) {
 
 // POST /send-code -> sends a 6-digit code to the given email
 router.post('/send-code', async (req, res) => {
-    const { email } = req.body || {};
-    if (!email || typeof email !== 'string') return res.status(400).json({ error: 'Email required' });
+    const { email, identifier, username } = req.body || {};
+    let target = (email || identifier || username || '').trim();
+    if (!target || typeof target !== 'string') return res.status(400).json({ error: 'Email or username required' });
     try {
+        // If a username was provided, resolve to the user's email
+        let sendTo = target;
+        if (!/@/.test(sendTo)) {
+            try {
+                const user = await prisma.user.findFirst({ where: { username: sendTo } });
+                if (!user || !user.email) {
+                    // Don't reveal whether the username exists; return success
+                    return res.json({ success: true });
+                }
+                sendTo = user.email;
+            } catch (e) {
+                // On DB errors, fail safely
+                console.error('send-code username lookup failed', e && e.message ? e.message : e);
+                return res.status(500).json({ error: 'Server error' });
+            }
+        }
+
         // per-email rate limit
-        const sendCount = await _incrementSendCount(email);
+        const sendCount = await _incrementSendCount(sendTo);
         if (sendCount > VERIFICATION_SEND_LIMIT) {
-            const masked = _maskEmail(email);
+            const masked = _maskEmail(sendTo);
             console.warn(`send-code rate limited: ${masked} ip=${req.ip} count=${sendCount}`);
             return res.status(429).json({ error: 'Too many verification attempts. Try later.' });
         }
 
-        const masked = _maskEmail(email);
+        const masked = _maskEmail(sendTo);
         console.info(`send-code requested: ${masked} ip=${req.ip} ua=${req.headers['user-agent'] || ''} count=${sendCount}`);
 
         const code = crypto.randomInt(100000, 1000000);
-        await _storeVerification(email, code);
+        await _storeVerification(sendTo, code);
 
         // send email via SMTP
         try {
             const tmpl = verificationEmail({
                 code,
-                email,
+                email: sendTo,
                 appName: process.env.APP_NAME || 'Rivo',
                 expiresMinutes: Math.max(1, Math.floor(VERIFICATION_TTL_MS / 60000)),
             });
-            await _sendEmail({ to: email, subject: tmpl.subject, text: tmpl.text, html: tmpl.html });
+            await _sendEmail({ to: sendTo, subject: tmpl.subject, text: tmpl.text, html: tmpl.html });
             console.info(`verification email sent: ${masked} ip=${req.ip}`);
         } catch (e) {
             console.error('failed to send verification email', e && e.message ? e.message : e);
             // cleanup stored code
-            await _clearVerification(email);
+            await _clearVerification(sendTo);
             return res.status(500).json({ error: 'Failed to send email' });
         }
 
@@ -402,9 +418,52 @@ router.post("/logout", (req, res) => {
 // Disabled: insecure unauthenticated password reset. Implement a secure
 // email + token-based reset flow before enabling this endpoint.
 router.post("/reset-password", async (req, res) => {
-    return res.status(501).json({
-        error: "Not implemented. Use a secure password-reset flow (email token).",
-    });
+    const { identifier, newPassword } = req.body || {};
+    if (!identifier || !newPassword || typeof newPassword !== 'string' || newPassword.length < 8) {
+        return res.status(400).json({ error: 'Missing or invalid fields' });
+    }
+
+    try {
+        // Determine email: accept either an email or a username (map username -> email)
+        let email = String(identifier || '').trim();
+        if (!/@/.test(email)) {
+            // treat as username: look up associated email
+            const userByName = await prisma.user.findFirst({ where: { username: email } });
+            if (!userByName || !userByName.email) {
+                return res.status(400).json({ error: 'Invalid identifier' });
+            }
+            email = userByName.email;
+        }
+
+        const normEmail = _normEmail(email);
+        const verifiedUntil = verifiedEmails.get(normEmail);
+        if (!verifiedUntil || verifiedUntil < Date.now()) {
+            return res.status(403).json({ error: 'Email not verified' });
+        }
+
+        // Find user by email
+        const user = await prisma.user.findFirst({ where: { email } });
+        if (!user) {
+            // Clear the verification marker and return success to avoid account enumeration
+            try { verifiedEmails.delete(normEmail); if (verifiedEmailTimers.has(normEmail)) { clearTimeout(verifiedEmailTimers.get(normEmail)); verifiedEmailTimers.delete(normEmail); } } catch (e) { /* ignore */ }
+            return res.json({ success: true });
+        }
+
+        // Update password
+        const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+        await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+
+        // Consume verification marker so it can't be reused
+        try { verifiedEmails.delete(normEmail); if (verifiedEmailTimers.has(normEmail)) { clearTimeout(verifiedEmailTimers.get(normEmail)); verifiedEmailTimers.delete(normEmail); } } catch (e) { /* ignore */ }
+
+        // Clear any cookies if present (best-effort)
+        try { res.clearCookie('token'); res.clearCookie('csrfToken'); } catch (e) { /* ignore */ }
+
+        return res.json({ success: true });
+    } catch (e) {
+        console.error('reset-password failed', e && e.message ? e.message : e);
+        return res.status(500).json({ error: 'Server error' });
+    }
 });
 
 export default router;

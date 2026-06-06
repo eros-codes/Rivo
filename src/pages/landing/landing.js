@@ -207,10 +207,10 @@ stats.forEach((el) => {
 
 // Smooth hover on bento cards
 document.querySelectorAll(".bcard").forEach((card) => {
-	card.addEventListener("mouseenter", (e) => {
+	card.addEventListener("mouseenter", () => {
 		gsap.to(card, { scale: 1.02, duration: 0.25, ease: "power2.out" });
 	});
-	card.addEventListener("mouseleave", (e) => {
+	card.addEventListener("mouseleave", () => {
 		gsap.to(card, { scale: 1, duration: 0.25, ease: "power2.out" });
 	});
 });

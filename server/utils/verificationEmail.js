@@ -1,5 +1,5 @@
 // Simple verification email HTML template generator
-export function verificationEmail({ code, email, appName = 'Rivo', expiresMinutes = 10, supportEmail = process.env.SMTP_FROM || 'support@rivo.ir' } = {}) {
+export function verificationEmail({ code, appName = 'Rivo', expiresMinutes = 10, supportEmail = process.env.SMTP_FROM || 'support@rivo.ir' } = {}) {
   const subject = `${appName} verification code`;
   const preheader = `Your ${appName} verification code is ${code}`;
   const html = `<!doctype html>

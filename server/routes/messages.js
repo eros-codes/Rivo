@@ -93,6 +93,59 @@ router.get("/search", requireAuth, async (req, res) => {
     }
 });
 
+// ─── Get pinned messages for a conversation ──────────────────────────────────
+router.get('/:conversationId/pinned', requireAuth, async (req, res) => {
+	const convId = parseIntSafe(req.params.conversationId);
+	if (!convId) return res.status(400).json({ error: 'Invalid conversationId' });
+	const userId = req.userId;
+
+	try {
+		const member = await prisma.conversationMember.findFirst({
+			where: { conversationId: convId, userId },
+		});
+		if (!member) return res.status(403).json({ error: 'Not a member' });
+
+		const pinned = await prisma.message.findMany({
+			where: { conversationId: convId, isPinned: true, isDeleted: false },
+			orderBy: { createdAt: 'asc' },
+			select: {
+				id: true,
+				text: true,
+				ciphertext: true,
+				iv: true,
+				auth_tag: true,
+				wrapped_dek: true,
+				key_id: true,
+				senderId: true,
+				createdAt: true,
+			},
+		});
+
+		const results = pinned.map((m) => {
+			let text = m.text || '';
+			try {
+				if (!text && m.ciphertext && m.wrapped_dek) {
+					const dek = unwrapDEK(m.wrapped_dek, m.key_id || 'v1');
+					text = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
+				}
+			} catch (e) {
+				// ignore per-message decryption errors
+			}
+			return {
+				id: m.id,
+				text,
+				senderId: m.senderId,
+				createdAt: m.createdAt,
+			};
+		});
+
+		return res.json({ pinned: results });
+	} catch (err) {
+		console.error('pinned messages error', err);
+		return res.status(500).json({ error: 'Server error' });
+	}
+});
+
 // ─── Get messages of a conversation ──────────────────────────────────────────
 router.get("/:conversationId", requireAuth, async (req, res) => {
 	const conversationId = parseIntSafe(req.params.conversationId);

@@ -2,7 +2,7 @@ import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
 import prisma from "../prisma.js";
 import push from "../utils/push.js";
-import { generateDEK, encryptMessage, wrapDEK, unwrapDEK, decryptMessage } from "../utils/encryption.js";
+import { generateDEK, encryptMessage, wrapDEK, decryptMessage } from "../utils/encryption.js";
 import { parseIntSafe, MAX_MESSAGE_LENGTH } from "../utils/validators.js";
 
 export function initSocket(httpServer) {
@@ -527,7 +527,7 @@ export function initSocket(httpServer) {
 				const keyId = "v1";
 				const wrappedDek = wrapDEK(dek, keyId);
 
-				const updated = await prisma.message.update({
+				const _updated = await prisma.message.update({
 					where: { id: msgId },
 					data: {
 						text: null,
@@ -725,7 +725,6 @@ export function initSocket(httpServer) {
 						where: { messageId_userId: { messageId: msgId, userId: socket.userId } },
 					});
 
-					let reaction;
 					let action;
 
 					if (existing && existing.emoji === emoji) {
@@ -737,7 +736,7 @@ export function initSocket(httpServer) {
 						action = "removed";
 					} else {
 						// different emoji or new → upsert
-						reaction = await prisma.messageReaction.upsert({
+						await prisma.messageReaction.upsert({
 							where: { messageId_userId: { messageId: msgId, userId: socket.userId } },
 							create: { messageId: msgId, userId: socket.userId, emoji },
 							update: { emoji },

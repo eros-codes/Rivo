@@ -27,6 +27,10 @@ export const state = {
 	// When true, the UI should not trigger scroll-top pagination (used
 	// during initial load to avoid accidental background fetches).
 	suppressScrollLoad: false,
+	// Timestamp (ms) until which automatic background loads should be suppressed.
+	suppressAutoLoadUntil: 0,
+	// Flag set while the chat is initializing (used to avoid racey handlers)
+	initializingChat: false,
 };
 
 // ─── Contacts ─────────────────────────────────────────────────────────────────

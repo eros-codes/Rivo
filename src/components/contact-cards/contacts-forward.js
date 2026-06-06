@@ -1,4 +1,4 @@
-import { safeSrc, createAvatarElement } from "../../utils/dom.js";
+import { createAvatarElement } from "../../utils/dom.js";
 
 export function createForwardedContactCard({ name, nickname, profilePics, isOnline, id }) {
 	const card = document.createElement("span");

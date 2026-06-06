@@ -1,3 +1,5 @@
+import { buildHeaders, safeFetch } from "../../../utils/fetch.js";
+
 // ─── Contacts ────────────────────────────────────────────────────────────────
 export async function getContacts() {
 	return await safeFetch("/api/contacts", {
@@ -5,8 +7,6 @@ export async function getContacts() {
 		headers: buildHeaders(),
 	});
 }
-import { getCsrfToken, buildHeaders, safeFetch } from "/utils/fetch.js";
-export { getCsrfToken, buildHeaders, safeFetch };
 
 export async function updateContact(contactId, changes) {
 	return await safeFetch(`/api/contacts/${contactId}`, {
@@ -18,14 +18,8 @@ export async function updateContact(contactId, changes) {
 }
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
-export async function getMessages(conversationId) {
-	// default to last page (server will return up to `limit` latest messages)
-	const q = typeof conversationId === 'undefined' ? '' : String(conversationId);
-	return await safeFetch(`/api/messages/${q}`, {
-		credentials: "include",
-		headers: buildHeaders(),
-	});
-}
+// Note: `getMessages` was removed as dead code; use `getMessagesPage` for
+// paginated retrieval of conversation messages.
 
 export async function getMessagesPage(conversationId, { limit = 50, before = null, beforeId = null } = {}) {
 	const q = new URLSearchParams();
@@ -33,6 +27,13 @@ export async function getMessagesPage(conversationId, { limit = 50, before = nul
 	if (before) q.set('before', String(before));
 	if (beforeId) q.set('beforeId', String(beforeId));
 	return await safeFetch(`/api/messages/${conversationId}?${q.toString()}`, {
+		credentials: 'include',
+		headers: buildHeaders(),
+	});
+}
+
+export async function getPinnedMessages(conversationId) {
+	return await safeFetch(`/api/messages/${conversationId}/pinned`, {
 		credentials: 'include',
 		headers: buildHeaders(),
 	});

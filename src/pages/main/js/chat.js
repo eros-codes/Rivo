@@ -24,6 +24,7 @@ import {
 	getMessagesPage,
 	getContacts,
 	updateContact as apiUpdateContact,
+	getPinnedMessages,
 } from "./api.js";
 import { makeMessageSkeleton, createTopMessageSkeleton } from "./skeleton.js";
 import { createContactCard } from "../../../components/contact-cards/contact-card.js";
@@ -116,8 +117,6 @@ function _getClientEnvBool(name, fallback) {
 export const DEFAULT_PAGE_LIMIT = _getClientEnvNumber('DEFAULT_PAGE_LIMIT', 50);
 // Client-side hard limit to avoid requesting huge pages
 export const MAX_CLIENT_PAGE_LIMIT = _getClientEnvNumber('MAX_CLIENT_PAGE_LIMIT', 100);
-// Optionally prefetch previous page on open (default: false)
-const CLIENT_PREFETCH_ON_OPEN = _getClientEnvBool('CLIENT_PREFETCH_ON_OPEN', false);
 // Returns a safe preview string for contact cards. For locked time-capsule
 // messages destined for the recipient, return an empty string so nothing
 // is leaked in contact lists or previews.
@@ -143,7 +142,7 @@ export function getContactPreviewText(msg) {
 }
 // After server reports messages marked as seen, keep the unread separator
 // visible for at least this many milliseconds before applying the seen state
-const MIN_SEPARATOR_VISIBLE_AFTER_MARK_MS = 600;
+const _MIN_SEPARATOR_VISIBLE_AFTER_MARK_MS = 600;
 
 // Returns true when the chat view is near bottom within `offset` pixels.
 export function nearBottom(chatEl, offset = 70) {
@@ -181,9 +180,7 @@ function _chatPaddingBottom() {
 		if (!_dom || !_dom.chatEl) return 0;
 		// Prefer the actual input element height if available so the last
 		// message aligns above the input area (covers overlay/input cases).
-		const inputEl =
-			_dom.messageInput ||
-			document.querySelector("textarea, input[type=\"text\"], .message-input");
+		const inputEl = _dom.messageInput;
 		if (inputEl) {
 			try {
 				const r = inputEl.getBoundingClientRect();
@@ -225,6 +222,36 @@ let _unreadSeparatorContactId = null;
 let _unreadSeparatorIndex = -1;
 // paging state per contact
 const messagePaging = {};
+// pinned messages cache fetched separately from pagination
+const pinnedData = {}; // contactId -> [{ id, text, senderId, createdAt }]
+export function getPinnedData(contactId) {
+	return pinnedData[contactId] || [];
+}
+
+// Update in-memory pinned cache for a contact. Used by UI actions
+// (pin/unpin) so the pinned banner reflects changes immediately.
+export function updatePinnedData(contactId, messageId, messageObj, isPinned) {
+	try {
+		if (!contactId) return;
+		if (!pinnedData[contactId]) pinnedData[contactId] = [];
+		const arr = pinnedData[contactId];
+		const mid = String(messageId || (messageObj && messageObj.id) || '');
+		if (!mid) return;
+		if (isPinned) {
+			const exists = arr.some((p) => String(p.id) === String(mid));
+			if (!exists) {
+				arr.push({
+					id: mid,
+					text: (messageObj && messageObj.text) || '',
+					senderId: messageObj && messageObj.user ? getCurrentUserId() : (messageObj && messageObj.senderId) || null,
+					createdAt: (messageObj && messageObj.createdAt) || Date.now(),
+				});
+			}
+		} else {
+			pinnedData[contactId] = arr.filter((p) => String(p.id) !== String(mid));
+		}
+	} catch (e) {}
+}
 // Map of pending messages keyed by pendingId -> { node, timeoutId, contactId, text, replyTo }
 const pendingMessages = new Map();
 // Timeout handle used to debounce/delay marking messages as seen when opening a chat
@@ -398,6 +425,18 @@ export async function openChat(fromClick = false) {
 				openedAt: m.openedAt || null,
 				isLocked: m.isLocked || false,
 			}));
+
+			// fetch pinned messages separately (independent of pagination)
+			try {
+				const res = await getPinnedMessages(contact.conversationId);
+				if (res && Array.isArray(res.pinned)) {
+					pinnedData[state.contactUserId] = res.pinned;
+				} else {
+					pinnedData[state.contactUserId] = [];
+				}
+			} catch (e) {
+				pinnedData[state.contactUserId] = [];
+			}
 			// debug log removed
 
 			// paging metadata (suppress auto-load immediately after open)
@@ -555,13 +594,8 @@ export async function openChat(fromClick = false) {
 		if (_dom.chatEl) _dom.chatEl.style.visibility = "hidden";
 	} catch (e) {}
 
-	_suppressInjectScroll = true;
-	try {
-		state.suppressScrollLoad = true;
-	} catch (e) {}
-	// Note: messages were already injected above; skip duplicate inject to avoid
-	// extra render and potential programmatic scroll events.
-	_suppressInjectScroll = false;
+	// No-op: messages were already injected above; retain programmatic scroll
+	// setup without an extra injection.
 
 	try {
 		state.isProgrammaticScroll = true;
@@ -722,31 +756,122 @@ export function updatePinCount(activeIdx) {
 
 // ─── Pinned message bar ───────────────────────────────────────────────────────
 export function updatePinnedMessage(contactId = state.contactUserId) {
+	// Prefer server-provided pinned list if available
+	const allPinned = pinnedData[contactId] || [];
+
+	if (allPinned.length > 0) {
+		if (contactId !== state.contactUserId) return;
+		const latest = allPinned[allPinned.length - 1];
+		_dom.pinnedMessageContainer.style.display = 'flex';
+		_dom.pinnedMessageText.textContent = latest.text || '';
+		_dom.pinnedMessageText.dataset.messageId = String(latest.id);
+		_dom.chatHeader.style.borderRadius = '1rem 1rem 0 0';
+		_updatePinCountFromData(allPinned, latest.id, contactId);
+		return;
+	}
+
+	// Fallback to local model when pinnedData isn't available
 	const userMessages = messages[contactId];
 	if (!Array.isArray(userMessages)) return;
-	// `findLast` is not supported in older browsers; use a compatible alternative
 	const pinnedMsg = [...userMessages].reverse().find((msg) => msg.isPinned);
 	if (pinnedMsg) {
-		// Only update the visible pinned banner when the provided contactId
-		// matches the currently open chat. Otherwise just ensure the model
-		// is consistent.
 		if (contactId === state.contactUserId) {
-			_dom.pinnedMessageContainer.style.display = "flex";
+			_dom.pinnedMessageContainer.style.display = 'flex';
 			_dom.pinnedMessageText.textContent = pinnedMsg.text;
-			_dom.pinnedMessageText.dataset.index = pinnedMsg.index;
-			_dom.chatHeader.style.borderRadius = "1rem 1rem 0 0";
+			_dom.pinnedMessageText.dataset.messageId = String(pinnedMsg.id);
+			_dom.chatHeader.style.borderRadius = '1rem 1rem 0 0';
 		}
 	} else {
 		if (contactId === state.contactUserId) {
-			_dom.pinnedMessageContainer.style.display = "none";
-			_dom.pinnedMessageText.textContent = "";
-			_dom.pinnedMessageText.dataset.index = "";
-			_dom.chatHeader.style.borderRadius = "1rem";
+			_dom.pinnedMessageContainer.style.display = 'none';
+			_dom.pinnedMessageText.textContent = '';
+			_dom.pinnedMessageText.dataset.messageId = '';
+			_dom.chatHeader.style.borderRadius = '1rem';
 		}
 	}
-	// Only update the pinned-count UI for the currently visible chat
+
 	if (contactId === state.contactUserId)
 		updatePinCount(pinnedMsg ? pinnedMsg.index : null);
+}
+
+function _updatePinCountFromData(allPinned, activeId, contactId) {
+	if (contactId !== state.contactUserId) return;
+	_dom.pinnedMessageCount.textContent = '';
+	const total = Math.min(allPinned.length, 3);
+	if (total === 0) return;
+	const pos = allPinned.findIndex((m) => m.id === activeId);
+	let activeSpan;
+	if (allPinned.length <= 3) {
+		activeSpan = pos;
+	} else {
+		if (pos === 0) activeSpan = 0;
+		else if (pos === allPinned.length - 1) activeSpan = 2;
+		else activeSpan = 1;
+	}
+
+	for (let i = 0; i < total; i++) {
+		const span = document.createElement('span');
+		if (i === activeSpan) {
+			span.style.height = '1.2rem';
+			span.style.opacity = '1';
+		} else {
+			span.style.height = '0.6rem';
+			span.style.opacity = '0.4';
+		}
+		_dom.pinnedMessageCount.appendChild(span);
+	}
+}
+
+export async function scrollToPinnedMessage(messageId) {
+	if (!messageId) return;
+	if (!_dom || !_dom.chatEl) return;
+	const mid = String(messageId);
+
+	let el = _dom.chatEl.querySelector(
+		`.chat-message[data-message-id="${mid}"]`,
+	);
+	if (el) {
+		try {
+			state.isProgrammaticScroll = true;
+		} catch (e) {}
+		el.scrollIntoView({ behavior: "smooth", block: "center" });
+		setTimeout(() => {
+			try {
+				state.isProgrammaticScroll = false;
+			} catch (e) {}
+		}, 800);
+		return;
+	}
+
+	clearOpenSuppression(state.contactUserId);
+
+	const MAX_PAGES = 10;
+		for (let i = 0; i < MAX_PAGES; i++) {
+			if (!canLoadOlder()) break;
+			await loadOlderMessages({ skipSuppress: true });
+		// loadOlderMessages در finally یه openSuppressedUntil جدید ست میکنه — clear کن
+		clearOpenSuppression(state.contactUserId);
+		await new Promise((r) => setTimeout(r, 150));
+		el = _dom.chatEl.querySelector(
+			`.chat-message[data-message-id="${mid}"]`,
+		);
+		if (el) {
+			try {
+				state.isProgrammaticScroll = true;
+			} catch (e) {}
+			el.scrollIntoView({ behavior: "smooth", block: "center" });
+			setTimeout(() => {
+				try {
+					state.isProgrammaticScroll = false;
+				} catch (e) {}
+			}, 800);
+			return;
+		}
+	}
+
+	try {
+		showToast("Could not load this message");
+	} catch (e) {}
 }
 
 // ─── Inject messages ──────────────────────────────────────────────────────────
@@ -876,11 +1001,11 @@ export function injectMessages(userId) {
 
 	// Debug: log unseen summary to help diagnose missing separator
 	try {
-		const unseenCount = Array.isArray(userMessages)
+		const _unseenCount = Array.isArray(userMessages)
 			? userMessages.filter((m) => m.isSeen !== true && !m.user).length
 			: 0;
 		const contact = contacts.find((c) => c.id === userId);
-		const contactUnread = contact ? contact.unreadCount || 0 : 0;
+		const _contactUnread = contact ? contact.unreadCount || 0 : 0;
 	} catch (e) {
 		/* ignore debug errors */
 	}
@@ -920,13 +1045,17 @@ export function injectMessages(userId) {
 		state.pinnedIndexes.sort((a, b) => a - b);
 		const lastIdx = state.pinnedIndexes[state.pinnedIndexes.length - 1];
 		_dom.pinnedMessageText.textContent = messages[userId][lastIdx].text;
-		_dom.pinnedMessageText.dataset.index = lastIdx;
+		_dom.pinnedMessageText.dataset.messageId = String(messages[userId][lastIdx].id);
 		_dom.pinnedMessageContainer.style.display = "flex";
 		_dom.chatHeader.style.borderRadius = "1rem 1rem 0 0";
 		updatePinCount(lastIdx);
 	}
 
 	_dom.chatEl.appendChild(fragment);
+
+	// Track messageIds we schedule reveals for during this render so we
+	// don't double-schedule the same reveal from the offline-scan below.
+	const _scheduledNow = new Set();
 	// debug log removed
 
 	// After rendering, trigger any pending capsule reveals for this conversation
@@ -936,6 +1065,7 @@ export function injectMessages(userId) {
 				const el = _dom.chatEl.querySelector(`.chat-message[data-message-id="${mid}"]`);
 				if (el) {
 					_pendingCapsuleReveals.delete(mid);
+					_scheduledNow.add(mid);
 					setTimeout(() => {
 						try {
 							handleCapsuleOpened({ messageId: Number(mid), ...payload });
@@ -953,10 +1083,11 @@ export function injectMessages(userId) {
 	try {
 		const userMsgs = userMessages || [];
 		if (state.contactUserId === userId) {
+			const _curContact = contacts.find(c => c.id === state.contactUserId);
 			userMsgs.forEach((m) => {
 				try {
 					if (!m) return;
-					if (m.isTimeCapsule && m.openedAt && !m.user && !_revealedCapsuleIds.has(String(m.id))) {
+					if (m.isTimeCapsule && m.openedAt && !m.user && !_revealedCapsuleIds.has(String(m.id)) && !_scheduledNow.has(String(m.id))) {
 						const existingEl = _dom.chatEl.querySelector(`.chat-message[data-message-id="${m.id}"]`);
 						if (existingEl) {
 							// If element wasn't rendered as locked, replace with a locked rendering
@@ -968,7 +1099,7 @@ export function injectMessages(userId) {
 							// Delay slightly so layout stabilizes before running reveal
 							setTimeout(() => {
 								try {
-									handleCapsuleOpened({ messageId: m.id, text: m.text, openedAt: m.openedAt, conversationId: m.conversationId });
+									handleCapsuleOpened({ messageId: m.id, text: m.text, openedAt: m.openedAt, conversationId: _curContact?.conversationId });
 								} catch (e) {}
 							}, 800);
 						}
@@ -1068,7 +1199,7 @@ export function injectMessages(userId) {
 }
 
 // Load older messages (page) and prepend to the current message list.
-export async function loadOlderMessages() {
+export async function loadOlderMessages({ skipSuppress = false } = {}) {
 	const uid = state.contactUserId;
 	if (!uid) return;
 	const contact = contacts.find((c) => c.id === uid);
@@ -1223,7 +1354,7 @@ export async function loadOlderMessages() {
 				// Build fragment for the newly fetched older messages
 				const frag = document.createDocumentFragment();
 				let lastDate = null;
-				normalized.forEach((message, idx) => {
+				normalized.forEach((message, _idx) => {
 					// message.index should already be 0..L-1
 					if (message.date && message.date !== lastDate) {
 						frag.appendChild(createDateSeparator(message.date));
@@ -1297,7 +1428,15 @@ export async function loadOlderMessages() {
 	} finally {
 		if (messagePaging[uid]) {
 			try { messagePaging[uid].loading = false; } catch (e) {}
-			try { messagePaging[uid].openSuppressedUntil = Date.now() + 3000; } catch (e) {}
+			try {
+				if (!skipSuppress) {
+					messagePaging[uid].openSuppressedUntil = Date.now() + 3000;
+				} else {
+					// when called as part of an explicit navigation (e.g. scrollToPinnedMessage)
+					// avoid setting the auto-load suppression window.
+					messagePaging[uid].openSuppressedUntil = 0;
+				}
+			} catch (e) {}
 		}
 	}
 }
@@ -1389,13 +1528,9 @@ export async function receiveMessage(message) {
 					if (!contacts.find((c) => c.id === newContact.id)) {
 						contacts.push(newContact);
 
-						// append DOM card to the appropriate container
-						const contactsContainer = document.querySelector(
-							".contacts-container",
-						);
-						const activeChatsContainer = document.querySelector(
-							".active-chats-container",
-						);
+						// append DOM card to the appropriate container (use injected DOM refs)
+						const contactsContainer = _dom.contactsContainer;
+						const activeChatsContainer = _dom.activeChatsContainer;
 						if (contactsContainer && activeChatsContainer) {
 							if (
 								newContact.isPinned ||
@@ -1504,19 +1639,19 @@ export async function receiveMessage(message) {
 		// If the user is currently scrolled to the bottom, append and mark seen.
 		// Otherwise, append but do not auto-scroll; show a "scroll to bottom"
 		// affordance so the user can jump to the newest messages.
-			try {
-				const wasAtBottom = nearBottom(_dom.chatEl);
-				_dom.chatEl.appendChild(newEl);
-				// debug log removed
-				if (wasAtBottom) {
-				scrollChatToBottom();
-				emitMessageSeen(contact.conversationId);
-			} else {
-				try {
-					const btn = document.querySelector('.scroll-to-bottom-btn');
-					if (btn) btn.classList.add('visible');
-				} catch (e) {}
-			}
+					try {
+					const wasAtBottom = nearBottom(_dom.chatEl);
+					_dom.chatEl.appendChild(newEl);
+					// debug log removed
+					if (wasAtBottom) {
+					scrollChatToBottom();
+					emitMessageSeen(contact.conversationId);
+				} else {
+					try {
+						const btn = _dom.scrollToBottomBtn;
+						if (btn) btn.classList.add('visible');
+					} catch (e) {}
+				}
 		} catch (e) {
 			// fallback: append + scroll
 			_dom.chatEl.appendChild(newEl);
@@ -1595,18 +1730,28 @@ export function handleOnetimeDeleted({ messageIds }) {
 	setTimeout(() => {
 		const affectedUids = new Set();
 
-		for (const [uid, msgs] of Object.entries(messages)) {
+		for (const [_uid, msgs] of Object.entries(messages)) {
 			if (!Array.isArray(msgs)) continue;
 			const before = msgs.length;
 			const filtered = msgs.filter((m) => !idSet.has(String(m.id)));
 			if (filtered.length !== before) {
-				messages[Number(uid)] = filtered;
+				messages[Number(_uid)] = filtered;
 				filtered.forEach((m, i) => {
 					m.index = i;
 				});
-				affectedUids.add(Number(uid));
+				affectedUids.add(Number(_uid));
 			}
 		}
+
+					// Remove any pinned cache entries for the deleted messages so the
+					// pinned banner doesn't show stale content.
+					try {
+						for (const uid of affectedUids) {
+							for (const mid of idSet) {
+								try { updatePinnedData(Number(uid), mid, null, false); } catch (e) {}
+							}
+						}
+					} catch (e) {}
 
 		// Remove DOM nodes if still present (safety) and re-render open conversation
 		try {
@@ -1938,10 +2083,8 @@ export async function sendMessage() {
 	resetInput();
 	state.replyTo = null;
 	scrollChatToBottom();
-	const msgInputEl =
-		_dom.messageInput || document.querySelector(".message-input");
-	if (msgInputEl && typeof msgInputEl.focus === "function")
-		msgInputEl.focus();
+	const msgInputEl = _dom.messageInput;
+	if (msgInputEl && typeof msgInputEl.focus === "function") msgInputEl.focus();
 }
 
 export async function sendOneTimeMessage() {
@@ -2006,7 +2149,7 @@ export function handleCapsuleOpened({ messageId, text, openedAt, conversationId 
 
 	// Update in-memory messages
 	try {
-		for (const [uid, msgs] of Object.entries(messages)) {
+						for (const [_uid, msgs] of Object.entries(messages)) {
 			if (!Array.isArray(msgs)) continue;
 			const idx = msgs.findIndex((m) => String(m.id) === String(messageId));
 			if (idx !== -1) {
@@ -2059,7 +2202,7 @@ export function handleCapsuleOpened({ messageId, text, openedAt, conversationId 
 							body: 'A time capsule in your chat has been unlocked. Click to view.',
 							data: { conversationId, messageId },
 						});
-						n.onclick = function (ev) {
+						n.onclick = function () {
 							try {
 								window.focus();
 								document.dispatchEvent(new CustomEvent('in-app-notif:open', { detail: { contactId: contact.id, messageId } }));
@@ -2100,7 +2243,7 @@ export function handleCapsuleOpened({ messageId, text, openedAt, conversationId 
 
 					// mark in-memory message as unlocked and update contact preview to real text
 					try {
-						for (const [uid, msgs] of Object.entries(messages)) {
+						for (const [_uid, msgs] of Object.entries(messages)) {
 							if (!Array.isArray(msgs)) continue;
 							const idx = msgs.findIndex((m) => String(m.id) === String(messageId));
 							if (idx !== -1) {
@@ -2196,9 +2339,9 @@ function _normalizeOutgoing(m) {
 
 // Pending message helpers
 function _closeFailedPanel() {
-	const existing = document.querySelector(".msg-failed-panel");
-	if (existing && existing.parentNode)
-		existing.parentNode.removeChild(existing);
+	const root = _dom && _dom.chatEl ? _dom.chatEl : document;
+	const existing = root.querySelector(".msg-failed-panel");
+	if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
 	try {
 		document.removeEventListener("click", _closeFailedPanel);
 	} catch (e) {

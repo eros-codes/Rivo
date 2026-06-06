@@ -104,7 +104,6 @@ export function createAvatarElement({ name, nickname, profilePics, className = "
   ];
   let seed = 0;
   for (let i = 0; i < displayName.length; i++) seed += displayName.charCodeAt(i);
-  const g = grads[seed % grads.length];
 
   // SVG data-URI generation removed — avatar accent is handled via CSS classes
 

@@ -1,0 +1,58 @@
+# Node modules
+node_modules/
+
+# Environment files (ignore real secrets). Keep `.env.example` in the repo.
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+build/
+out/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime files
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Optional npm cache
+.npm/
+
+# TypeScript
+*.tsbuildinfo
+
+# Editor directories and files
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Database dumps and temporary SQL files
+*.dump
+rivo-backup-*.dump
+tmp_migs.sql
+
+# Local secret stores / vaults
+.vault/
+secrets.json
+
+# Ignore user profile uploads but keep the folder tracked
+/public/images/user-profiles/*

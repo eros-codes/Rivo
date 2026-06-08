@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Rivo — Conversations, Uninterrupted</title>
+
+	<!-- SEO meta -->
+	<meta name="description" content="A fast, warm messaging PWA — real-time, secure, and ad-free. Install Rivo on your device.">
+	<link rel="canonical" href="https://rivo.ir/">
+	<meta name="robots" content="index,follow">
+
+	<!-- Open Graph / Social -->
+	<meta property="og:title" content="Rivo — Conversations, Uninterrupted">
+	<meta property="og:description" content="A fast, warm messaging PWA — real-time, secure, and ad-free.">
+	<meta property="og:image" content="/assets/icons/Icon-1028.png">
+	<meta property="og:url" content="https://rivo.ir/">
+	<meta property="og:type" content="website">
+	<meta property="og:site_name" content="Rivo">
+
+	<!-- Twitter -->
+	<meta name="twitter:card" content="summary_large_image">
+	<meta name="twitter:site" content="@rivo">
+	<meta name="twitter:title" content="Rivo — Conversations, Uninterrupted">
+	<meta name="twitter:description" content="A fast, warm messaging PWA — real-time, secure, and ad-free.">
+	<meta name="twitter:image" content="/assets/icons/Icon-1028.png">
+
+	<!-- PWA manifest / theme -->
+	<link rel="manifest" href="/manifest.webmanifest">
+	<meta name="theme-color" content="#1a1a2e">
+
+	<!-- Structured data -->
+	<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Rivo",
+  "url": "https://rivo.ir/",
+  "image": "https://rivo.ir/assets/icons/Icon-1028.png",
+  "description": "A messaging app designed with intention — fast, warm, and genuinely different.",
+  "applicationCategory": "MessagingApplication",
+  "operatingSystem": "Web"
+}
+	</script>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link
+		href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Poppins:wght@300;400;500;600&display=swap"
+		rel="stylesheet">
+	<link rel="stylesheet" href="/landing/landing.css">
+</head>
+
+<body>
+
+	<!-- Cursor -->
+	<div class="cursor" id="cursor"></div>
+	<div class="cursor-ring" id="cursorRing"></div>
+
+	<!-- Nav -->
+	<nav class="nav" id="nav">
+		<div class="nav-logo">Rivo<span>.</span></div>
+		<ul class="nav-links">
+			<li><a href="#home">Home</a></li>
+			<li><a href="#about">About</a></li>
+			<li><a href="#features">Features</a></li>
+			<li><a href="#download">Download</a></li>
+		</ul>
+		<a href="/chat/" class="nav-cta">Get the App</a>
+		
+		
+		<button class="nav-burger" id="burger" aria-label="Menu">
+			<span></span><span></span><span></span>
+		</button>
+	</nav>
+
+	<!-- Mobile Nav -->
+	<div class="nav-mobile" id="mobileNav">
+		<button class="nav-mobile-close" id="mobileClose">✕</button>
+		<a href="#home" class="mobile-link">Home</a>
+		<a href="#about" class="mobile-link">About</a>
+		<a href="#features" class="mobile-link">Features</a>
+		<a href="#download" class="mobile-link">Download</a>
+		<a href="/chat/" class="btn-primary" style="margin-top:1rem">Get the App</a>
+	</div>
+	
+	
+
+	<!-- ── Hero ── -->
+	<section class="hero" id="home">
+		<div class="hero-bg">
+			<div class="blob blob-1"></div>
+			<div class="blob blob-2"></div>
+			<div class="blob blob-3"></div>
+		</div>
+		<div class="hero-bg-text">RIVO</div>
+
+		<div class="hero-content">
+			<h1 class="hero-title">
+				<span class="line">Conversations,</span>
+				<span class="line line-orange">Uninterrupted.</span>
+			</h1>
+			<p class="hero-sub">
+				A messaging app designed with intention — fast, warm, and genuinely different.
+				Real-time, secure, and built to feel like nothing else.
+			</p>
+			<div class="hero-actions">
+				<a href="/chat/" class="btn-primary">
+					Get the App
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+						stroke-linecap="round" stroke-linejoin="round">
+						<path d="M5 12h14M12 5l7 7-7 7" />
+					</svg>
+				</a>
+				<a href="#about" class="btn-ghost">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+						stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="12" cy="12" r="10" />
+						<path d="M12 8v4m0 4h.01" />
+					</svg>
+					Learn More
+				</a>
+			</div>
+		</div>
+
+		<div class="hero-visual">
+			<div class="chat-scene" id="chatScene">
+				<div class="chat-float">
+					<div class="chat-cluster" id="chatCluster">
+						<!-- Bubble 1 -->
+						<div class="bubble bubble-orange b1">
+							<p class="bubble-text">Coffee on me later ☕</p>
+							<div class="bubble-meta">
+								09:27
+								<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+									<path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+								</svg>
+							</div>
+						</div>
+						<!-- Bubble 2 -->
+						<div class="bubble bubble-white b2">
+							<div class="bubble-line" style="width:100%"></div>
+							<div class="bubble-line" style="width:75%"></div>
+							<div class="bubble-meta" style="margin-top:.4rem">09:22</div>
+						</div>
+						<!-- Bubble 3 -->
+						<div class="bubble bubble-orange b3">
+							<p class="bubble-text">Way better than the last version.</p>
+							<div class="bubble-meta">09:21</div>
+						</div>
+						<!-- Orbs -->
+						<div class="scene-orb orb-1"></div>
+						<div class="scene-orb orb-2"></div>
+						<div class="scene-orb orb-3"></div>
+					</div>
+				</div>
+				<div class="scene-glow"></div>
+			</div>
+		</div>
+	</section>
+
+	<!-- ── About ── -->
+	<section class="about" id="about">
+		<div class="about-text reveal-left">
+			<span class="section-label">About Rivo</span>
+			<h2 class="section-title">Built different.<br>Feels different.</h2>
+			<p class="section-sub">
+				Most chat apps treat design as an afterthought. Rivo doesn't.
+				Every pixel, every interaction, every animation was obsessed over —
+				from the warm cream background to the glassmorphism active-chat cards.
+				It's not just how it looks. It's how it <em style="color:var(--orange);font-style:normal">feels</em>.
+			</p>
+			<div class="about-stats">
+				<div class="stat-card">
+					<div class="stat-value">100<span>ms</span></div>
+					<div class="stat-label">Message Latency</div>
+				</div>
+				<div class="stat-card">
+					<div class="stat-value">∞</div>
+					<div class="stat-label">Message History</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="about-visual reveal-right">
+			<div class="about-glow"></div>
+			<div class="about-ring ring-1"></div>
+			<div class="about-ring ring-2"></div>
+			<div class="phone-mock" id="phoneMock">
+
+				<!-- ── Screen: Main ── -->
+				<div class="pm-screen active" id="pmScreenMain">
+					<div class="pm-main-header">
+						<div class="pm-main-logo">Rivo<span>.</span></div>
+						<div class="pm-main-icons">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+								stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<circle cx="11" cy="11" r="8" />
+								<line x1="21" y1="21" x2="16.65" y2="16.65" />
+							</svg>
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+								stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+								<circle cx="9" cy="7" r="4" />
+								<line x1="19" y1="8" x2="19" y2="14" />
+								<line x1="22" y1="11" x2="16" y2="11" />
+							</svg>
+						</div>
+					</div>
+
+					<p class="pm-section-label">ACTIVE CHATS</p>
+					<div class="pm-active-list">
+						<div class="pm-active-card" data-chat="1">
+							<div class="pm-ac-avatar" style="background:linear-gradient(135deg,#fa5f1a,#ff8c42)">A</div>
+							<div class="pm-ac-info">
+								<div class="pm-ac-name">Alex</div>
+								<div class="pm-ac-msg">Clean. Ship it.</div>
+							</div>
+							<div class="pm-ac-meta">
+								<span class="pm-ac-time">09:27</span>
+								<span class="pm-ac-badge">3</span>
+							</div>
+						</div>
+
+						<div class="pm-active-card" data-chat="2">
+							<div class="pm-ac-avatar" style="background:linear-gradient(135deg,#9b59b6,#8e44ad)">M</div>
+							<div class="pm-ac-info">
+								<div class="pm-ac-name">Maya</div>
+								<div class="pm-ac-msg">Right? No bloat, just what you need.</div>
+							</div>
+							<div class="pm-ac-meta">
+								<span class="pm-ac-time">10:15</span>
+								<span class="pm-ac-badge">2</span>
+							</div>
+						</div>
+					</div>
+
+					<p class="pm-section-label">CONTACTS</p>
+					<div class="pm-contacts-grid">
+						<div class="pm-contact-card" data-chat="3">
+							<div class="pm-cc-avatar" style="background:linear-gradient(135deg,#3498db,#2980b9)">J</div>
+							<div class="pm-cc-name">Jake</div>
+							<div class="pm-cc-status">Online now</div>
+						</div>
+						<div class="pm-contact-card" data-chat="4">
+							<div class="pm-cc-avatar" style="background:linear-gradient(135deg,#2ecc71,#27ae60)">S</div>
+							<div class="pm-cc-name">Sofia</div>
+							<div class="pm-cc-status">Offline</div>
+						</div>
+						<div class="pm-contact-card" data-chat="0">
+							<div class="pm-cc-avatar" style="background:linear-gradient(135deg,#fa5f1a,#ff8c42)">R</div>
+							<div class="pm-cc-name">Rivo</div>
+							<div class="pm-cc-status">Interactive Demo</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- ── Screen: Chat ── -->
+				<div class="pm-screen" id="pmScreenChat">
+					<div class="phone-header" id="pmChatHeader">
+						<button class="pm-back-btn" id="pmBack">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+								stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M15 18l-6-6 6-6" />
+							</svg>
+						</button>
+						<div class="phone-avatar" id="pmChatAvatar">R</div>
+						<div>
+							<div class="phone-name" id="pmChatName">Rivo</div>
+							<div class="phone-status" id="pmChatStatus">Interactive Demo</div>
+						</div>
+					</div>
+					<div class="phone-msgs" id="pmMsgs"></div>
+					<div class="phone-input">
+						<span>Message…</span>
+						<div class="phone-send">
+							<svg width="10" height="10" viewBox="0 0 24 24" fill="white">
+								<path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+							</svg>
+						</div>
+					</div>
+				</div>
+
+			</div>
+		</div>
+	</section>
+
+	<!-- ── Features ── -->
+	<section class="features" id="features">
+		<div class="features-header reveal">
+			<span class="section-label">Features</span>
+			<h2 class="section-title">Everything you need.<br>Nothing you don't.</h2>
+			<p class="section-sub">Thoughtfully designed features that just work — no noise, no bloat.</p>
+		</div>
+
+		<div class="bento">
+
+			<div class="bcard featured reveal-scale">
+				<div class="bcard-accent"></div>
+				<div class="bcard-icon">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+						<rect x="4" y="3" width="16" height="6" rx="2" stroke="currentColor" stroke-width="1.5" />
+						<path d="M6.5 6h5" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.5" />
+						<circle cx="17.5" cy="6" r="1" fill="currentColor" opacity="0.6" />
+					
+						<rect x="2" y="10.5" width="20" height="5" rx="2.5" stroke="currentColor" stroke-width="1.5" fill="currentColor"
+							fill-opacity="0.09" />
+						<path d="M5 13h10" stroke="currentColor" stroke-width="0.9" stroke-linecap="round" opacity="0.38" />
+					
+						<rect x="4" y="17" width="16" height="5" rx="2" stroke="currentColor" stroke-width="1.4" fill="currentColor"
+							fill-opacity="0.04" />
+						<path d="M6.5 19.5h7" stroke="currentColor" stroke-width="0.9" stroke-linecap="round" opacity="0.25" />
+					</svg>
+				</div>
+				<div class="bcard-title">The Interface Other Apps Forgot to Build</div>
+				<div class="bcard-desc">
+					Every surface was argued over. Frosted glass, layered shadows, gradients that guide before you notice them — nothing
+					here is default.
+					Every other app drowns you in one endless list of contacts. Rivo knows the difference between a conversation that's
+					alive and one that went quiet — so it separates them. Active chats surface. Dormant contacts stay tucked away. Every
+					transition has a reason. Every detail was deliberate.
+					This isn't just a UI. It's an opinion.
+				</div>
+			</div>
+
+			<div class="bcard reveal-scale">
+				<div class="bcard-icon">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+						<path d="M12 2L2 7v10l10 5 10-5V7L12 2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+						<path d="M2 7l10 5 10-5" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+						<path d="M12 12v10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.28" />
+						<path d="M9 8.5l2 2.2 4.5-5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"
+							opacity="0.75" />
+					</svg>
+				</div>
+				<div class="bcard-title">The Full Package.</div>
+				<div class="bcard-desc">
+					Search. React. Pin. Archive. Forward. Mute. Everything a serious messenger should do — running quietly in the
+					background, so you never have to think twice about it.
+				</div>
+			</div>
+
+			<!-- Security -->
+			<div class="bcard reveal-scale">
+				<div class="bcard-icon">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+						stroke-linecap="round" stroke-linejoin="round">
+						<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+					</svg>
+				</div>
+				<div class="bcard-title">Security First</div>
+				<div class="bcard-desc">JWT auth, CSRF protection, rate limiting, and bcrypt. Every layer hardened.
+				</div>
+			</div>
+
+			<div class="bcard wide reveal-scale">
+				<div class="bcard-icon">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<rect x="3" y="11" width="18" height="10" rx="2" />
+						<path d="M7 11V7a5 5 0 0 1 10 0v4" />
+						<circle cx="12" cy="16" r="1.5" />
+					</svg>
+				</div>
+				<div class="bcard-title">Messages that can't be read — even by us</div>
+				<div class="bcard-desc">Every message gets its own unique encryption key. Even with full database access, stored data is
+					unreadable. Keys live in a separate secure vault — never alongside your messages.</div>
+			</div>
+
+			<div class="bcard wide reveal-scale">
+				<div class="bcard-icon">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+						<path
+							d="M4 4.5A1.5 1.5 0 015.5 3h13A1.5 1.5 0 0120 4.5v10A1.5 1.5 0 0118.5 16H9.5L6 20V16H5.5A1.5 1.5 0 014 14.5V4.5z"
+							stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+						<circle cx="12" cy="9" r="3.5" stroke="currentColor" stroke-width="1.3" />
+						<path d="M12 7.5V9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+						<path d="M12 9l1.9 1.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+						<circle cx="12" cy="9" r="0.5" fill="currentColor" />
+					</svg>
+				</div>
+				<div class="bcard-title">Beyond Send</div>
+				<div class="bcard-desc">One-time messages that vanish the moment they're read. Time Capsules sealed until a date you choose. Scheduled messages
+				arriving exactly when they should. Rivo gives your words a timeline—and a life—of their own.</div>
+			</div>
+
+			<!-- Search -->
+			<div class="bcard reveal-scale">
+				<div class="bcard-icon">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+						<path d="M3 5a2 2 0 012-2h8a2 2 0 012 2v5a2 2 0 01-2 2H7L4 15v-3H5a2 2 0 01-2-2V5z" stroke="currentColor"
+							stroke-width="1.5" stroke-linejoin="round" />
+						<path d="M8.5 6.5L7 9.5h2.5L8 12.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"
+							stroke-linejoin="round" opacity="0.8" />
+						<path
+							d="M11.5 11.5a1.5 1.5 0 011.5-1.5h7a1.5 1.5 0 011.5 1.5v5a1.5 1.5 0 01-1.5 1.5H18L16 20v-1.5h-3a1.5 1.5 0 01-1.5-1.5v-5z"
+							stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 2" stroke-linejoin="round" opacity="0.5" />
+					</svg>
+				</div>
+				<div class="bcard-title">No Account. No History. Just a Link.</div>
+				<div class="bcard-desc">Open a session. Share the link. Talk. Leave. Instant Chat is built for conversations that were never meant to last —
+				ephemeral by design, no sign-up, no storage, no trace you were ever there.</div>
+			</div>
+
+			<!-- PWA -->
+			<div class="bcard reveal-scale">
+				<div class="bcard-icon">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+						stroke-linecap="round" stroke-linejoin="round">
+						<rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+						<line x1="12" y1="18" x2="12.01" y2="18" />
+					</svg>
+				</div>
+				<div class="bcard-title">PWA Ready</div>
+				<div class="bcard-desc">Install once, use everywhere. No app store required — just open and add to home
+					screen.</div>
+			</div>
+
+		</div>
+	</section>
+
+	<!-- ── Download ── -->
+	<section class="download" id="download">
+		<div class="download-header reveal">
+			<span class="section-label">Get Rivo</span>
+			<h2 class="section-title">Three steps.<br>That's all.</h2>
+			<p class="section-sub">No app store. No download. Just open it in your browser and make it yours in seconds.
+			</p>
+		</div>
+
+		<div class="pwa-steps">
+			<div class="step reveal-scale">
+				<div class="step-num">1</div>
+				<div class="step-title">Open in Browser</div>
+				<div class="step-desc">Visit the Rivo web app in Chrome, Safari, or any modern browser on any device.
+				</div>
+			</div>
+			<div class="step reveal-scale">
+				<div class="step-num">2</div>
+				<div class="step-title">Tap Install</div>
+				<div class="step-desc">Hit the install prompt in your browser bar or use the share menu on iOS to add to
+					home screen.</div>
+			</div>
+			<div class="step reveal-scale">
+				<div class="step-num">3</div>
+				<div class="step-title">Start Chatting</div>
+				<div class="step-desc">Launch from your home screen just like a native app. Full offline support
+					included.</div>
+			</div>
+		</div>
+
+		<div class="download-cta-wrap reveal">
+			<a href="/chat/" class="btn-primary" style="font-size:1rem;padding:1rem 2.5rem">
+				Open Rivo Web App
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+					stroke-linecap="round" stroke-linejoin="round">
+					<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
+				</svg>
+			</a>
+		</div>
+	</section>
+
+	<!-- ── Footer ── -->
+	<footer>
+		<div class="foot-logo">Rivo<span>.</span></div>
+		<p class="foot-copy">© 2026 Rivo. Conversations, Uninterrupted.</p>
+		<nav class="foot-links">
+			<a href="#home">Home</a>
+			<a href="#about">About</a>
+			<a href="/landing/privacy.html">Privacy Policy</a>
+		</nav>
+	</footer>
+
+	<script src="/js/gsap.js"></script>
+	<script src="/js/scrollTrigger.js"></script>
+	<script src="/landing/landing.js"></script>
+</body>
+
+</html>

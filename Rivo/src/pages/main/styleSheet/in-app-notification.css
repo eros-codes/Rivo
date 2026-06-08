@@ -1,0 +1,87 @@
+/* In-app notification styles */
+:root {
+  --notif-bg: #0f1724;
+  --notif-fg: #ffffff;
+  --notif-accent: #3b82f6;
+  --notif-shadow: 0 8px 24px rgba(2,6,23,0.6);
+}
+
+#in-app-notif-wrap {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 11000;
+}
+
+.in-app-notif {
+  pointer-events: auto;
+  transform: translateY(-140%);
+  transition: transform 320ms cubic-bezier(.22,.9,.32,1);
+  will-change: transform;
+  margin: 0.6rem;
+}
+
+.in-app-notif.show {
+  transform: translateY(0);
+}
+
+.in-app-notif .notif-card {
+  background: var(--notif-bg);
+  color: var(--notif-fg);
+  min-width: 280px;
+  max-width: 560px;
+  border-radius: 12px;
+  box-shadow: var(--notif-shadow);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  user-select: none;
+}
+
+.in-app-notif .notif-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #111827;
+}
+
+.in-app-notif .notif-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.in-app-notif .notif-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1.1;
+  max-width: 420px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.in-app-notif .notif-text {
+  font-size: 0.875rem;
+  opacity: 0.9;
+  margin-top: 2px;
+  max-width: 420px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+@media (max-width: 520px) {
+  .in-app-notif .notif-card {
+    min-width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
+  }
+}

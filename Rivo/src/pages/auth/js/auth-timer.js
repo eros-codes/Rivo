@@ -1,0 +1,54 @@
+import { safeFetch } from "../../../utils/fetch.js";
+
+let _resendTimerInterval = null;
+
+export async function sendCode(email) {
+	if (!email || typeof email !== 'string') throw new Error('email required');
+	const data = await safeFetch('/api/auth/send-code', {
+		method: 'POST',
+		credentials: 'include',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email }),
+	});
+	return data;
+}
+
+export function startResendTimer(codeResendTimer) {
+	if (_resendTimerInterval) clearInterval(_resendTimerInterval);
+	let sec = 60;
+	codeResendTimer.classList.add("disabled");
+	codeResendTimer.style.pointerEvents = "none";
+	codeResendTimer.style.opacity = "0.5";
+
+	_resendTimerInterval = setInterval(function () {
+		if (sec === 0) {
+			clearInterval(_resendTimerInterval);
+			_resendTimerInterval = null;
+			codeResendTimer.classList.remove("disabled");
+			codeResendTimer.style.pointerEvents = "";
+			codeResendTimer.style.opacity = "";
+			codeResendTimer.textContent = "Resend";
+			return;
+		}
+		if (sec === 60) {
+			codeResendTimer.textContent = "1:00";
+		} else if (sec > 9) {
+			codeResendTimer.textContent = `0:${sec}`;
+		} else {
+			codeResendTimer.textContent = `0:0${sec}`;
+		}
+		sec--;
+	}, 1000);
+}
+
+export function clearResendTimer() {
+	if (_resendTimerInterval) {
+		clearInterval(_resendTimerInterval);
+		_resendTimerInterval = null;
+	}
+}
+
+export function clearCodeInputs(verifyForm) {
+	if (!verifyForm) return;
+	verifyForm.querySelectorAll(".code-digit").forEach((d) => (d.value = ""));
+}

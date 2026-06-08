@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Privacy Policy — Rivo</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link
+		href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Poppins:wght@300;400;500;600&display=swap"
+		rel="stylesheet">
+	<link rel="stylesheet" href="/landing/landing.css">
+	<link rel="stylesheet" href="/landing/privacy.css">
+</head>
+
+<body>
+
+	<!-- Cursor -->
+	<div class="cursor" id="cursor"></div>
+	<div class="cursor-ring" id="cursorRing"></div>
+
+	<!-- Nav -->
+	<nav class="privacy-nav">
+		<div class="nav-logo">Rivo<span>.</span></div>
+		<a href="/" class="nav-cta">← Home</a>
+	</nav>
+
+	<!-- Hero -->
+	<div class="privacy-hero">
+		<div class="privacy-content" style="padding-top:0">
+			<div class="privacy-hero-label">Legal</div>
+			<h1>Privacy Policy</h1>
+			<p class="updated">Last updated: May 25, 2026</p>
+		</div>
+	</div>
+
+	<!-- Content -->
+	<div class="privacy-content">
+
+		<p class="privacy-intro">
+			Rivo is built on the belief that your conversations are yours alone.
+			This page explains exactly what we collect, why, and how we protect it —
+			in plain language, not legalese.
+		</p>
+
+		<div class="privacy-section">
+			<h2>What we collect</h2>
+			<ul>
+				<li>Account information you provide — name, email address, and username — to create and secure your
+					account.</li>
+				<li>Messages are encrypted with per-message keys before storage. We do not have access to readable
+					message content.</li>
+				<li>Basic usage diagnostics (error reports, performance metrics) to improve reliability. These are never
+					tied to message content.</li>
+				<li>Push notification tokens, stored solely to deliver message notifications to your device.</li>
+			</ul>
+		</div>
+
+		<div class="privacy-section">
+			<h2>How we use data</h2>
+			<p>
+				We use account data to authenticate you, deliver push notifications,
+				and maintain account security. Diagnostic data helps us fix bugs and
+				improve performance. We do not sell your data, use it for advertising,
+				or share it with third parties except where required by law.
+			</p>
+		</div>
+
+		<div class="privacy-section">
+			<h2>Security</h2>
+			<p>
+				Every message is encrypted with a unique key before it reaches our servers
+				(envelope encryption: per-message DEKs wrapped by a KEK held in a secure vault).
+				Server-side protections include JWT authentication with HttpOnly cookies,
+				CSRF protection, rate limiting, and bcrypt password hashing.
+				Keys are never stored alongside message data.
+			</p>
+		</div>
+
+		<div class="privacy-section">
+			<h2>Your choices</h2>
+			<p>
+				You control your privacy settings directly in the app — including online presence visibility,
+				profile picture visibility, and email discoverability.
+				To request data export or account deletion, contact us at
+				<a href="mailto:privacy@rivo.ir">privacy@rivo.ir</a>.
+			</p>
+		</div>
+
+		<div class="privacy-disclaimer">
+			This is a plain-language summary intended for the Rivo demo site.
+			For complete legal terms, this page should be replaced with a full privacy policy
+			reviewed by qualified legal counsel before any production launch.
+		</div>
+
+		<a href="/" class="privacy-back">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+				stroke-linejoin="round">
+				<path d="M19 12H5M12 5l-7 7 7 7" />
+			</svg>
+			Back to Rivo
+		</a>
+
+	</div>
+
+	<!-- Footer -->
+	<footer class="privacy-footer">
+		<p>© 2026 <span>Rivo</span> — Conversations, Uninterrupted.</p>
+	</footer>
+
+	<script src="/landing/cursor.js"></script>
+
+</body>
+
+</html>

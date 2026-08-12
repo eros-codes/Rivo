@@ -1,11 +1,11 @@
 import { createAvatarElement } from "../../utils/dom.js";
 
-export function createForwardedContactCard({ name, nickname, profilePics, isOnline, id }) {
+export function createForwardedContactCard({ name, nickname, profilePics, isOnline, isDeleted, id }) {
 	const card = document.createElement("span");
 	card.className = "forwarded-contact-card";
 	card.dataset.userId = id;
 
-	const avatarEl = createAvatarElement({ name, nickname, profilePics, className: "forwarded-contact-profile", isOnline });
+	const avatarEl = createAvatarElement({ name, nickname, profilePics, className: "forwarded-contact-profile", isOnline, isDeleted: !!isDeleted });
 
 	const nameEl = document.createElement("span");
 	nameEl.className = "forwarded-contact-name";

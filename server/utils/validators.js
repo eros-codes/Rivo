@@ -6,8 +6,10 @@ export function isNonEmptyString(v, maxLen = MAX_MESSAGE_LENGTH) {
 }
 
 export function parseIntSafe(v) {
-  const n = parseInt(String(v), 10);
-  return Number.isNaN(n) ? null : n;
+  // parseInt silently accepts strings like "12abc" or "1.9";
+  // Number is stricter and rejects invalid values.
+  const n = Number(String(v).trim());
+  return Number.isInteger(n) ? n : null;
 }
 
 export function isPositiveInt(v) {

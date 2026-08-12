@@ -6,6 +6,7 @@ import crypto from "crypto";
 import nodemailer from "nodemailer";
 import push from "../utils/push.js";
 import { verificationEmail } from "../utils/verificationEmail.js";
+import resetPasswordEmail from "../utils/resetPasswordEmail.js";
 
 const router = Router();
 // bcrypt rounds: default to 12 in production, 10 in development
@@ -16,19 +17,10 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Simple verification TTL (configurable via VERIFICATION_TTL_MINUTES)
 const VERIFICATION_TTL_MS = (Number(process.env.VERIFICATION_TTL_MINUTES) || 10) * 60 * 1000; // minutes -> ms
+const RESET_TOKEN_TTL_MS = (Number(process.env.RESET_TOKEN_TTL_MINUTES) || 30) * 60 * 1000; // minutes -> ms
 
-// In-memory store for verification codes (keys are normalized emails)
-const verificationCodes = new Map();
-const verificationTimers = new Map();
-// Prevent unbounded memory growth by limiting in-memory verification maps
-const MAX_VERIFICATION_STORE = Number(process.env.MAX_VERIFICATION_STORE || 10000);
-const MAX_VERIFIED_EMAILS = Number(process.env.MAX_VERIFIED_EMAILS || 10000);
-
-// Verified emails cache: when a user successfully verifies a code we keep a
-// short-lived marker allowing `/register` to proceed. Keys are normalized emails.
-const verifiedEmails = new Map();
-const verifiedEmailTimers = new Map();
-
+// Verification state is stored in the database so it survives restarts and
+// works across multiple app instances.
 // Per-email rate limiting for verification sends
 const VERIFICATION_SEND_WINDOW_MS = (Number(process.env.VERIFICATION_SEND_WINDOW_MINUTES) || 60) * 60 * 1000; // default 60 minutes
 const VERIFICATION_SEND_LIMIT = Number(process.env.VERIFICATION_SEND_LIMIT) || 5; // default 5 sends per window
@@ -38,6 +30,10 @@ const MAX_SEND_COUNTS = Number(process.env.MAX_SEND_COUNTS || 20000);
 
 // Per-email verification attempts allowed before requiring a new code
 const VERIFICATION_MAX_ATTEMPTS = Number(process.env.VERIFICATION_MAX_ATTEMPTS || 5);
+
+function _hashCode(code) {
+    return crypto.createHash("sha256").update(String(code)).digest("hex");
+}
 
 function _normEmail(email) {
     return String(email || '').toLowerCase().trim();
@@ -79,51 +75,34 @@ async function _incrementSendCount(email) {
     return entry.count;
 }
 
-function _clearVerificationInMemory(email) {
-    try {
-        const key = _normEmail(email);
-        verificationCodes.delete(key);
-        const t = verificationTimers.get(key);
-        if (t) clearTimeout(t);
-        verificationTimers.delete(key);
-    } catch (e) { /* ignore */ }
-}
-
-// Verification store uses in-memory storage only
-
 async function _storeVerification(email, code) {
-    // store in-memory only under normalized email
     const key = _normEmail(email);
-    // Evict oldest entries if we exceed the configured cap
-    try {
-        if (verificationCodes.size >= MAX_VERIFICATION_STORE) {
-            const oldest = verificationCodes.keys().next().value;
-            if (oldest) {
-                verificationCodes.delete(oldest);
-                const t = verificationTimers.get(oldest);
-                if (t) clearTimeout(t);
-                verificationTimers.delete(oldest);
-            }
-        }
-    } catch (e) {
-        /* ignore eviction errors */
-    }
-
-    verificationCodes.set(key, { code, expiresAt: Date.now() + VERIFICATION_TTL_MS, attempts: 0 });
-    if (verificationTimers.has(key)) {
-        clearTimeout(verificationTimers.get(key));
-    }
-    verificationTimers.set(key, setTimeout(() => _clearVerificationInMemory(key), VERIFICATION_TTL_MS));
+    await prisma.emailVerification.deleteMany({ where: { email: key, verifiedAt: null } });
+    await prisma.emailVerification.create({
+        data: {
+            email: key,
+            codeHash: _hashCode(code),
+            expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS),
+        },
+    });
 }
 
 async function _getVerification(email) {
-    const key = _normEmail(email);
-    return verificationCodes.get(key) || null;
+    return prisma.emailVerification.findFirst({
+        where: { email: _normEmail(email), verifiedAt: null, expiresAt: { gt: new Date() } },
+        orderBy: { id: "desc" },
+    });
 }
 
 async function _clearVerification(email) {
-    _clearVerificationInMemory(email);
+    await prisma.emailVerification.deleteMany({ where: { email: _normEmail(email), verifiedAt: null } });
 }
+
+setInterval(() => {
+    prisma.emailVerification
+        .deleteMany({ where: { expiresAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } } })
+        .catch((e) => console.warn("verification cleanup failed", e?.message || e));
+}, 60 * 60 * 1000).unref();
 
 async function _sendEmail({ to, subject, text, html }) {
     // Lazy-create and cache transporter to avoid recreating per-request
@@ -182,10 +161,9 @@ async function _sendEmail({ to, subject, text, html }) {
 // POST /send-code -> sends a 6-digit code to the given email
 router.post('/send-code', async (req, res) => {
     const { email, identifier, username } = req.body || {};
-    // If the client supplied an explicit `email` field, validate its format
-    if (email && typeof email === 'string') {
-        const raw = String(email).trim();
-        if (!EMAIL_RE.test(raw)) return res.status(400).json({ error: 'Invalid email address' });
+    // Invalid formats should behave like unknown accounts so the response does not leak account existence.
+    if (email && typeof email === 'string' && !EMAIL_RE.test(String(email).trim())) {
+        return res.json({ success: true });
     }
     let target = (email || identifier || username || '').trim();
     if (!target || typeof target !== 'string') return res.status(400).json({ error: 'Email or username required' });
@@ -211,7 +189,14 @@ router.post('/send-code', async (req, res) => {
         // valid format before attempting SMTP to avoid nodemailer throwing
         // errors for obviously malformed addresses.
         if (/@/.test(sendTo) && !EMAIL_RE.test(sendTo)) {
-            return res.status(400).json({ error: 'Invalid email' });
+            return res.json({ success: true });
+        }
+
+        // IP-based rate limiting is also needed to prevent abuse of the mail service.
+        const ipCount = await _incrementSendCount(`ip:${req.ip}`);
+        if (ipCount > VERIFICATION_SEND_LIMIT * 3) {
+            console.warn(`send-code ip rate limited: ip=${req.ip} count=${ipCount}`);
+            return res.status(429).json({ error: 'Too many verification attempts. Try later.' });
         }
 
         // per-email rate limit
@@ -260,50 +245,24 @@ router.post('/verify-code', async (req, res) => {
         const entry = await _getVerification(email);
         if (!entry) return res.status(400).json({ error: 'Invalid or expired code' });
 
-        // Enforce attempt limits per-email to prevent offline brute-force.
         const attempts = entry.attempts || 0;
         if (attempts >= VERIFICATION_MAX_ATTEMPTS) {
-            // clear code and require a new send
             await _clearVerification(email);
             return res.status(429).json({ error: 'Too many attempts. Request a new verification code.' });
         }
 
-        if (String(entry.code) !== String(code)) {
-            // increment attempts and persist in-memory
-            const key = _normEmail(email);
-            const next = { ...entry, attempts: attempts + 1 };
-            verificationCodes.set(key, next);
-            if (next.attempts >= VERIFICATION_MAX_ATTEMPTS) {
-                await _clearVerification(email);
-                return res.status(429).json({ error: 'Too many attempts. Request a new verification code.' });
-            }
+        if (entry.codeHash !== _hashCode(code)) {
+            await prisma.emailVerification.update({
+                where: { id: entry.id },
+                data: { attempts: { increment: 1 } },
+            });
             return res.status(400).json({ error: 'Invalid code' });
         }
-        // valid: mark email as recently verified (short-lived) so /register can proceed
-        try {
-            const key = _normEmail(email);
-            // Evict oldest verified markers if we exceed cap
-            try {
-                if (verifiedEmails.size >= MAX_VERIFIED_EMAILS) {
-                    const oldest = verifiedEmails.keys().next().value;
-                    if (oldest) {
-                        verifiedEmails.delete(oldest);
-                        const t = verifiedEmailTimers.get(oldest);
-                        if (t) clearTimeout(t);
-                        verifiedEmailTimers.delete(oldest);
-                    }
-                }
-            } catch (e) { /* ignore eviction errors */ }
 
-            verifiedEmails.set(key, Date.now() + VERIFICATION_TTL_MS);
-            if (verifiedEmailTimers.has(key)) clearTimeout(verifiedEmailTimers.get(key));
-            verifiedEmailTimers.set(key, setTimeout(() => verifiedEmails.delete(key), VERIFICATION_TTL_MS));
-        } catch (e) {
-            // don't fail verification on marker set failures
-            console.warn('failed to set verifiedEmails marker', e && e.message ? e.message : e);
-        }
-        // clear stored code and return success
-        await _clearVerification(email);
+        await prisma.emailVerification.update({
+            where: { id: entry.id },
+            data: { verifiedAt: new Date(), expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS) },
+        });
         console.info(`verify-code success: ${_maskEmail(email)} ip=${req.ip}`);
         return res.json({ success: true });
     } catch (e) {
@@ -321,10 +280,12 @@ router.post("/register", async (req, res) => {
     }
 
     try {
-        // Require prior email verification (short-lived marker set by /verify-code)
         const normEmail = _normEmail(email);
-        const verifiedUntil = verifiedEmails.get(normEmail);
-        if (!verifiedUntil || verifiedUntil < Date.now()) {
+        const verification = await prisma.emailVerification.findFirst({
+            where: { email: normEmail, verifiedAt: { not: null }, consumedAt: null, expiresAt: { gt: new Date() } },
+            orderBy: { id: "desc" },
+        });
+        if (!verification) {
             return res.status(403).json({ error: 'Email not verified' });
         }
 
@@ -335,12 +296,12 @@ router.post("/register", async (req, res) => {
         }
 		const existing = await prisma.user.findFirst({
 			where: {
-				OR: [{ email }, { username }],
+				OR: [{ email: normEmail }, { username }],
 			},
 		});
 
 		if (existing) {
-			const field = existing.email === email ? "email" : "username";
+			const field = existing.email === normEmail ? "email" : "username";
 			return res
 				.status(409)
 				.json({ error: `This ${field} is already taken` });
@@ -353,29 +314,31 @@ router.post("/register", async (req, res) => {
 
         const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
-        const user = await prisma.user.create({
-			data: { name, email, username, passwordHash },
-		});
-
-        // consume verified marker so it can't be reused
-        try { verifiedEmails.delete(normEmail); if (verifiedEmailTimers.has(normEmail)) { clearTimeout(verifiedEmailTimers.get(normEmail)); verifiedEmailTimers.delete(normEmail); } } catch (e) { /* ignore */ }
-        
-		// ─── Auto-create Saved Messages ───────────────────────────────────────────
-		await prisma.$transaction(async (tx) => {
+		// All steps must succeed together: otherwise a user can be left without saved messages.
+		const user = await prisma.$transaction(async (tx) => {
+			const created = await tx.user.create({
+				data: { name, email: normEmail, username, passwordHash },
+			});
 			const savedConv = await tx.conversation.create({
 				data: {
-					members: { create: [{ userId: user.id }] },
+					members: { create: [{ userId: created.id }] },
 				},
 			});
 			await tx.contact.create({
 				data: {
-					ownerId: user.id,
-					contactId: user.id,
+					ownerId: created.id,
+					contactId: created.id,
 					conversationId: savedConv.id,
 					isSaved: true,
 				},
 			});
+			return created;
 		});
+
+        // consume verified marker so it can't be reused
+        await prisma.emailVerification
+            .update({ where: { id: verification.id }, data: { consumedAt: new Date() } })
+            .catch((e) => console.warn('failed to consume verification', e?.message || e));
 
 		return res.status(201).json({ success: true, userId: user.id });
 	} catch (err) {
@@ -396,7 +359,7 @@ router.post("/login", async (req, res) => {
     try {
         const user = await prisma.user.findFirst({
             where: {
-                OR: [{ email: identifier }, { username: identifier }],
+                OR: [{ email: _normEmail(identifier) }, { username: identifier }],
             },
         });
 
@@ -488,54 +451,108 @@ router.post("/logout", (req, res) => {
     return res.json({ success: true });
 });
 
-// Disabled: insecure unauthenticated password reset. Implement a secure
-// email + token-based reset flow before enabling this endpoint.
-router.post("/reset-password", async (req, res) => {
-    const { identifier, newPassword } = req.body || {};
-    if (!identifier || !newPassword || typeof newPassword !== 'string' || newPassword.length < 8) {
-        return res.status(400).json({ error: 'Missing or invalid fields' });
+router.post("/request-password-reset", async (req, res) => {
+    const { identifier } = req.body || {};
+    if (!identifier || typeof identifier !== "string") {
+        return res.status(400).json({ error: "Missing identifier" });
+    }
+
+    const rawIdentifier = String(identifier).trim();
+    if (!rawIdentifier) {
+        return res.status(400).json({ error: "Missing identifier" });
     }
 
     try {
-        // Determine email: accept either an email or a username (map username -> email)
-        let email = String(identifier || '').trim();
-        if (!/@/.test(email)) {
-            // treat as username: look up associated email
-            const userByName = await prisma.user.findFirst({ where: { username: email } });
-            if (!userByName || !userByName.email) {
-                return res.status(400).json({ error: 'Invalid identifier' });
-            }
-            email = userByName.email;
+        let user = null;
+        if (/@/.test(rawIdentifier)) {
+            user = await prisma.user.findFirst({ where: { email: rawIdentifier } });
+        } else {
+            user = await prisma.user.findFirst({ where: { username: rawIdentifier } });
         }
 
-        const normEmail = _normEmail(email);
-        const verifiedUntil = verifiedEmails.get(normEmail);
-        if (!verifiedUntil || verifiedUntil < Date.now()) {
-            return res.status(403).json({ error: 'Email not verified' });
-        }
-
-        // Find user by email
-        const user = await prisma.user.findFirst({ where: { email } });
         if (!user) {
-            // Clear the verification marker and return success to avoid account enumeration
-            try { verifiedEmails.delete(normEmail); if (verifiedEmailTimers.has(normEmail)) { clearTimeout(verifiedEmailTimers.get(normEmail)); verifiedEmailTimers.delete(normEmail); } } catch (e) { /* ignore */ }
             return res.json({ success: true });
         }
 
-        // Update password
-        const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-        await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+        const rawToken = crypto.randomBytes(32).toString("hex");
+        const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+        const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
 
-        // Consume verification marker so it can't be reused
-        try { verifiedEmails.delete(normEmail); if (verifiedEmailTimers.has(normEmail)) { clearTimeout(verifiedEmailTimers.get(normEmail)); verifiedEmailTimers.delete(normEmail); } } catch (e) { /* ignore */ }
+        await prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
+        await prisma.passwordResetToken.create({
+            data: {
+                userId: user.id,
+                tokenHash,
+                expiresAt,
+            },
+        });
 
-        // Clear any cookies if present (best-effort)
-        try { res.clearCookie('token'); res.clearCookie('csrfToken'); } catch (e) { /* ignore */ }
+        const appUrl = (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
+        const resetLink = `${appUrl}/reset-password.html?token=${encodeURIComponent(rawToken)}`;
+
+        await _sendEmail({
+            to: user.email,
+            subject: "Reset your Rivo password",
+            text: `Use this link to reset your password: ${resetLink}`,
+            html: resetPasswordEmail({
+                link: resetLink,
+                appName: process.env.APP_NAME || "Rivo",
+                expiresMinutes: Math.max(1, Math.floor(RESET_TOKEN_TTL_MS / 60000)),
+            }),
+        });
 
         return res.json({ success: true });
     } catch (e) {
-        console.error('reset-password failed', e && e.message ? e.message : e);
-        return res.status(500).json({ error: 'Server error' });
+        console.error("request-password-reset failed", e && e.message ? e.message : e);
+        return res.status(500).json({ error: "Failed to send reset email" });
+    }
+});
+
+router.post("/reset-password-with-token", async (req, res) => {
+    const { token, newPassword } = req.body || {};
+    if (!token || typeof token !== "string" || !newPassword || typeof newPassword !== "string" || newPassword.length < 8) {
+        return res.status(400).json({ error: "Missing or invalid fields" });
+    }
+
+    try {
+        const rawToken = String(token).trim();
+        const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+        const resetToken = await prisma.passwordResetToken.findFirst({
+            where: {
+                tokenHash,
+                usedAt: null,
+                expiresAt: { gt: new Date() },
+            },
+            include: { user: true },
+        });
+
+        if (!resetToken || !resetToken.user) {
+            return res.status(400).json({ error: "Invalid or expired reset token" });
+        }
+
+        const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+        await prisma.$transaction([
+            prisma.passwordResetToken.deleteMany({ where: { userId: resetToken.user.id } }),
+            prisma.user.update({
+                where: { id: resetToken.user.id },
+                data: {
+                    passwordHash,
+                    passwordChangedAt: new Date(),
+                },
+            }),
+        ]);
+
+        try {
+            res.clearCookie("token");
+            res.clearCookie("csrfToken");
+        } catch (e) {
+            // ignore cookie clear errors
+        }
+
+        return res.json({ success: true });
+    } catch (e) {
+        console.error("reset-password-with-token failed", e && e.message ? e.message : e);
+        return res.status(500).json({ error: "Server error" });
     }
 });
 

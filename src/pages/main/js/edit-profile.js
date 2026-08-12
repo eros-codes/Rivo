@@ -1,4 +1,5 @@
 /* global Cropper */
+import Cropper from "cropperjs";
 import { updateMe, uploadAvatar, deleteAvatar } from "./api.js";
 import { mountAvatar, refreshUserAvatars } from "../../../utils/dom.js";
 import { getCurrentUser } from "./currentUser.js";

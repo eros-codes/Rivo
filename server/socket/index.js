@@ -5,6 +5,8 @@ import push from "../utils/push.js";
 import { generateDEK, encryptMessage, wrapDEK, decryptMessage } from "../utils/encryption.js";
 import { parseIntSafe, MAX_MESSAGE_LENGTH } from "../utils/validators.js";
 
+const ACTIVE_KEY_ID = process.env.ACTIVE_KEY_ID || "v1";
+
 // Exported map of userId -> Set<socketId> so other modules (jobs, cron)
 // can efficiently target sockets without iterating over all connections.
 export const userSockets = new Map();
@@ -86,6 +88,20 @@ export function initSocket(httpServer) {
 	const RATE_LIMIT_WINDOW_MS = parseInt(process.env.SOCKET_RATE_WINDOW_MS || "10000", 10); // 10s
 	const RATE_LIMIT_MAX = parseInt(process.env.SOCKET_RATE_MAX || "20", 10); // max messages per window
 
+	function checkRate(userId, max = RATE_LIMIT_MAX) {
+		try {
+			const now = Date.now();
+			const arr = sendRate.get(userId) || [];
+			const recent = arr.filter((t) => t > now - RATE_LIMIT_WINDOW_MS);
+			recent.push(now);
+			sendRate.set(userId, recent);
+			return recent.length <= max;
+		} catch (e) {
+			console.error("rate limit check failed", e);
+			return true;
+		}
+	}
+
 	// In-memory caches to reduce repeated DB calls (best-effort with short TTL)
 	const membershipCache = new Map(); // key `${convId}:${userId}` => { res, ts }
 	const MEMBERSHIP_CACHE_TTL_MS = parseInt(process.env.MEMBERSHIP_CACHE_TTL_MS || "30000", 10);
@@ -110,6 +126,14 @@ export function initSocket(httpServer) {
 			const oldest = connectionAttempts.keys().next().value;
 			if (!oldest) break;
 			connectionAttempts.delete(oldest);
+		}
+
+		// sendRate should also be cleaned up periodically so inactive users do not
+		// keep unbounded history entries in memory forever.
+		for (const [uid, arr] of sendRate.entries()) {
+			const recent = arr.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+			if (recent.length === 0 && !userSockets.has(uid)) sendRate.delete(uid);
+			else if (recent.length !== arr.length) sendRate.set(uid, recent);
 		}
 	}, Math.max(10000, Math.floor(CONNECTION_ATTEMPT_WINDOW_MS / 4)));
 
@@ -213,10 +237,17 @@ export function initSocket(httpServer) {
 			const payload = jwt.verify(token, process.env.JWT_SECRET);
 			const userId = payload.userId;
 
-			// Ensure token was issued after any password change
+			// Apply the same account-state checks as the HTTP middleware so sockets
+			// cannot bypass deleted-user protections or stale-token checks.
 			try {
-				const u = await prisma.user.findUnique({ where: { id: userId }, select: { passwordChangedAt: true } });
-				if (u?.passwordChangedAt) {
+				const u = await prisma.user.findUnique({
+					where: { id: userId },
+					select: { passwordChangedAt: true, isDeleted: true },
+				});
+				if (!u || u.isDeleted) {
+					return next(new Error("Invalid token"));
+				}
+				if (u.passwordChangedAt) {
 					const pwdChangedAtSeconds = Math.floor(new Date(u.passwordChangedAt).getTime() / 1000);
 					const tokenIat = payload.iat || 0;
 					if (pwdChangedAtSeconds > tokenIat) {
@@ -224,7 +255,8 @@ export function initSocket(httpServer) {
 					}
 				}
 			} catch (e) {
-				console.error("Socket auth passwordChangedAt check failed", e);
+				console.error("Socket auth check failed", e);
+				return next(new Error("ServiceUnavailable"));
 			}
 
 			socket.userId = userId;
@@ -270,6 +302,12 @@ export function initSocket(httpServer) {
 			// per-user rate tracking initialized in auth middleware; nothing else to do here
 			// Emit online events only to users who have this user as a contact
 			try {
+				const me = await prisma.user.findUnique({
+					where: { id: socket.userId },
+					select: { privacyOnline: true },
+				});
+				if (me?.privacyOnline === "nobody") throw new Error("__skip_broadcast");
+
 				const contacts = await prisma.contact.findMany({ where: { contactId: socket.userId }, select: { ownerId: true } });
 				for (const c of contacts) {
 					const sids = userSockets.get(c.ownerId) || new Set();
@@ -279,7 +317,7 @@ export function initSocket(httpServer) {
 					}
 				}
 			} catch (e) {
-				console.error('emit user:online to contacts failed', e);
+				if (e?.message !== "__skip_broadcast") console.error('emit user:online to contacts failed', e);
 			}
 		} catch (err) {
 			console.error("Connection error", err);
@@ -313,20 +351,8 @@ export function initSocket(httpServer) {
 			}
 
 			try {
-				// Rate limiting: per-user sliding window
-				try {
-					const now = Date.now();
-					const arrival = sendRate.get(socket.userId) || [];
-					const minTs = now - RATE_LIMIT_WINDOW_MS;
-					const recent = arrival.filter((t) => t > minTs);
-					recent.push(now);
-					sendRate.set(socket.userId, recent);
-					if (recent.length > RATE_LIMIT_MAX) {
-						return callback?.({ error: "Rate limit exceeded" });
-					}
-				} catch (e) {
-					// rate limiting must not crash handler
-					console.error("rate limit check failed", e);
+				if (!checkRate(socket.userId)) {
+					return callback?.({ error: "Rate limit exceeded" });
 				}
 
 				if (!(await _isMember(convId))) {
@@ -354,9 +380,18 @@ export function initSocket(httpServer) {
 
 				// Encrypt message before persisting. Do NOT store plaintext.
 				const plaintext = text.trim();
+				if (replyToId) {
+					const target = await prisma.message.findUnique({
+						where: { id: parseIntSafe(replyToId) || 0 },
+						select: { conversationId: true },
+					});
+					if (!target || target.conversationId !== convId) {
+						return callback?.({ error: "Invalid replyToId" });
+					}
+				}
 				const dek = generateDEK();
 				const { ciphertext, iv, authTag } = encryptMessage(plaintext, dek);
-				const keyId = "v1"; // KEK version
+				const keyId = ACTIVE_KEY_ID;
 				const wrappedDek = wrapDEK(dek, keyId);
 
 				// encrypt replyToText and forwardedText (store as JSON string) using same DEK
@@ -385,10 +420,10 @@ export function initSocket(httpServer) {
 						wrapped_dek: wrappedDek,
 						key_id: keyId,
 						...(replyToId && { replyToId }),
-						...(replyToName && { replyToName }),
+						...(replyToName && typeof replyToName === "string" && { replyToName: replyToName.trim().slice(0, 100) }),
 						...(replyToTextEncrypted && { replyToText: replyToTextEncrypted }),
 						...(forwardedTextEncrypted && { forwardedText: forwardedTextEncrypted }),
-						...(forwardedFrom && { forwardedFrom }),
+						...(forwardedFrom && typeof forwardedFrom === "string" && { forwardedFrom: forwardedFrom.trim().slice(0, 100) }),
 					},
 					include: {
 						sender: {
@@ -576,9 +611,10 @@ export function initSocket(httpServer) {
 			const msgId = parseIntSafe(messageId);
 			if (!msgId) return callback?.({ error: "Invalid messageId" });
 			try {
-			if (!text || typeof text !== "string" || !text.trim() || text.trim().length > MAX_MESSAGE_LENGTH) {
-				return callback?.({ error: "Invalid data" });
-			}
+				if (!checkRate(socket.userId)) return callback?.({ error: "Rate limit exceeded" });
+				if (!text || typeof text !== "string" || !text.trim() || text.trim().length > MAX_MESSAGE_LENGTH) {
+					return callback?.({ error: "Invalid data" });
+				}
 				const message = await prisma.message.findUnique({
 					where: { id: msgId },
 				});
@@ -586,12 +622,21 @@ export function initSocket(httpServer) {
 				if (!message || message.senderId !== socket.userId) {
 					return callback?.({ error: "Forbidden" });
 				}
+				if (message.isDeleted) {
+					return callback?.({ error: "Cannot edit a deleted message" });
+				}
+				if (message.isTimeCapsule && !message.openedAt) {
+					return callback?.({ error: "Cannot edit a sealed time capsule" });
+				}
+				if (message.isOneTime) {
+					return callback?.({ error: "One-time messages cannot be edited" });
+				}
 
 				// Encrypt edited text and update encrypted columns
 				const plaintext = text.trim();
 				const dek = generateDEK();
 				const { ciphertext, iv, authTag } = encryptMessage(plaintext, dek);
-				const keyId = "v1";
+				const keyId = ACTIVE_KEY_ID;
 				const wrappedDek = wrapDEK(dek, keyId);
 
 				const _updated = await prisma.message.update({
@@ -648,6 +693,7 @@ export function initSocket(httpServer) {
 			if (!msgId) return callback?.({ error: "Invalid messageId" });
 
 			try {
+				if (!checkRate(socket.userId)) return callback?.({ error: "Rate limit exceeded" });
 				const message = await prisma.message.findUnique({
 					where: { id: msgId },
 				});
@@ -658,7 +704,12 @@ export function initSocket(httpServer) {
 
 				await prisma.message.update({
 					where: { id: msgId },
-					data: { isDeleted: true },
+					data: {
+						isDeleted: true,
+						...(message.isOneTime
+							? { ciphertext: null, iv: null, auth_tag: null, wrapped_dek: null, text: null }
+							: {}),
+					},
 				});
 
 				// If the message was not seen by recipients, decrement their unread counts
@@ -720,12 +771,22 @@ export function initSocket(httpServer) {
 			const msgId = parseIntSafe(messageId);
 			if (!msgId) return callback?.({ error: "Invalid messageId" });
 			try {
+				if (!checkRate(socket.userId)) return callback?.({ error: "Rate limit exceeded" });
 				const message = await prisma.message.findUnique({
 					where: { id: msgId },
 				});
 				if (!message) return callback?.({ error: "Not found" });
 
 				if (!(await _isMember(message.conversationId))) return callback?.({ error: "Forbidden" });
+
+				if (!message.isPinned) {
+					const pinnedCount = await prisma.message.count({
+						where: { conversationId: message.conversationId, isPinned: true, isDeleted: false },
+					});
+					if (pinnedCount >= 20) {
+						return callback?.({ error: "Pin limit reached (20). Unpin something first." });
+					}
+				}
 
 				const updated = await prisma.message.update({
 					where: { id: msgId },
@@ -769,6 +830,7 @@ export function initSocket(httpServer) {
 			// ─── Add/toggle reaction ────────────────────────────────────────────────────
 			socket.on("reaction:add", async ({ messageId, emoji }, callback) => {
 				try {
+					if (!checkRate(socket.userId)) return callback?.({ error: "Rate limit exceeded" });
 					if (!messageId || !emoji || typeof emoji !== "string" || emoji.length > 10) {
 						return callback?.({ error: "Invalid data" });
 					}
@@ -800,7 +862,6 @@ export function initSocket(httpServer) {
 						await prisma.messageReaction.delete({
 							where: { messageId_userId: { messageId: msgId, userId: socket.userId } },
 						});
-						reaction = null;
 						action = "removed";
 					} else {
 						// different emoji or new → upsert
@@ -1013,6 +1074,7 @@ export function initSocket(httpServer) {
 									});
 									try {
 										// Emit only to contacts of this user instead of broadcasting
+										if (updated.privacyOnline === "nobody") throw new Error("__skip_broadcast");
 										const contacts = await prisma.contact.findMany({ where: { contactId: socket.userId }, select: { ownerId: true } });
 										for (const c of contacts) {
 											const sids = userSockets.get(c.ownerId) || new Set();
@@ -1022,7 +1084,7 @@ export function initSocket(httpServer) {
 											}
 										}
 									} catch (e) {
-										/* ignore broadcast failures */
+										if (e?.message !== "__skip_broadcast") console.error('offline broadcast failed', e);
 									}
 								}
 							} catch (e) {

@@ -1,8 +1,31 @@
-import { io } from "/js/socket.io.esm.min.js";
+import { io } from "socket.io-client";
 
 let socket = null;
 let _onOnetimeDeleted = null;
 let _capsuleOpenedHandler = null;
+let _activeConversationId = null;
+
+// Without a timeout, an unanswered socket acknowledgement can leave the UI
+// stuck forever in a sending or saving state.
+function emitWithAck(event, payload, { timeout = 10000, transform } = {}) {
+	return new Promise((resolve, reject) => {
+		if (!socket) return reject(new Error("Socket not connected"));
+		let settled = false;
+		const timer = setTimeout(() => {
+			if (settled) return;
+			settled = true;
+			reject(new Error("Request timed out"));
+		}, timeout);
+
+		socket.emit(event, payload, (res) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			if (res?.error) return reject(new Error(res.error));
+			resolve(transform ? transform(res) : res);
+		});
+	});
+}
 
 function _showStatus(text) {
 	const el = document.getElementById("connection-status");
@@ -18,10 +41,12 @@ function _hideStatus() {
 	el.classList.remove("visible");
 }
 
-export function initSocket(
+// Named callbacks avoid silent breakage when a handler is added or reordered.
+export function initSocket({
 	onMessage,
 	onMessageEdited,
 	onMessageDeleted,
+	onMessagesBulkDeleted,
 	onUserOnline,
 	onUserOffline,
 	onMessageSeen,
@@ -31,7 +56,7 @@ export function initSocket(
 	onUserUpdated,
 	onContactRemoved,
 	onReactionUpdated,
-) {
+} = {}) {
 	socket = io({
 		withCredentials: true,
 	});
@@ -46,6 +71,11 @@ export function initSocket(
 
 	socket.on("message:deleted", (data) => {
 		onMessageDeleted(data);
+	});
+
+	socket.on("messages:bulk-deleted", (data) => {
+		if (!Array.isArray(data?.messageIds)) return;
+		try { onMessagesBulkDeleted?.(data); } catch (e) { /* ignore */ }
 	});
 
 	socket.on("user:online", ({ userId }) => {
@@ -98,6 +128,13 @@ export function initSocket(
 
 	socket.on("connect", () => {
 		_hideStatus();
+		if (_activeConversationId) {
+			try {
+				socket.emit("conversation:join", { conversationId: _activeConversationId });
+			} catch (e) {
+				/* ignore reconnect join failures */
+			}
+		}
 	});
 
 	socket.on("disconnect", () => {
@@ -135,39 +172,23 @@ export function getSocket() {
 	return socket;
 }
 
+export function setActiveConversation(conversationId) {
+	_activeConversationId = conversationId || null;
+}
+
 export function emitMessage({ conversationId, text, replyToId, replyToName, replyToText, forwardedFrom, forwardedText, isOneTime = false, isTimeCapsule = false, scheduledFor = null }) {
-	return new Promise((resolve, reject) => {
- 		if (!socket) return reject(new Error("No socket"));
- 		socket.emit("message:send", {
-			 conversationId, text, replyToId, replyToName, replyToText,
-			 forwardedFrom, forwardedText, isOneTime,
-			 isTimeCapsule,
-			 scheduledFor,
- 		}, (res) => {
- 			if (res?.error) return reject(new Error(res.error));
- 			resolve(res?.message || res);
- 		});
- 	});
+	return emitWithAck("message:send", {
+		conversationId, text, replyToId, replyToName, replyToText,
+		forwardedFrom, forwardedText, isOneTime, isTimeCapsule, scheduledFor,
+	}, { transform: (res) => res?.message || res });
 }
 
 export function emitEditMessage(messageId, text) {
-	return new Promise((resolve, reject) => {
-		if (!socket) return reject(new Error("Socket not connected"));
-		socket.emit("message:edit", { messageId, text }, (res) => {
-			if (res?.error) reject(res.error);
-			else resolve(res);
-		});
-	});
+	return emitWithAck("message:edit", { messageId, text });
 }
 
 export function emitDeleteMessage(messageId) {
-	return new Promise((resolve, reject) => {
-		if (!socket) return reject(new Error("Socket not connected"));
-		socket.emit("message:delete", { messageId }, (res) => {
-			if (res?.error) reject(res.error);
-			else resolve(res);
-		});
-	});
+	return emitWithAck("message:delete", { messageId });
 }
 
 export function emitTypingStart(conversationId) {
@@ -181,33 +202,15 @@ export function emitTypingStop(conversationId) {
 }
 
 export function emitMessageSeen(conversationId) {
-	return new Promise((resolve, reject) => {
-		if (!socket) return reject(new Error("Socket not connected"));
-		socket.emit("message:seen", { conversationId }, (res) => {
-			if (res?.error) return reject(res.error);
-			return resolve(res?.marked || []);
-		});
-	});
+	return emitWithAck("message:seen", { conversationId }, { transform: (res) => res?.marked || [] });
 }
 
 export function emitPinMessage(messageId) {
-	return new Promise((resolve, reject) => {
-		if (!socket) return reject(new Error("Socket not connected"));
-		socket.emit("message:pin", { messageId }, (res) => {
-			if (res?.error) reject(res.error);
-			else resolve(res?.isPinned);
-		});
-	});
+	return emitWithAck("message:pin", { messageId }, { transform: (res) => res?.isPinned });
 }
 
 export function emitReaction(messageId, emoji) {
-	return new Promise((resolve, reject) => {
-		if (!socket) return reject(new Error("Socket not connected"));
-		socket.emit("reaction:add", { messageId, emoji }, (res) => {
-			if (res?.error) return reject(res.error);
-			return resolve(res);
-		});
-	});
+	return emitWithAck("reaction:add", { messageId, emoji });
 }
 
 export function setOnetimeDeletedHandler(fn) {

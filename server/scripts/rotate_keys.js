@@ -2,6 +2,7 @@
 import prisma from "../prisma.js";
 import { unwrapDEK, wrapDEK, initKeyStore } from "../utils/encryption.js";
 import crypto from "node:crypto";
+import fs from "node:fs";
 
 function parseArgs(argv) {
   const out = {};
@@ -80,6 +81,9 @@ async function main() {
   let skipped = 0;
 
   let lastId = 0;
+  const backupPath = `rotation-backup-${from}-to-${to}-${Date.now()}.jsonl`;
+  const backupStream = dryRun ? null : fs.createWriteStream(backupPath, { flags: "a" });
+  if (backupStream) console.log(`backup → ${backupPath}`);
   try {
     while (processed < limit) {
       const take = Math.min(batchSize, limit - processed);
@@ -107,6 +111,17 @@ async function main() {
           // Re-wrap with target KEK
           const newWrapped = wrapDEK(dek, to);
 
+          // Critical: verify the new wrapping can be unwrapped with the target KEK
+          // before we overwrite the original DB value.
+          const roundTrip = unwrapDEK(newWrapped, to);
+          if (!roundTrip.equals(dek)) {
+            throw new Error("round-trip verification failed: re-wrapped DEK does not match original");
+          }
+
+          if (backupStream) {
+            backupStream.write(JSON.stringify({ id: r.id, key_id: r.key_id, wrapped_dek: r.wrapped_dek }) + "\n");
+          }
+
           if (dryRun) {
             console.log(`[dry] would update id=${r.id} key_id=${r.key_id} -> ${to}`);
             rotated += 1;
@@ -121,7 +136,11 @@ async function main() {
         } catch (e) {
           failed += 1;
           console.error(`failed id=${r.id}: ${e.message}`);
-          // continue with next row
+          // Consecutive failures mean a systemic problem (wrong KEK), not a few bad rows.
+          // Continuing only makes the damage wider.
+          if (failed >= 10 && rotated === 0) {
+            throw new Error(`aborting: ${failed} consecutive failures with no success — check that KEK '${to}' is correct`);
+          }
         }
       }
 
@@ -132,8 +151,11 @@ async function main() {
     }
   } catch (e) {
     console.error("rotation failed", e);
+    process.exitCode = 5;
   } finally {
     console.log(`finished: processed=${processed}, rotated=${rotated}, failed=${failed}, skipped=${skipped}`);
+    if (failed > 0) process.exitCode = 5;
+    if (backupStream) await new Promise((res) => backupStream.end(res));
     await prisma.$disconnect();
   }
 }

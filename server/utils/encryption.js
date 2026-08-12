@@ -56,6 +56,12 @@ function _getKekBuffer(keyId = "v1") {
     }
   }
 
+  // When Vault is the authoritative source, silently falling back to env keys
+  // could encrypt new messages with the wrong material. Fail loudly instead.
+  if ((process.env.SECRET_PROVIDER || "").toLowerCase() === "vault") {
+    throw new Error("SECRET_PROVIDER=vault but the key cache is stale/empty — refusing to fall back to env keys");
+  }
+
   // Fallback to environment variables
   for (const name of candidateNames) {
     if (process.env[name]) {
@@ -73,7 +79,7 @@ function _getKekBuffer(keyId = "v1") {
   if (process.env.NODE_ENV === "production" && (allowEphemeral === "1" || allowEphemeral === "true")) {
     throw new Error("ALLOW_EPHEMERAL_KEK must not be used in production");
   }
-  if (process.env.NODE_ENV === "development" && (allowEphemeral === "1" || allowEphemeral === "true")) {
+  if (process.env.NODE_ENV !== "production" && (allowEphemeral === "1" || allowEphemeral === "true")) {
     console.warn(`No KEK found (tried: ${candidateNames.join(", ")}). Generating ephemeral KEK because ALLOW_EPHEMERAL_KEK is set. This KEK will be lost on restart.`);
     return crypto.randomBytes(DEK_LENGTH);
   }

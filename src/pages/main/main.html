@@ -85,6 +85,9 @@
 			<div class="main-content" id="main-content">
 				<section class="contacts-container">
 					<h4 class="guid">Contacts</h4>
+					<button type="button" class="contacts-show-more" id="contacts-show-more" hidden>
+						<span id="contacts-show-more-label">Show all contacts</span>
+					</button>
 					<!-- Contacts will be dynamically added here -->
 					<div class="contacts-empty" id="contacts-empty">
 						<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
@@ -99,6 +102,18 @@
 				<section class="active-chats-container">
 					<h4 class="guid">Active Chats</h4>
 					<!-- Active chats will be dynamically added here -->
+				</section>
+
+				<section class="all-contacts-section" id="all-contacts-section">
+					<header class="all-contacts-header">
+						<button type="button" class="all-contacts-back" id="all-contacts-back" aria-label="Back">
+							<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 18l-6-6l6-6"/></svg>
+						</button>
+						<h4 class="guid">All Contacts</h4>
+					</header>
+					<input type="search" class="all-contacts-search" id="all-contacts-search" placeholder="Search contacts…" autocomplete="off" />
+					<div class="all-contacts-list" id="all-contacts-list"></div>
+					<p class="all-contacts-empty" id="all-contacts-empty" hidden>No contact found</p>
 				</section>
 			</div>
 
@@ -652,6 +667,9 @@
 						</div>
 					</div>
 					<div class="settings-change-password-actions">
+						<button type="button" class="settings-forgot-password" id="settings-forgot-password">
+							Forgot password?
+						</button>
 						<button type="button" class="settings-change-password-submit" id="settings-change-password-submit">
 							Change Password
 						</button>
@@ -659,6 +677,7 @@
 							Send reset email
 						</button>
 					</div>
+					<div class="settings-change-password-feedback" id="settings-change-password-feedback" role="status" aria-live="polite"></div>
 				</form>
 				<div class="settings-row settings-row-danger" id="settings-delete-account">
 					<div class="settings-row-left">
@@ -758,9 +777,7 @@
 		</dialog>
 	</main>
 
-	<script src="/js/cropper.min.js"></script>
-	<script type="module" src="main.js"></script>
-	<script type="module" src="/js/index.js"></script>
+	<script src="/js/bundle.min.js"></script>
 	<script src="/js/register-sw.js"></script>
 </body>
 

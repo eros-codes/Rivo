@@ -15,8 +15,16 @@ export async function requireAuth(req, res, next) {
 
 		// Check if the user changed password after token was issued
 		try {
-			const user = await prisma.user.findUnique({ where: { id: userId }, select: { passwordChangedAt: true } });
-			if (user?.passwordChangedAt) {
+			const user = await prisma.user.findUnique({
+				where: { id: userId },
+				select: { passwordChangedAt: true, isDeleted: true },
+			});
+			// Soft-delete remains in place so other users' chats do not disappear,
+			// but a deleted account must not keep access with an old token.
+			if (!user || user.isDeleted) {
+				return res.status(401).json({ error: "Invalid token" });
+			}
+			if (user.passwordChangedAt) {
 				const pwdChangedAtSeconds = Math.floor(new Date(user.passwordChangedAt).getTime() / 1000);
 				const tokenIat = payload.iat || 0;
 				if (pwdChangedAtSeconds > tokenIat) {
@@ -24,14 +32,12 @@ export async function requireAuth(req, res, next) {
 				}
 			}
 		} catch (e) {
-				console.error("Auth passwordChangedAt check failed", e);
-				// Fail closed in production: do not accept tokens if we cannot
-				// verify whether the password was changed. In non-production,
-				// rethrow so developers become aware of the error.
-				if (process.env.NODE_ENV === 'production') {
-					return res.status(503).json({ error: 'Service unavailable' });
-				}
-				throw e;
+			console.error("Auth passwordChangedAt check failed", e);
+			// Database errors should not be silently translated into "Invalid token".
+			// Return a clear 503 in both environments so the real cause stays visible.
+			return res.status(503).json({
+				error: process.env.NODE_ENV === 'production' ? 'Service unavailable' : `Auth check failed: ${e.message}`,
+			});
 		}
 
 		req.userId = userId;

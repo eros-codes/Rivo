@@ -38,6 +38,7 @@ export function createContactCard(contact, onAction) {
 	const card = document.createElement("span");
 	card.className = "contacts-card";
 	card.dataset.userId = id;
+	card.dataset.wrapperUserId = id;
 
 	// Menu button
 	const menuBtn = document.createElement("button");
@@ -89,7 +90,7 @@ export function createContactCard(contact, onAction) {
 	}
 
 	// Profile image or initial-letter avatar
-	const avatarEl = createAvatarElement({ name, nickname, profilePics, className: "contact-profile", isOnline });
+	const avatarEl = createAvatarElement({ name, nickname, profilePics, className: "contact-profile", isOnline, isDeleted: !!contact.isDeleted });
 
 	// Name
 	const nameSpan = document.createElement("span");

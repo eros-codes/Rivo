@@ -19,6 +19,7 @@ export function createActiveChatCard({
 	lastMessageDate,
 	isPinned,
 	isSaved,
+	isDeleted,
 	unreadCount,
 }) {
 	// mute/pin svg markers are included inline where needed via parseSvg
@@ -107,6 +108,7 @@ export function createActiveChatCard({
 			profilePics,
 			className: `active-chat-profile${isOnline ? " online" : ""}`,
 			isOnline,
+			isDeleted: !!isDeleted,
 		});
 	}
 

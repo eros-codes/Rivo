@@ -35,6 +35,35 @@ if (process.env.NODE_ENV === 'production' && process.env.ALLOW_EPHEMERAL_KEK ===
 if (!process.env.JWT_SECRET) {
 	throw new Error("JWT_SECRET not set");
 }
+if (process.env.JWT_SECRET.length < 32) {
+	console.warn("⚠️  JWT_SECRET کوتاه‌تر از ۳۲ کاراکتر است و به‌راحتی قابل حدس زدن است.");
+}
+
+// بدون DATABASE_URL هیچ کوئری‌ای کار نمی‌کند؛ بهتر است همین‌جا با پیام واضح
+// شکست بخوریم تا اینکه بعداً با خطای مبهم Prisma مواجه شویم.
+if (!process.env.DATABASE_URL) {
+	throw new Error("DATABASE_URL not set");
+}
+
+// بدون KEK پیام‌ها نه رمز می‌شوند نه رمزگشایی. حالت کلید موقت فقط برای
+// توسعه‌ی محلی مجاز است و بالاتر در production مسدود شده.
+if (!process.env.KEK_V1 && process.env.SECRET_PROVIDER !== "vault" && process.env.ALLOW_EPHEMERAL_KEK !== "1") {
+	throw new Error("KEK_V1 not set (یا SECRET_PROVIDER=vault را تنظیم کنید، یا برای توسعه ALLOW_EPHEMERAL_KEK=1)");
+}
+
+if (process.env.NODE_ENV === "production") {
+	// این‌ها در production واقعاً لازم‌اند؛ نبودشان قابلیت‌ها را بی‌صدا از کار می‌اندازد
+	const missing = [];
+	if (!process.env.ALLOWED_ORIGINS) missing.push("ALLOWED_ORIGINS");
+	if (!process.env.SMTP_HOST || !process.env.SMTP_USER) missing.push("SMTP_HOST/SMTP_USER (تایید ایمیل و بازیابی رمز)");
+	if (!process.env.VAPID_PUBLIC || !process.env.VAPID_PRIVATE) missing.push("VAPID_PUBLIC/VAPID_PRIVATE (نوتیفیکیشن)");
+	if (missing.length) {
+		throw new Error(`متغیرهای زیر در production تنظیم نشده‌اند:\n  - ${missing.join("\n  - ")}`);
+	}
+	if (process.env.SECRET_PROVIDER === "vault" && (!process.env.VAULT_ADDR || !process.env.VAULT_TOKEN)) {
+		throw new Error("SECRET_PROVIDER=vault است ولی VAULT_ADDR یا VAULT_TOKEN تنظیم نشده.");
+	}
+}
 
 // Initialize Sentry if DSN is provided
 if (process.env.SENTRY_DSN) {
@@ -92,8 +121,9 @@ if (isProduction) {
 		console.warn('HSTS setup failed', e);
 	}
 } else {
-	// development: omit Helmet to prevent automatic HTTPS upgrades and
-	// restrictive CSP headers that interfere with local/IP testing.
+	// In development, only HSTS and CSP are disabled because they interfere with LAN testing.
+	// The rest of the security headers should still be applied.
+	app.use(helmet({ hsts: false, contentSecurityPolicy: false }));
 }
 
 // Ensure CSP allows blob: for images (some browsers use blob: URLs for uploads)
@@ -151,6 +181,8 @@ const authLimiter = rateLimit({
 	max: Number(process.env.AUTH_RATE_MAX) || 10,
 	standardHeaders: true,
 	legacyHeaders: false,
+	// Without a custom handler, the client receives a plain-text response instead of JSON.
+	handler: (req, res) => res.status(429).json({ error: "Too many attempts, try again later" }),
 });
 
 app.use(
@@ -164,7 +196,7 @@ app.use(
 		allowedHeaders: ["Content-Type", "X-CSRF-Token", "X-Requested-With"],
 	}),
 );
-app.use(express.json());
+app.use(express.json({ limit: "64kb" }));
 app.use(cookieParser());
 
 // Serve a small client-config script that injects selected env vars into
@@ -200,6 +232,9 @@ const csrfExcluded = new Set([
 	// Allow unauthenticated verification flows
 	"/api/auth/send-code",
 	"/api/auth/verify-code",
+	// Password recovery via emailed link: the user is logged out and has no CSRF cookie yet.
+	"/api/auth/request-password-reset",
+	"/api/auth/reset-password-with-token",
 ]);
 
 function csrfProtection(req, res, next) {
@@ -281,6 +316,10 @@ if (process.env.NODE_ENV !== "production") {
 	const srcAuth = resolve("src/pages/auth");
 	app.use('/auth', express.static(srcAuth));
 }
+
+app.get('/reset-password', (req, res) => {
+	res.sendFile(resolve('public/reset-password.html'));
+});
 
 // Dev-only runtime diagnostics endpoint. Exposes memory and active handle counts.
 if (process.env.NODE_ENV !== "production") {
@@ -366,9 +405,12 @@ if (process.env.SENTRY_DSN) {
 		if ((process.env.SECRET_PROVIDER || "").toLowerCase() === "vault") {
 			console.error("SECRET_PROVIDER=vault but keystore initialization failed — aborting startup.");
 			process.exit(1);
-		} else {
-			console.warn('KEK not configured. For development, run `npm run gen-kek` to generate a base64 KEK and add it to your .env as KEK_V1=<base64>');
-		}
+		} else if (process.env.NODE_ENV === 'production') {
+		console.error('KEK not configured or invalid — aborting startup.');
+		process.exit(1);
+	} else {
+		console.warn('KEK not configured. For development, run `npm run gen-kek` to generate a base64 KEK and add it to your .env as KEK_V1=<base64>');
+	}
 	}
 
 	// Quick runtime KEK sanity check: attempt to wrap a test DEK. This will
@@ -381,6 +423,9 @@ if (process.env.SENTRY_DSN) {
 		console.error("KEK sanity check failed:", e && e.message ? e.message : e);
 		if ((process.env.SECRET_PROVIDER || "").toLowerCase() === "vault") {
 			console.error("SECRET_PROVIDER=vault but KEK unwrap/wrap failed — aborting startup.");
+			process.exit(1);
+		} else if (process.env.NODE_ENV === 'production') {
+			console.error('KEK not configured or invalid — aborting startup.');
 			process.exit(1);
 		} else {
 			console.warn(

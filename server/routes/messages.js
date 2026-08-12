@@ -5,6 +5,7 @@ import { isNonEmptyString, parseIntSafe, MAX_MESSAGE_LENGTH } from "../utils/val
 import { generateDEK, encryptMessage, wrapDEK, unwrapDEK, decryptMessage } from "../utils/encryption.js";
 
 const router = Router();
+const ACTIVE_KEY_ID = process.env.ACTIVE_KEY_ID || "v1";
 
 // ─── Search messages ───────────────────────────────────────────────────────
 router.get("/search", requireAuth, async (req, res) => {
@@ -86,7 +87,7 @@ router.get("/search", requireAuth, async (req, res) => {
             });
         }
 
-        return res.json({ results });
+        return res.json({ results, truncated: rows.length >= MAX_SCAN });
     } catch (err) {
         console.error("Search error:", err);
         return res.status(500).json({ error: "Search failed" });
@@ -118,13 +119,18 @@ router.get('/:conversationId/pinned', requireAuth, async (req, res) => {
 				key_id: true,
 				senderId: true,
 				createdAt: true,
+				isTimeCapsule: true,
+				scheduledFor: true,
+				openedAt: true,
 			},
 		});
 
 		const results = pinned.map((m) => {
 			let text = m.text || '';
+			const isLocked = m.isTimeCapsule && !m.openedAt && m.scheduledFor && new Date(m.scheduledFor) > new Date();
+			const isSender = m.senderId === req.userId;
 			try {
-				if (!text && m.ciphertext && m.wrapped_dek) {
+				if (!text && m.ciphertext && m.wrapped_dek && (!isLocked || isSender)) {
 					const dek = unwrapDEK(m.wrapped_dek, m.key_id || 'v1');
 					text = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
 				}
@@ -133,7 +139,7 @@ router.get('/:conversationId/pinned', requireAuth, async (req, res) => {
 			}
 			return {
 				id: m.id,
-				text,
+				text: (isLocked && !isSender) ? null : text,
 				senderId: m.senderId,
 				createdAt: m.createdAt,
 			};
@@ -235,69 +241,77 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
 				let forwardedTextPlain = null;
 				let dek = null;
 
-				if (m.ciphertext) {
-					try {
-						dek = unwrapDEK(m.wrapped_dek, m.key_id || "v1");
-						text = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
-					} catch (e) {
-						console.error("decrypt failed for message", m.id, e.message);
+				const isLocked = m.isTimeCapsule && !m.openedAt && m.scheduledFor && new Date(m.scheduledFor) > new Date();
+				const isSender = m.senderId === req.userId;
+				if (!isLocked || isSender) {
+					if (m.ciphertext) {
+						try {
+							dek = unwrapDEK(m.wrapped_dek, m.key_id || "v1");
+							text = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
+						} catch (e) {
+							console.error("decrypt failed for message", m.id, e.message);
+							text = "Message unavailable";
+						}
+					} else if (m.text) {
+						text = m.text;
+					} else {
 						text = "Message unavailable";
 					}
-				} else if (m.text) {
-					text = m.text;
 				} else {
-					text = "Message unavailable";
+					text = "";
 				}
 
 				// replyToText: may be stored as encrypted JSON {c,iv,t} or legacy plaintext
-				if (m.replyToText) {
-					try {
-						const parsed = JSON.parse(m.replyToText);
-						if (parsed && parsed.c && parsed.iv && parsed.t) {
-							if (dek) {
-								try {
-									replyToTextPlain = decryptMessage(parsed.c, parsed.iv, parsed.t, dek);
-								} catch (e) {
-									console.error("failed to decrypt replyToText", m.id, e.message);
+				if (!isLocked || isSender) {
+					if (m.replyToText) {
+						try {
+							const parsed = JSON.parse(m.replyToText);
+							if (parsed && parsed.c && parsed.iv && parsed.t) {
+								if (dek) {
+									try {
+										replyToTextPlain = decryptMessage(parsed.c, parsed.iv, parsed.t, dek);
+									} catch (e) {
+										console.error("failed to decrypt replyToText", m.id, e.message);
+										replyToTextPlain = "Message unavailable";
+									}
+								} else {
 									replyToTextPlain = "Message unavailable";
 								}
 							} else {
-								replyToTextPlain = "Message unavailable";
+								replyToTextPlain = m.replyToText;
 							}
-						} else {
+						} catch (e) {
 							replyToTextPlain = m.replyToText;
 						}
-					} catch (e) {
-						replyToTextPlain = m.replyToText;
 					}
 				}
 
 				// forwardedText: same logic
-				if (m.forwardedText) {
-					try {
-						const parsed = JSON.parse(m.forwardedText);
-						if (parsed && parsed.c && parsed.iv && parsed.t) {
-							if (dek) {
-								try {
-									forwardedTextPlain = decryptMessage(parsed.c, parsed.iv, parsed.t, dek);
-								} catch (e) {
-									console.error("failed to decrypt forwardedText", m.id, e.message);
+				if (!isLocked || isSender) {
+					if (m.forwardedText) {
+						try {
+							const parsed = JSON.parse(m.forwardedText);
+							if (parsed && parsed.c && parsed.iv && parsed.t) {
+								if (dek) {
+									try {
+										forwardedTextPlain = decryptMessage(parsed.c, parsed.iv, parsed.t, dek);
+									} catch (e) {
+										console.error("failed to decrypt forwardedText", m.id, e.message);
+										forwardedTextPlain = "Message unavailable";
+									}
+								} else {
 									forwardedTextPlain = "Message unavailable";
 								}
 							} else {
-								forwardedTextPlain = "Message unavailable";
+								forwardedTextPlain = m.forwardedText;
 							}
-						} else {
+						} catch (e) {
 							forwardedTextPlain = m.forwardedText;
 						}
-					} catch (e) {
-						forwardedTextPlain = m.forwardedText;
 					}
 				}
 
 				// time-capsule lock logic: hide real text for non-senders until opened
-				const isLocked = m.isTimeCapsule && !m.openedAt && m.scheduledFor && new Date(m.scheduledFor) > new Date();
-				const isSender = m.senderId === req.userId;
 				const exposedText = (isLocked && !isSender) ? null : text;
 
 				return {
@@ -317,8 +331,8 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
 					isDeleted: m.isDeleted,
 					replyToId: m.replyToId,
 					replyToName: m.replyToName,
-					replyToText: replyToTextPlain,
-					forwardedText: forwardedTextPlain,
+					replyToText: (isLocked && !isSender) ? null : replyToTextPlain,
+					forwardedText: (isLocked && !isSender) ? null : forwardedTextPlain,
 					forwardedFrom: m.forwardedFrom,
 					reactions: m.reactions || [],
 					createdAt: m.createdAt,
@@ -389,9 +403,19 @@ router.post("/", requireAuth, async (req, res) => {
 			scheduledForToStore = scheduledTrunc;
 		}
 
+		if (replyToId) {
+			const target = await prisma.message.findUnique({
+				where: { id: parseIntSafe(replyToId) || 0 },
+				select: { conversationId: true },
+			});
+			if (!target || target.conversationId !== convId) {
+				return res.status(400).json({ error: "Invalid replyToId" });
+			}
+		}
+
 		const dek = generateDEK();
 		const { ciphertext, iv, authTag } = encryptMessage(text.trim(), dek);
-		const keyId = "v1"; // KEK version (change when rotating)
+		const keyId = ACTIVE_KEY_ID;
 		const wrappedDek = wrapDEK(dek, keyId);
 
 		// Optionally encrypt replyToText and forwardedText using same DEK
@@ -421,10 +445,10 @@ router.post("/", requireAuth, async (req, res) => {
 				wrapped_dek: wrappedDek,
 				key_id: keyId,
 				...(replyToId && { replyToId }),
-				...(replyToName && { replyToName }),
+				...(replyToName && typeof replyToName === "string" && { replyToName: replyToName.trim().slice(0, 100) }),
 				...(replyToTextEncrypted && { replyToText: replyToTextEncrypted }),
 				...(forwardedTextEncrypted && { forwardedText: forwardedTextEncrypted }),
-				...(forwardedFrom && { forwardedFrom }),
+				...(forwardedFrom && typeof forwardedFrom === "string" && { forwardedFrom: forwardedFrom.trim().slice(0, 100) }),
 			},
 			include: {
 				sender: {
@@ -497,10 +521,20 @@ router.patch("/:id", requireAuth, async (req, res) => {
 			return res.status(403).json({ error: "Forbidden" });
 		}
 
+		if (message.isDeleted) {
+			return res.status(400).json({ error: "Cannot edit a deleted message" });
+		}
+		if (message.isTimeCapsule && !message.openedAt) {
+			return res.status(400).json({ error: "Cannot edit a sealed time capsule" });
+		}
+		if (message.isOneTime) {
+			return res.status(400).json({ error: "One-time messages cannot be edited" });
+		}
+
 		// Encrypt new text and update encrypted fields
 		const dek = generateDEK();
 		const { ciphertext, iv, authTag } = encryptMessage(text.trim(), dek);
-		const keyId = "v1";
+		const keyId = ACTIVE_KEY_ID;
 		const wrappedDek = wrapDEK(dek, keyId);
 
 		const updated = await prisma.message.update({
@@ -555,7 +589,12 @@ router.delete("/:id", requireAuth, async (req, res) => {
 
 		await prisma.message.update({
 			where: { id: messageId },
-			data: { isDeleted: true },
+			data: {
+				isDeleted: true,
+				...(message.isOneTime
+					? { ciphertext: null, iv: null, auth_tag: null, wrapped_dek: null, text: null }
+					: {}),
+			},
 		});
 
 		return res.json({ success: true });
@@ -589,6 +628,15 @@ router.post("/:id/pin", requireAuth, async (req, res) => {
 
 		if (!member) {
 			return res.status(403).json({ error: "Forbidden" });
+		}
+
+		if (!message.isPinned) {
+			const pinnedCount = await prisma.message.count({
+				where: { conversationId: message.conversationId, isPinned: true, isDeleted: false },
+			});
+			if (pinnedCount >= 20) {
+				return res.status(400).json({ error: "Pin limit reached (20). Unpin something first." });
+			}
 		}
 
 		const updated = await prisma.message.update({

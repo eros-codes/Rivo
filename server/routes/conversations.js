@@ -58,7 +58,14 @@ router.get("/", requireAuth, async (req, res) => {
 					},
 				},
 				messages: {
-					where: { isDeleted: false },
+					where: {
+						isDeleted: false,
+						OR: [
+							{ isTimeCapsule: false },
+							{ openedAt: { not: null } },
+							{ senderId: req.userId },
+						],
+					},
 					orderBy: { createdAt: "desc" },
 					take: 1,
 					select: {
@@ -171,8 +178,26 @@ router.get("/:id", requireAuth, async (req, res) => {
 			},
 		});
 
+		const now = new Date();
+		const sanitized = msgs.map((m) => {
+			const locked =
+				m.isTimeCapsule && !m.openedAt && m.scheduledFor && new Date(m.scheduledFor) > now && m.senderId !== req.userId;
+			if (!locked) return m;
+			return {
+				...m,
+				text: null,
+				ciphertext: null,
+				iv: null,
+				auth_tag: null,
+				wrapped_dek: null,
+				replyToText: null,
+				forwardedText: null,
+				isLocked: true,
+			};
+		});
+
 		// Return ascending order to the client
-		conversation.messages = msgs.reverse();
+		conversation.messages = sanitized.reverse();
 
 		return res.json(conversation);
 	} catch (err) {
@@ -211,16 +236,11 @@ router.delete("/:id/messages", requireAuth, async (req, res) => {
 		try {
 			if (unseenCount > 0) {
 				const recipientContacts = await prisma.contact.findMany({ where: { conversationId, ownerId: { not: req.userId } }, select: { id: true, unreadCount: true } });
-				for (const rc of recipientContacts) {
-					const dec = Math.min(rc.unreadCount || 0, unseenCount);
-					if (dec > 0) {
-						try {
-							await prisma.contact.update({ where: { id: rc.id }, data: { unreadCount: { decrement: dec } } });
-						} catch (e) {
-							/* ignore individual update failures */
-						}
-					}
-				}
+				const updates = recipientContacts
+					.map((rc) => ({ id: rc.id, dec: Math.min(rc.unreadCount || 0, unseenCount) }))
+					.filter((u) => u.dec > 0)
+					.map((u) => prisma.contact.update({ where: { id: u.id }, data: { unreadCount: { decrement: u.dec } } }));
+				if (updates.length) await prisma.$transaction(updates);
 			}
 		} catch (e) {
 			console.error('adjust unread on bulk delete failed', e);
@@ -228,27 +248,19 @@ router.delete("/:id/messages", requireAuth, async (req, res) => {
 
 		// Broadcast deletion events so connected clients can update their UI
 		try {
-			// Notify room first (use helper to avoid relying on global)
-			for (const mid of ids) {
-				emitToRoom(`conversation:${conversationId}`, 'message:deleted', { messageId: mid });
-			}
+			emitToRoom(`conversation:${conversationId}`, 'messages:bulk-deleted', { conversationId, messageIds: ids });
 
-			// Also deliver the delete event directly to connected sockets of recipients
 			const recipientContacts = await prisma.contact.findMany({ where: { conversationId }, select: { ownerId: true } });
 			const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId).filter((id) => id !== req.userId)));
 			for (const uid of recipientUserIds) {
 				try {
-					// Prefer O(1) lookup via exported userSockets map when available
 					const sidSet = (userSockets && userSockets.get(uid)) || new Set();
 					for (const sid of sidSet) {
 						try {
 							const s = getSocketById(sid);
 							if (!s) continue;
-							// Skip sockets already in the room (they already received the room emit)
 							try { if (s.rooms && s.rooms.has(`conversation:${conversationId}`)) continue; } catch (e) { /* ignore */ }
-							for (const mid of ids) {
-								try { s.emit('message:deleted', { messageId: mid }); } catch (e) { /* ignore per-socket errors */ }
-							}
+							try { s.emit('messages:bulk-deleted', { conversationId, messageIds: ids }); } catch (e) { /* ignore per-socket errors */ }
 						} catch (e) { /* ignore per-socket */ }
 					}
 				} catch (e) { /* ignore per-user failures */ }

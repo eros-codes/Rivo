@@ -1,6 +1,7 @@
 import { Router } from "express";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 import push from "../utils/push.js";
 import prisma from "../prisma.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -15,6 +16,8 @@ const router = Router();
 // Consistent bcrypt rounds across codepaths
 const DEFAULT_BCRYPT_ROUNDS = process.env.NODE_ENV === 'production' ? 12 : 10;
 const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS || DEFAULT_BCRYPT_ROUNDS);
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,30}$/;
+const PRIVACY_VALUES = new Set(['everyone', 'contacts', 'nobody']);
 const storage = multer.diskStorage({
 	destination: (req, file, cb) => {
 		const dir = path.join(process.cwd(), "public", "assets", "images", "user-profiles");
@@ -82,29 +85,41 @@ router.get("/me", requireAuth, async (req, res) => {
 // ─── Update current user ──────────────────────────────────────────────────────
 router.patch("/me", requireAuth, async (req, res) => {
 	const { name, username, bio, profilePics, privacyOnline, privacyEmail, privacyProfile } = req.body;
+	const normalizedUsername = typeof username === 'string' ? username.trim() : undefined;
+	const normalizedName = typeof name === 'string' ? name.trim() : undefined;
+	const normalizedBio = typeof bio === 'string' ? bio.trim() : bio;
 
 	// Validate lengths to prevent stored-DoS via large fields
 	if (name !== undefined) {
-		if (typeof name !== 'string' || name.trim().length === 0 || name.trim().length > 100) {
+		if (typeof name !== 'string' || normalizedName.length === 0 || normalizedName.length > 100) {
 			return res.status(400).json({ error: 'Name must be between 1 and 100 characters' });
 		}
 	}
 	if (username !== undefined) {
-		if (typeof username !== 'string' || username.trim().length === 0 || username.trim().length > 30) {
-			return res.status(400).json({ error: 'Username must be between 1 and 30 characters' });
+		if (typeof username !== 'string' || !USERNAME_RE.test(normalizedUsername)) {
+			return res.status(400).json({ error: 'Username must be 3-30 alphanumeric characters or underscore' });
 		}
 	}
 	if (bio !== undefined) {
-		if (typeof bio !== 'string' || bio.length > 300) {
+		if (typeof bio !== 'string' || normalizedBio.length > 300) {
 			return res.status(400).json({ error: 'Bio must be 300 characters or fewer' });
+		}
+	}
+	for (const [key, value] of [
+		['privacyOnline', privacyOnline],
+		['privacyEmail', privacyEmail],
+		['privacyProfile', privacyProfile],
+	]) {
+		if (value !== undefined && !PRIVACY_VALUES.has(value)) {
+			return res.status(400).json({ error: `Invalid value for ${key}` });
 		}
 	}
 
 	try {
-		if (username) {
+		if (normalizedUsername) {
 			const existing = await prisma.user.findFirst({
 				where: {
-					username,
+					username: normalizedUsername,
 					NOT: { id: req.userId },
 				},
 			});
@@ -138,9 +153,9 @@ router.patch("/me", requireAuth, async (req, res) => {
 			}
 
 		const dataToUpdate = {
-			...(name && { name }),
-			...(username && { username }),
-			...(bio !== undefined && { bio }),
+			...(normalizedName !== undefined && { name: normalizedName }),
+			...(normalizedUsername !== undefined && { username: normalizedUsername }),
+			...(bio !== undefined && { bio: normalizedBio }),
 			...(privacyOnline !== undefined && { privacyOnline }),
 			...(privacyEmail !== undefined && { privacyEmail }),
 			...(privacyProfile !== undefined && { privacyProfile }),
@@ -208,6 +223,7 @@ router.get("/search", requireAuth, async (req, res) => {
 					contains: q.trim(),
 					mode: "insensitive",
 				},
+				isDeleted: false,
 				NOT: { id: req.userId },
 			},
 			select: {
@@ -322,9 +338,16 @@ router.patch("/me/password", requireAuth, async (req, res) => {
 		if (!match) return res.status(401).json({ error: "Wrong password" });
 
 		const hashed = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-		await prisma.user.update({ where: { id: req.userId }, data: { passwordHash: hashed, passwordChangedAt: new Date() } });
+		const updated = await prisma.user.update({ where: { id: req.userId }, data: { passwordHash: hashed, passwordChangedAt: new Date() } });
 
-		// Password changed — tokens issued before `passwordChangedAt` will be rejected.
+		const token = jwt.sign({ userId: updated.id }, process.env.JWT_SECRET, { expiresIn: "7d" });
+		res.cookie("token", token, {
+			httpOnly: true,
+			secure: process.env.NODE_ENV === "production",
+			sameSite: "lax",
+			maxAge: 7 * 24 * 60 * 60 * 1000,
+		});
+
 		return res.json({ success: true });
 	} catch (err) {
 		console.error(err);
@@ -442,6 +465,22 @@ router.post("/me/avatar", requireAuth, upload.single("avatar"), async (req, res)
 				}
 			} catch (e) {
 				/* ignore cleanup failures */
+			}
+
+			try {
+				const dir = path.join(process.cwd(), 'public', 'assets', 'images', 'user-profiles');
+				const now = Date.now();
+				const files = await fs.promises.readdir(dir);
+				for (const f of files) {
+					if (!f.startsWith(`${req.userId}-`) && !f.includes('.tmp-')) continue;
+					const full = path.join(dir, f);
+					const st = await fs.promises.stat(full).catch(() => null);
+					if (st && now - st.mtimeMs > 60 * 60 * 1000) {
+						await fs.promises.unlink(full).catch(() => {});
+					}
+				}
+			} catch (e) {
+				/* best-effort cleanup */
 			}
 
 			return res.json({ url });

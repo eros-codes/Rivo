@@ -16,14 +16,14 @@ router.get("/", requireAuth, async (req, res) => {
 		let limit = parseInt(req.query.limit, 10) || DEFAULT_LIMIT;
 		if (limit < 1) limit = 1;
 		if (limit > MAX_FETCH_LIMIT) limit = MAX_FETCH_LIMIT;
-		const beforeId = req.query.beforeId ? parseIntSafe(req.query.beforeId) : null;
-
-		const whereClause = { ownerId: req.userId };
-		if (beforeId) whereClause.id = { lt: beforeId };
+		// Cursor-based paging on id is not compatible with this multi-column sort order,
+		// so use offset-based pagination for stable contact pagination.
+		const skip = Math.max(parseInt(req.query.skip, 10) || 0, 0);
 
 		const contacts = await prisma.contact.findMany({
-			where: whereClause,
+			where: { ownerId: req.userId },
 			take: limit,
+			skip,
 			include: {
 				contact: {
 					select: {
@@ -124,8 +124,13 @@ router.get("/", requireAuth, async (req, res) => {
 				} else if (m.ciphertext && m.wrapped_dek) {
 					// Non-capsule or sender's own message: attempt decryption
 					try {
-						const dek = unwrapDEK(m.wrapped_dek, m.key_id || "v1");
-						m.text = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
+						const keyId = m.key_id || process.env.ACTIVE_KEY_ID || null;
+						if (keyId) {
+							const dek = unwrapDEK(m.wrapped_dek, keyId);
+							m.text = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
+						} else {
+							m.text = "Message unavailable";
+						}
 					} catch (e) {
 						m.text = "Message unavailable";
 					}
@@ -161,9 +166,10 @@ router.get("/", requireAuth, async (req, res) => {
 			}
 		}
 
-		// Auto-create saved messages for existing users
-		const hasSaved = contacts.some((c) => c.isSaved);
-		if (!hasSaved) {
+		// Auto-create saved messages for existing users, but check the full contact set
+		// rather than only the current page so pagination cannot create duplicates.
+		const savedCount = await prisma.contact.count({ where: { ownerId: req.userId, isSaved: true } });
+		if (savedCount === 0) {
 			await prisma.$transaction(async (tx) => {
 				const savedConv = await tx.conversation.create({
 					data: { members: { create: [{ userId: req.userId }] } },
@@ -240,6 +246,10 @@ router.post("/", requireAuth, async (req, res) => {
 
 		if (targetUser.id === req.userId) {
 			return res.status(400).json({ error: "You cannot add yourself" });
+		}
+
+		if (targetUser.isDeleted) {
+			return res.status(404).json({ error: "User not found" });
 		}
 
 		const existing = await prisma.contact.findFirst({
@@ -357,6 +367,20 @@ router.patch("/:id", requireAuth, async (req, res) => {
 	// Sanitize nickname to avoid stored-DoS via large nicknames
 	const safeNickname = typeof nickname === 'string' ? nickname.trim().slice(0, 100) : undefined;
 
+	for (const [key, value] of [
+		['isPinned', isPinned],
+		['isMuted', isMuted],
+		['isBlocked', isBlocked],
+		['isArchived', isArchived],
+	]) {
+		if (value !== undefined && typeof value !== 'boolean') {
+			return res.status(400).json({ error: `${key} must be a boolean` });
+		}
+	}
+	if (pinOrder !== undefined && (!Number.isInteger(pinOrder) || pinOrder < 0 || pinOrder > 9999)) {
+		return res.status(400).json({ error: 'pinOrder must be an integer between 0 and 9999' });
+	}
+
 	try {
 		const contact = await prisma.contact.findFirst({
 			where: {
@@ -405,13 +429,10 @@ router.delete("/:id", requireAuth, async (req, res) => {
 			return res.status(404).json({ error: "Contact not found" });
 		}
 
-		// Delete the contact and any reciprocal contact entries for the
-		// other user. Use a transaction to avoid partial deletes.
+		// Only remove this user's own contact record. The reciprocal record
+		// belongs to the other user and should not be deleted unilaterally.
 		await prisma.$transaction(async (tx) => {
 			await tx.contact.delete({ where: { id: contactId } });
-			await tx.contact.deleteMany({
-				where: { ownerId: contact.contactId, contactId: req.userId },
-			});
 
 			// If the conversation no longer has contacts, remove it inside the
 			// same transaction to avoid races where concurrent deletes both

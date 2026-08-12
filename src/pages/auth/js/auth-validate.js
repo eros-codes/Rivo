@@ -7,3 +7,8 @@ export function isValidUsername(username) {
 	// surprise validation failures when editing an existing longer username.
 	return /^[a-zA-Z0-9_]{3,30}$/.test(username);
 }
+
+export function isValidPassword(password) {
+	// Keep client-side validation aligned with the server.
+	return typeof password === "string" && password.length >= 8;
+}

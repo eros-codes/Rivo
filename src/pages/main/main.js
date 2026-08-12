@@ -1,3 +1,4 @@
+import "emoji-picker-element";
 import {
 	updateContact as apiUpdateContact,
 	logout as apiLogout,
@@ -95,11 +96,13 @@ import { initSearch, runSearch } from "./js/search.js";
 import { initEditProfile, openEditProfile } from "./js/edit-profile.js";
 import { initSettings, openSettings, closeSettings } from "./js/settings.js";
 import { initAddContact } from "./js/add-contact.js";
+import { initAllContacts, setAllContacts, CONTACTS_PREVIEW_COUNT } from "./js/all-contacts.js";
 import {
 	initSocket,
 	emitTypingStart,
 	emitTypingStop,
 	getSocket,
+	setActiveConversation,
 	emitReaction,
 	setOnetimeDeletedHandler,
 	setCapsuleOpenedHandler,
@@ -115,52 +118,42 @@ import {
 	refreshUserAvatars,
 } from "../../utils/dom.js";
 import { getCurrentUser } from "./js/currentUser.js";
-const _notifQueue = new Set();
-// expose to other modules (e.g., chat) for notification deduplication
-try {
-	window._notifQueue = _notifQueue;
-} catch (e) {
-	/* ignore */
-}
+import { copyIcon, deleteIcon, pinIcon, replyIcon, archiveIcon, savedIconSvg } from "./js/icons.js";
 
 document.addEventListener("DOMContentLoaded", async function () {
-	// Initialize client-side Sentry (loaded from CDN if `window.__SENTRY_DSN__` set)
+	// Initialize client-side Sentry when a server-provided DSN is configured.
 	(function initClientSentry() {
 		try {
-			const dsn =
-				window.__SENTRY_DSN__ || localStorage.getItem("sentryDsn");
-			if (!dsn) return;
+			const dsn = window.__SENTRY_DSN__;
+			if (!dsn || typeof dsn !== "string") return;
 			const s = document.createElement("script");
-			s.src = "/js/bundle.min.js";
+			s.src = "/js/sentry.min.js";
 			s.crossOrigin = "anonymous";
 			s.onload = () => {
 				try {
-					if (window.Sentry) {
-						window.Sentry.init({ dsn, tracesSampleRate: 0.0 });
-						window.Sentry.setTag("app", "rivo-client");
-					}
+					if (!window.Sentry) return;
+					window.Sentry.init({ dsn, tracesSampleRate: 0.0 });
+					window.Sentry.setTag("app", "rivo-client");
+					window.addEventListener("error", (ev) => {
+						try {
+							window.Sentry.captureException(ev.error || ev);
+						} catch (e) {
+							void e;
+						}
+					});
+					window.addEventListener("unhandledrejection", (ev) => {
+						try {
+							window.Sentry.captureException(ev.reason || ev);
+						} catch (e) {
+							void e;
+						}
+					});
 				} catch (e) {
 					void e;
 				}
 			};
+			s.onerror = () => console.warn("Sentry failed to load");
 			document.head.appendChild(s);
-
-			window.addEventListener("error", (ev) => {
-				try {
-					if (window.Sentry)
-						window.Sentry.captureException(ev.error || ev);
-				} catch (e) {
-					void e;
-				}
-			});
-			window.addEventListener("unhandledrejection", (ev) => {
-				try {
-					if (window.Sentry)
-						window.Sentry.captureException(ev.reason || ev);
-				} catch (e) {
-					void e;
-				}
-			});
 		} catch (e) {
 			void e;
 		}
@@ -211,10 +204,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 				// join the new conversation room so server considers us present
 				try {
 					const sock = getSocket();
-					if (sock && friend.conversationId)
+					if (sock && friend.conversationId) {
+						setActiveConversation(friend.conversationId);
 						sock.emit("conversation:join", {
 							conversationId: friend.conversationId,
 						});
+					}
 				} catch (e) {
 					/* ignore */
 				}
@@ -613,18 +608,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}
 		} catch (err) {
 			if (deleteAccountError)
-				deleteAccountError.textContent = "Connection error.";
+				deleteAccountError.textContent = err?.message || "Connection error.";
 			if (deleteAccountConfirm) deleteAccountConfirm.disabled = false;
 		}
 	});
-
-	// ─── SVG icons ────────────────────────────────────────────────────────────
-	const copyIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></g></svg>`;
-	const deleteIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM8 9h8v10H8zm7.5-5l-1-1h-5l-1 1H5v2h14V4z"/></svg>`;
-	const pinIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path fill="currentColor" d="M15.744 4.276c1.221-2.442 4.476-2.97 6.406-1.04l6.614 6.614c1.93 1.93 1.402 5.186-1.04 6.406l-6.35 3.176a1.5 1.5 0 0 0-.753.867l-1.66 4.983a2 2 0 0 1-3.312.782l-4.149-4.15l-6.086 6.087H4v-1.415l6.086-6.085l-4.149-4.15a2 2 0 0 1 .782-3.31l4.982-1.662a1.5 1.5 0 0 0 .868-.752z"/></svg>`;
-	const replyIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M10 9V5l-7 7l7 7v-4.1c5 0 8.5 1.6 11 5.1c-1-5-4-10-11-10"/></svg>`;
-	const archiveIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M20.54 5.23L19.13 3.81A2 2 0 0 0 17.72 3H6.28A2 2 0 0 0 4.87 3.81L3.46 5.23A2 2 0 0 0 3 6.5V19a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6.5a2 2 0 0 0-.46-1.27zM12 17l-5-5h3V9h4v3h3z"/></svg>`;
-	const savedIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24"><path fill="currentColor" d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3l7 3V5c0-1.1-.9-2-2-2z"/></svg>`;
 
 	// ─── Empty state element ──────────────────────────────────────────────────
 	const emptyStateEl = createEmptyStateEl();
@@ -758,6 +745,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 		contactsContainer,
 		deleteIcon,
 		onContactAction: _onContactAction,
+	});
+
+	initAllContacts({
+		onOpen: (userId) => {
+			const card = contactsContainer.querySelector(`[data-wrapper-user-id="${userId}"]`) || document.querySelector(`[data-wrapper-user-id="${userId}"]`);
+			if (card) card.click();
+		},
 	});
 
 	initCardContextMenu(activeChatsContainer, (action, userId) => {
@@ -939,6 +933,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 			const _sock = getSocket();
 			if (_sock && normalized.conversationId) {
+				setActiveConversation(normalized.conversationId);
 				_sock.emit("conversation:join", {
 					conversationId: normalized.conversationId,
 				});
@@ -1046,11 +1041,11 @@ document.addEventListener("DOMContentLoaded", async function () {
 		}
 	}
 
-	initSocket(
+	initSocket({
 		// new message
-		(msg) => receiveMessage(msg),
+		onMessage: (msg) => receiveMessage(msg),
 		// edit
-		(data) => {
+		onMessageEdited: (data) => {
 			// Locate the message across all conversations to keep in-memory state consistent
 			let foundUserId = null;
 			let foundIndex = -1;
@@ -1098,7 +1093,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}
 		},
 		// delete
-		(data) => {
+		onMessageDeleted: (data) => {
 			// Find which conversation contains this messageId
 			let foundUserId = null;
 			let foundIndex = -1;
@@ -1181,8 +1176,59 @@ document.addEventListener("DOMContentLoaded", async function () {
 				sortContacts();
 			}
 		},
+		// bulk delete
+		onMessagesBulkDeleted: (data) => {
+			const ids = Array.isArray(data?.messageIds)
+				? data.messageIds.map((id) => Number(id)).filter(Number.isFinite)
+				: [];
+			if (!ids.length) return;
+			const idSet = new Set(ids);
+			const changedUserIds = [];
+			for (const [uid, msgs] of Object.entries(messages)) {
+				if (!Array.isArray(msgs)) continue;
+				const beforeLen = msgs.length;
+				const filtered = msgs.filter((m) => !idSet.has(m.id));
+				if (filtered.length !== beforeLen) {
+					messages[uid] = filtered;
+					changedUserIds.push(Number(uid));
+				}
+			}
+			if (!changedUserIds.length) return;
+			for (const uid of changedUserIds) {
+				if (state.contactUserId === uid) {
+					injectMessages(uid);
+					try { updatePinnedMessage(); } catch (e) {}
+				}
+				const friend = contacts.find((c) => c.id === uid);
+				if (!friend) continue;
+				const userMsgs = messages[uid] || [];
+				if (userMsgs.length > 0) {
+					const lastMsg = userMsgs.at(-1);
+					friend.lastMessage =
+						lastMsg &&
+						lastMsg.isTimeCapsule &&
+						lastMsg.isLocked &&
+						!lastMsg.user
+							? ""
+							: lastMsg.text || "";
+					friend.lastMessageTime = lastMsg.time;
+					friend.lastMessageDate = lastMsg.date || "";
+					friend.lastMessageTs = lastMsg.createdAt;
+					friend.lastMessageSeen = lastMsg.user ? lastMsg.isSeen !== false : true;
+				} else {
+					friend.lastMessage = "";
+					friend.lastMessageTime = "";
+					friend.lastMessageDate = "";
+					friend.lastMessageTs = 0;
+					friend.lastMessageSeen = true;
+				}
+				refreshCard(friend);
+			}
+			sortActiveChats();
+			sortContacts();
+		},
 		// online
-		(userId) => {
+		onUserOnline: (userId) => {
 			const contact = contacts.find((c) => c.contactId === userId);
 			if (!contact) return;
 			contact.isOnline = true;
@@ -1193,7 +1239,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			refreshCard(contact);
 		},
 		// offline
-		(userId, lastSeen) => {
+		onUserOffline: (userId, lastSeen) => {
 			const contact = contacts.find((c) => c.contactId === userId);
 			if (!contact) return;
 			if (contact.isSaved) return; // saved messages don't show online status
@@ -1205,7 +1251,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			refreshCard(contact);
 		},
 		// payload: { conversationId, messageIds, seenBy }
-		(payload) => {
+		onMessageSeen: (payload) => {
 			handleMessagesSeen(
 				payload.conversationId,
 				payload.messageIds,
@@ -1213,19 +1259,19 @@ document.addEventListener("DOMContentLoaded", async function () {
 			);
 		},
 		// start typing
-		(userId) => {
+		onTypingStart: (userId) => {
 			const contact = contacts.find((c) => c.contactId === userId);
 			if (!contact || state.contactUserId !== contact.id) return;
 			chatTypingStatus.textContent = "typing...";
 		},
 		// stop typing
-		(userId) => {
+		onTypingStop: (userId) => {
 			const contact = contacts.find((c) => c.contactId === userId);
 			if (!contact || state.contactUserId !== contact.id) return;
 			chatTypingStatus.textContent = "";
 		},
 		// message pinned
-		({ messageId, isPinned }) => {
+		onMessagePinned: ({ messageId, isPinned }) => {
 			for (const [uid, msgs] of Object.entries(messages)) {
 				if (!Array.isArray(msgs)) continue;
 				const idx = msgs.findIndex((m) => m.id === messageId);
@@ -1239,9 +1285,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 				}
 			}
 		},
-		_handleUserUpdated,
+		onUserUpdated: _handleUserUpdated,
 		// contact removed handler
-		(payload) => {
+		onContactRemoved: (payload) => {
 			try {
 				const partnerUserId =
 					payload?.contactUserId ||
@@ -1275,7 +1321,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}
 		},
 		// onReactionUpdated
-		({ messageId, reactions, actorId, emoji, action }) => {
+		onReactionUpdated: ({ messageId, reactions, actorId, emoji, action }) => {
 			const currentUser = getCurrentUser();
 			const currentUserId = currentUser?.id || null;
 
@@ -1366,7 +1412,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 				// Protect notification path from crashing the handler (errors suppressed)
 			}
 		},
-	);
+	});
 	// Wire one-time-deleted events from socket to chat handler
 	try {
 		setOnetimeDeletedHandler(handleOnetimeDeleted);
@@ -1388,6 +1434,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 						(c) => c.id === state.contactUserId,
 					);
 					if (friend && friend.conversationId) {
+						setActiveConversation(friend.conversationId);
 						sock.emit("conversation:join", {
 							conversationId: friend.conversationId,
 						});
@@ -1680,6 +1727,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 			.forEach((n) => n.remove());
 		activeChatsContainer.removeAttribute("aria-busy");
 	}
+	// مخاطبینی که در بخش پایین (Contacts) قرار می‌گیرند، برای صفحه‌بندی جدا می‌شوند
+	const plainContacts = [];
+	let renderedPlainCount = 0;
+
 	contacts.forEach((contact) => {
 		if (contact.isArchived) return;
 		if (contact.isSaved) {
@@ -1696,6 +1747,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 		) {
 			activeChatsContainer.appendChild(createActiveChatCard(contact));
 		} else {
+			plainContacts.push(contact);
+			// فقط ۸ تای اول در صفحه‌ی اصلی؛ بقیه پشت «Show all contacts»
+			if (renderedPlainCount >= CONTACTS_PREVIEW_COUNT) return;
+			renderedPlainCount += 1;
 			contactsContainer.appendChild(
 				createContactCard(
 					{ ...contact, hasMessages: !!contact.lastMessage },
@@ -1704,6 +1759,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			);
 		}
 	});
+	setAllContacts(plainContacts);
 	updateTotalUnreadCount();
 	sortActiveChats();
 	sortContacts();
@@ -1766,26 +1822,23 @@ document.addEventListener("DOMContentLoaded", async function () {
 	if (closeChatBtn) {
 		closeChatBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
-			chatEl.textContent = "";
-			const friend = contacts.find((c) => c.id === state.contactUserId);
-			if (friend) {
-				if (friend.isSaved) {
-					closeChat();
-					return;
-				}
-				if (
-					!friend.isPinned &&
-					friend.unreadCount === 0 &&
-					friend.lastMessageSeen !== false
-				) {
-					moveToContacts(friend);
-					sortActiveChats();
-					sortContacts();
-				}
-			}
-			closeChat();
-		});
-	}
+            const friend = contacts.find((c) => c.id === state.contactUserId);
+            if (friend) {
+                if (friend.isSaved) {
+                    closeChat();
+                    return;
+                }
+                if (
+                    !friend.isPinned &&
+                    friend.unreadCount === 0 &&
+                    friend.lastMessageSeen !== false
+                ) {
+                    moveToContacts(friend);
+                    sortActiveChats();
+                    sortContacts();
+                }
+            }
+            chatEl.textContent = "";
 
 	// ─── Open chat — active-chats ─────────────────────────────────────────────
 	if (activeChatsContainer) {
@@ -1828,6 +1881,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 			// join the new conversation room so server considers us present
 			try {
 				const sock = getSocket();
+				if (sock && friend.conversationId)
+					setActiveConversation(friend.conversationId);
 				if (sock && friend.conversationId)
 					sock.emit("conversation:join", {
 						conversationId: friend.conversationId,
@@ -1963,6 +2018,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 			// join the new conversation room so server considers us present
 			try {
 				const sock = getSocket();
+				if (sock && friend.conversationId)
+					setActiveConversation(friend.conversationId);
 				if (sock && friend.conversationId)
 					sock.emit("conversation:join", {
 						conversationId: friend.conversationId,
@@ -3355,26 +3412,28 @@ document.addEventListener("DOMContentLoaded", async function () {
 	}
 
 	// ─── Archived ──────────────────────────────────────────────────
-	async function _archiveContact(userId) {
+		async function _archiveContact(userId) {
 		const friend = contacts.find((c) => c.id === userId);
 		if (!friend) return;
+		const uid = Number(userId);
+		if (!Number.isFinite(uid)) return;
 
 		try {
 			await apiUpdateContact(friend.id, { isArchived: true });
 			friend.isArchived = true;
 
-			// حذف از DOM
 			const card =
 				activeChatsContainer.querySelector(
-					`[data-wrapper-user-id="${userId}"]`,
+					`[data-wrapper-user-id="${uid}"]`,
 				) ||
 				activeChatsContainer
-					.querySelector(`[data-user-id="${userId}"]`)
+					.querySelector(`[data-user-id="${uid}"]`)
 					?.closest(".active-chat-wrapper") ||
-				contactsContainer.querySelector(`[data-user-id="${userId}"]`);
+				contactsContainer.querySelector(`[data-user-id="${uid}"]`);
 			card?.remove();
 
 			updateContactsEmptyState();
+			updateTotalUnreadCount();
 			showToast("Chat archived", archiveIcon);
 		} catch (err) {
 			console.error("Failed to archive contact", err);
@@ -3408,6 +3467,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 			}
 
 			updateContactsEmptyState();
+			updateTotalUnreadCount();
 			showToast("Chat unarchived", archiveIcon);
 		} catch (err) {
 			console.error("Failed to unarchive contact", err);
@@ -3416,10 +3476,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 	}
 
 	function _openArchivedDialog() {
-		if (!archivedDialog) return;
+		if (!archivedDialog || !archivedDialogList) return;
 
-		// clear list via DOM APIs to avoid direct innerHTML usage
-		while (archivedDialogList && archivedDialogList.firstChild) {
+		while (archivedDialogList.firstChild) {
 			archivedDialogList.removeChild(archivedDialogList.firstChild);
 		}
 
@@ -3436,8 +3495,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 					createArchivedCard(
 						contact,
 						async (id) => {
-							// Unarchive
-							_unarchiveContact(id);
+							await _unarchiveContact(id);
 							const card = archivedDialogList.querySelector(
 								`[data-user-id="${id}"]`,
 							);
@@ -3454,7 +3512,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 							}
 						},
 						async (id) => {
-							// Open chat
 							archivedDialog.close();
 							closeSettings();
 							const friend = contacts.find((c) => c.id === id);
@@ -3468,19 +3525,17 @@ document.addEventListener("DOMContentLoaded", async function () {
 								isOnline: friend.isOnline,
 							});
 							try {
-								const chatProfileWrapper =
-									document.querySelector(".chat-profile");
-								if (chatProfileWrapper)
-									chatProfileWrapper.setAttribute(
-										"data-user-id",
-										String(friend.id),
-									);
+								const chatProfileWrapper = document.querySelector(".chat-profile");
+								if (chatProfileWrapper) chatProfileWrapper.setAttribute("data-user-id", String(friend.id));
 							} catch (e) {
 								/* ignore */
 							}
-							chatName.textContent =
-								friend.nickname || friend.name;
-							try { await openChat(true); } catch (e) { /* ignore */ }
+							chatName.textContent = friend.nickname || friend.name;
+							try {
+								await openChat(true);
+							} catch (e) {
+								/* ignore */
+							}
 
 							if (friend.isBlocked) {
 								messageContainer.style.display = "none";
@@ -3503,6 +3558,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 		archivedDialog.showModal();
 	}
+
 
 	if (archivedDialogClose) {
 		archivedDialogClose.addEventListener("click", () => {

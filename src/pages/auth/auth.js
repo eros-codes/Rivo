@@ -1,12 +1,12 @@
 import { showForm, showError, clearError } from "./js/auth-ui.js";
-import { isValidEmail, isValidUsername } from "./js/auth-validate.js";
+import { isValidEmail, isValidUsername, isValidPassword } from "./js/auth-validate.js";
 import {
 	sendCode,
 	startResendTimer,
 	clearResendTimer,
 	clearCodeInputs,
 } from "./js/auth-timer.js";
-import { loginUser, registerUser, resetPassword } from "./js/auth-api.js";
+import { loginUser, registerUser, requestPasswordReset, resetPassword } from "./js/auth-api.js";
 
 const theme = localStorage.getItem("rivo-theme") || "light";
 if (theme === "dark") document.body.classList.add("dark-mode");
@@ -112,7 +112,7 @@ document.addEventListener("DOMContentLoaded", function () {
 				clearError(loginUsername);
 			}
 
-			if (!loginPassword.value || loginPassword.value.length < 8) {
+			if (!isValidPassword(loginPassword.value)) {
 				showError(
 					loginPassword,
 					"Password must be at least 8 characters.",
@@ -123,15 +123,6 @@ document.addEventListener("DOMContentLoaded", function () {
 			}
 
 			if (!valid) return;
-
-			if (rememberUser?.checked) {
-				localStorage.setItem(
-					"rememberedUser",
-					loginUsername.value.trim(),
-				);
-			} else {
-				localStorage.removeItem("rememberedUser");
-			}
 
 			try {
 				const { ok, data } = await loginUser(
@@ -147,6 +138,13 @@ document.addEventListener("DOMContentLoaded", function () {
 					return;
 				}
 
+				// Store the username only after authentication succeeds.
+				if (rememberUser?.checked) {
+					localStorage.setItem("rememberedUser", loginUsername.value.trim());
+				} else {
+					localStorage.removeItem("rememberedUser");
+				}
+
 				// Server sets HttpOnly cookie for auth; persist only non-sensitive user info.
 				// Store a minimal, sanitized user object in localStorage (no tokens)
 				const safeUser = {
@@ -158,8 +156,6 @@ document.addEventListener("DOMContentLoaded", function () {
 					isSaved: data.user?.isSaved || false,
 					isOnline: data.user?.isOnline || false,
 					conversationId: data.user?.conversationId || null,
-					bio: data.user?.bio || "",
-					email: data.user?.email || "",
 				};
 				localStorage.setItem("user", JSON.stringify(safeUser));
 				// Redirect to chat app root
@@ -385,7 +381,7 @@ document.addEventListener("DOMContentLoaded", function () {
 			e.preventDefault();
 			let valid = true;
 
-			if (!passwordInput.value || passwordInput.value.length < 8) {
+			if (!isValidPassword(passwordInput.value)) {
 				showError(
 					passwordInput,
 					"Password must be at least 8 characters.",
@@ -472,17 +468,19 @@ document.addEventListener("DOMContentLoaded", function () {
 			forgotPass = true;
 			clearCodeInputs(verifyForm);
 			try {
-				await sendCode(val);
-				_verificationEmail = val;
+				const { ok, data } = await requestPasswordReset(val);
+				if (!ok) {
+					showError(forgotInput, data.error || 'Failed to request password reset');
+					setFormControlsDisabled(forgotForm, false);
+					return;
+				}
+				showForm(allForms, loginForm);
+				showError(loginUsername, 'If the account exists, check your email for a password reset link.');
 			} catch (err) {
-				showError(forgotInput, err.message || 'Failed to send code');
+				showError(forgotInput, err.message || 'Failed to request password reset');
 				setFormControlsDisabled(forgotForm, false);
 				return;
 			}
-			startResendTimer(codeResendTimer);
-			showForm(allForms, verifyForm);
-			const firstDigit = verifyForm?.querySelector(".code-digit");
-			if (firstDigit) firstDigit.focus();
 		});
 
 		if (backToLogin2) {

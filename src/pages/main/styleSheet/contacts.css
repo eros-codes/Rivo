@@ -214,6 +214,73 @@ pointer-events: none;
 		padding: 2rem 0.5rem;
 	}
 }
+
+.contacts-show-more {
+	display: block;
+	width: 100%;
+	padding: 10px;
+	margin-top: 6px;
+	border: none;
+	border-radius: 10px;
+	background: transparent;
+	color: inherit;
+	opacity: 0.75;
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+	transition: background 0.2s ease, opacity 0.2s ease;
+}
+
+.contacts-show-more:hover {
+	background: rgba(127, 127, 127, 0.12);
+	opacity: 1;
+}
+
+.all-contacts-section {
+	display: none;
+	flex-direction: column;
+	gap: 10px;
+	height: 100%;
+	overflow: hidden;
+}
+
+.all-contacts-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.all-contacts-back {
+	display: inline-flex;
+	padding: 6px;
+	border: none;
+	border-radius: 8px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+}
+
+.all-contacts-search {
+	width: 100%;
+	padding: 10px 12px;
+	border: 1px solid rgba(127, 127, 127, 0.25);
+	border-radius: 10px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-size: 14px;
+}
+
+.all-contacts-list {
+	flex: 1;
+	overflow-y: auto;
+}
+
+.all-contacts-empty {
+	text-align: center;
+	opacity: 0.6;
+	font-size: 13px;
+}
 @media all and (max-width: 600px) {
 	.contacts-container {
 		grid-template-columns: repeat(2, minmax(0, 1fr));

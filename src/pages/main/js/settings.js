@@ -368,6 +368,36 @@ export function initSettings(dom, currentUser) {
 				});
 			});
 
+		const forgotBtn = document.getElementById("settings-forgot-password");
+		if (forgotBtn) {
+			forgotBtn.addEventListener("click", async () => {
+				const feedback = document.getElementById("settings-change-password-feedback");
+				forgotBtn.disabled = true;
+				try {
+					const me = await getCurrentUser();
+					await fetch("/api/auth/request-password-reset", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						credentials: "include",
+						body: JSON.stringify({ identifier: me.email }),
+					});
+					if (feedback) {
+						feedback.className = "settings-feedback settings-feedback--ok";
+						feedback.textContent = "If that email is registered, a reset link is on its way.";
+					}
+				} catch (e) {
+					if (feedback) {
+						feedback.className = "settings-feedback settings-feedback--error";
+						feedback.textContent = "Could not send the reset link. Try again.";
+					}
+				} finally {
+					setTimeout(() => {
+						forgotBtn.disabled = false;
+					}, 30000);
+				}
+			});
+		}
+
 		// submit handler
 		const submitBtn = _dom.settingsChangePasswordSubmit;
 		if (submitBtn) {
@@ -407,7 +437,7 @@ export function initSettings(dom, currentUser) {
 							// ignore logout errors, continue to clear local state
 						}
 						localStorage.removeItem("user");
-						window.location.href = "../auth/auth.html";
+						window.location.href = "/auth/auth.html";
 					} else {
 						showToast(res?.error || "Failed to change password");
 					}
@@ -516,3 +546,4 @@ export function closeSettings() {
         }, { once: true });
     }
 }
+

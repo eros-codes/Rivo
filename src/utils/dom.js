@@ -17,8 +17,9 @@ export function safeSrc(url) {
     return fallback;
   }
 
-  // allow data URIs and absolute/site-relative URLs
-  if (u.startsWith("data:image/")) return u;
+  // allow only safe image data URIs; SVG data URIs are intentionally rejected
+  // because they can contain scripts and are unsafe if ever rendered outside <img>.
+  if (/^data:image\/(png|jpe?g|gif|webp);/i.test(u)) return u;
   if (u.startsWith("http://") || u.startsWith("https://") || u.startsWith("/")) return u;
   return fallback;
 }
@@ -64,12 +65,14 @@ export function observeThemeChanges() {
   }
 }
 
-export function createAvatarElement({ name, nickname, profilePics, className = "contact-profile", isOnline = false } = {}) {
+export function createAvatarElement({ name, nickname, profilePics, className = "contact-profile", isOnline = false, isDeleted = false } = {}) {
   if (typeof document === "undefined") return null;
 
   const displayName = (nickname || name || "").trim();
   const initial = displayName ? displayName[0].toUpperCase() : "?";
-  const isDeletedAccount = displayName && displayName.toLowerCase() === 'deleted account';
+  // Treat the server-provided deletion flag as authoritative; relying on the
+  // visible display name would let anyone spoof the deleted-account styling.
+  const isDeletedAccount = isDeleted === true;
 
   // Determine whether a real profile picture was provided. Treat known
   // placeholder filenames (profile-light/profile-dark) as "no picture"
@@ -141,6 +144,7 @@ export function refreshUserAvatars(user) {
           // Let mountAvatar pick the internal element; className left generic
           className: "contact-profile",
           isOnline: !!user.isOnline,
+          isDeleted: !!user.isDeleted,
         });
       } catch (e) {
         /* ignore per-element failures */
@@ -158,6 +162,7 @@ export function refreshUserAvatars(user) {
           profilePics,
           className: img.className || "contact-profile",
           isOnline: !!user.isOnline,
+          isDeleted: !!user.isDeleted,
         });
       } catch (e) {
         /* ignore */
@@ -215,6 +220,7 @@ export function refreshUserAvatars(user) {
             profilePics,
             className: el.className || "contact-profile",
             isOnline: !!user.isOnline,
+            isDeleted: !!user.isDeleted,
           });
         } catch (e) {
           /* ignore per-element failures */

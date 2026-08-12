@@ -19,7 +19,7 @@ export function createArchivedCard(contact, onUnarchive, onOpen) {
     const left = document.createElement("div");
     left.className = "archived-card-left";
 
-    const avatarEl = createAvatarElement({ name, nickname, profilePics, className: "archived-card-avatar", isOnline });
+    const avatarEl = createAvatarElement({ name, nickname, profilePics, className: "archived-card-avatar", isOnline, isDeleted: !!contact.isDeleted });
 
     const nameEl = document.createElement("span");
     nameEl.className = "archived-card-name";

@@ -1,3 +1,8 @@
+import { gsap } from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
+
+gsap.registerPlugin(ScrollTrigger);
+
 /* ── Custom Cursor ──────────────────────────────────────────────────────── */
 const cursor = document.getElementById("cursor");
 const cursorRing = document.getElementById("cursorRing");

@@ -20,6 +20,7 @@ model User {
   privacyEmail   String @default("everyone")
   privacyProfile String @default("everyone")
   passwordChangedAt DateTime?
+  isDeleted      Boolean  @default(false)
   passwordHash String
   createdAt    DateTime  @default(now())
 
@@ -29,6 +30,34 @@ model User {
   pushSubscriptions PushSubscription[]
   conversations  ConversationMember[]
   reactions      MessageReaction[]
+  passwordResets PasswordResetToken[]
+}
+
+model PasswordResetToken {
+  id        Int      @id @default(autoincrement())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model EmailVerification {
+  id         Int       @id @default(autoincrement())
+  email      String
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  verifiedAt DateTime?
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([email])
+  @@index([expiresAt])
 }
 
 model Contact {

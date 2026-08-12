@@ -58,6 +58,7 @@ export async function safeFetch(url, opts = {}) {
         // implements a double-submit cookie pattern and sets a csrfToken
         // cookie after successful login, so these initial auth endpoints
         // are safe to call without an X-CSRF-Token header.
+        let isAuthEndpoint = false;
         try {
             let path = '';
             if (typeof url === 'string') {
@@ -67,25 +68,17 @@ export async function safeFetch(url, opts = {}) {
                     path = url;
                 }
             }
-            if (typeof path === 'string' && path.startsWith('/api/auth/')) {
-                // allow missing CSRF for auth endpoints
-            } else if (!_headersContainCsrf(effectiveHeaders)) {
-                // Fail fast and log a clear warning so developers can fix server/client setup.
-                console.warn(`[safeFetch] Missing CSRF token for ${method} ${url}. ` +
-                    `Ensure the server sets a csrf cookie or a <meta name="csrf-token"> tag, or pass 'x-csrf-token' in headers.`);
-                const err = new Error('Missing CSRF token');
-                err.status = 403;
-                throw err;
-            }
+            isAuthEndpoint = typeof path === 'string' && path.startsWith('/api/auth/');
         } catch (e) {
-            // If any parsing error occurs, fall back to requiring a CSRF token
-            if (!_headersContainCsrf(effectiveHeaders)) {
-                console.warn(`[safeFetch] Missing CSRF token for ${method} ${url}. ` +
-                    `Ensure the server sets a csrf cookie or a <meta name="csrf-token"> tag, or pass 'x-csrf-token' in headers.`);
-                const err = new Error('Missing CSRF token');
-                err.status = 403;
-                throw err;
-            }
+            isAuthEndpoint = false;
+        }
+
+        if (!isAuthEndpoint && !_headersContainCsrf(effectiveHeaders)) {
+            console.warn(`[safeFetch] Missing CSRF token for ${method} ${url}. ` +
+                `Ensure the server sets a csrf cookie or a <meta name="csrf-token"> tag, or pass 'x-csrf-token' in headers.`);
+            const err = new Error('Missing CSRF token');
+            err.status = 403;
+            throw err;
         }
     }
 
@@ -96,6 +89,12 @@ export async function safeFetch(url, opts = {}) {
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
+        // Expired sessions should redirect the user to the auth page rather than
+        // leaving them stuck in the chat UI with a vague error.
+        if (res.status === 401 && typeof window !== 'undefined' && !window.location.pathname.startsWith('/auth')) {
+            try { localStorage.removeItem('user'); } catch (e) { /* ignore */ }
+            window.location.href = '/auth';
+        }
         throw Object.assign(new Error(err.error ?? res.statusText), { status: res.status });
     }
     const ct = res.headers.get("content-type") ?? "";

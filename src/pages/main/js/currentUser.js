@@ -1,7 +1,8 @@
 export function getCurrentUser() {
 	try {
-		return JSON.parse(localStorage.getItem("user") || "{}");
+		const parsed = JSON.parse(localStorage.getItem("user") || "{}");
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
 	} catch {
-		return null;
+		return {};
 	}
 }

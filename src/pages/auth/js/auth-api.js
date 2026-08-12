@@ -10,10 +10,7 @@ export async function loginUser(identifier, password) {
 		});
 		return { ok: true, data };
 	} catch (err) {
-		const message = (err && err.body)
-			? (typeof err.body === 'object' ? (err.body.error || JSON.stringify(err.body)) : String(err.body))
-			: (err.message || 'Unknown error');
-		return { ok: false, data: { error: message } };
+		return { ok: false, data: { error: err?.message || 'Unknown error' } };
 	}
 }
 
@@ -27,26 +24,34 @@ export async function registerUser(name, email, username, password) {
 		});
 		return { ok: true, data };
 	} catch (err) {
-		const message = (err && err.body)
-			? (typeof err.body === 'object' ? (err.body.error || JSON.stringify(err.body)) : String(err.body))
-			: (err.message || 'Unknown error');
-		return { ok: false, data: { error: message } };
+		return { ok: false, data: { error: err?.message || 'Unknown error' } };
 	}
 }
 
-export async function resetPassword(identifier, newPassword) {
+export async function requestPasswordReset(identifier) {
 	try {
-		const data = await safeFetch("/api/auth/reset-password", {
+		const data = await safeFetch("/api/auth/request-password-reset", {
 			credentials: "include",
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ identifier, newPassword }),
+			body: JSON.stringify({ identifier }),
 		});
 		return { ok: true, data };
 	} catch (err) {
-		const message = (err && err.body)
-			? (typeof err.body === 'object' ? (err.body.error || JSON.stringify(err.body)) : String(err.body))
-			: (err.message || 'Unknown error');
-		return { ok: false, data: { error: message } };
+		return { ok: false, data: { error: err?.message || 'Unknown error' } };
+	}
+}
+
+export async function resetPassword(token, newPassword) {
+	try {
+		const data = await safeFetch("/api/auth/reset-password-with-token", {
+			credentials: "include",
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ token, newPassword }),
+		});
+		return { ok: true, data };
+	} catch (err) {
+		return { ok: false, data: { error: err?.message || 'Unknown error' } };
 	}
 }

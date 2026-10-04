@@ -21,6 +21,11 @@ import {
 } from "./chat-logic.js";
 import { emitDeleteMessage, emitPinMessage, emitReaction } from "./socket.js";
 import { parseSvg } from "../../../utils/svg.js";
+import { _removeEmptyDateSeparators } from "./chat-receive.js";
+import { messageForDisplay } from "./chat-render.js";
+import { displayName } from "./chat-state.js";
+import { getCurrentUser } from "./currentUser.js";
+import { formatClock, localDateKey } from "../../../utils/date.js";
 
 const pinIconForMenu = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4a1 1 0 0 1 1 1z"/></svg>`;
 const unpinIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="m20.97 17.172l-1.414 1.414l-3.535-3.535l-.073.074l-.707 3.536l-1.415 1.414l-4.242-4.243l-4.95 4.95l-1.414-1.414l4.95-4.95l-4.243-4.243L5.34 8.761l3.536-.707l.073-.074l-3.536-3.536L6.828 3.03zM10.365 9.394l-.502.502l-2.822.565l6.5 6.5l.564-2.822l.502-.502zm8.411.074l-1.34 1.34l1.414 1.415l1.34-1.34l.707.707l1.415-1.415l-8.486-8.485l-1.414 1.414l.707.707l-1.34 1.34l1.414 1.415l1.34-1.34z"/></svg>`;
@@ -110,6 +115,8 @@ reactionBarEl.addEventListener("click", async (e) => {
 
 // ─── Open ─────────────────────────────────────────────────────────────────────
 export function openContextMenu(msg, e) {
+	// bubbles still being sent (or that failed) have their own actions
+	if (!msg || msg.classList.contains("pending") || msg.classList.contains("failed")) return;
 	if (state.isMenuOpen) {
 		if (Number(msg.dataset.index) === Number(state.msgIndex)) {
 			closeContextMenu();
@@ -133,13 +140,23 @@ export function openContextMenu(msg, e) {
 	// Set visibility for edit/delete BEFORE measuring menu height so
 	// the measured size reflects the actual rendered menu content.
 	const editMsg0 = _dom.editMsg?.[0];
+	const sealed = !!(messageObj && messageObj.isTimeCapsule && !messageObj.openedAt);
 	if (editMsg0) {
-		editMsg0.style.display = !forwardedFrom && isOwner ? "flex" : "none";
+		// the server refuses edits of forwarded, one-time and sealed messages
+		editMsg0.style.display =
+			!forwardedFrom && isOwner && !messageObj?.isOneTime && !sealed ? "flex" : "none";
 	}
 	const deleteMsg0 = _dom.messageMenu.querySelector(".delete-message");
 	if (deleteMsg0) {
 		deleteMsg0.style.display = isOwner ? "flex" : "none";
 	}
+	// Someone else's locked capsule or one-time message is not copied,
+	// forwarded or quoted
+	const hiddenContent = !isOwner && !!(messageObj && (messageObj.isLocked || messageObj.isOneTime));
+	["copy-message", "forward-message", "reply-message"].forEach((cls) => {
+		const item = _dom.messageMenu.querySelector(`.${cls}`);
+		if (item) item.style.display = hiddenContent ? "none" : "";
+	});
 
 	// Now measure menu height for positioning
 	const menuHeight = _dom.messageMenu.getBoundingClientRect().height;
@@ -257,29 +274,24 @@ export function deleteMessage(msg, index) {
 			try {
 				if (messageId) await emitDeleteMessage(messageId);
 
-				// Remove message by id if possible, otherwise by localId, otherwise by index
+				// Remove the message by id. When it is already gone (removed by
+				// another path meanwhile) nothing else may be removed instead.
 				const currentArr = messages[capturedContactId] || [];
 				let removeIdx = -1;
 				if (messageId)
 					removeIdx = currentArr.findIndex((m) => m.id === messageId);
-				if (removeIdx === -1 && deletedMsg && deletedMsg._localId)
+				else if (deletedMsg && deletedMsg._localId)
 					removeIdx = currentArr.findIndex(
 						(m) => m._localId === deletedMsg._localId,
 					);
-				if (removeIdx === -1) removeIdx = idx;
+				else if (deletedMsg && currentArr[idx] === deletedMsg) removeIdx = idx;
 
-				// Determine which message object will be removed so we can
-				// adjust unread counts for incoming, unseen messages.
-				let removedCandidate = null;
-				if (removeIdx !== -1 && removeIdx < currentArr.length) {
-					removedCandidate = currentArr[removeIdx];
-				} else if (deletedMsg) {
-					removedCandidate = deletedMsg;
-				}
+				const removedCandidate =
+					removeIdx !== -1 && removeIdx < currentArr.length ? currentArr[removeIdx] : null;
 
 				// Update DOM and data structures
 				msg.remove();
-				if (removeIdx !== -1 && removeIdx < currentArr.length) {
+				if (removedCandidate) {
 					currentArr.splice(removeIdx, 1);
 				}
 
@@ -306,17 +318,22 @@ export function deleteMessage(msg, index) {
 				}
 				currentArr.forEach((m, i) => (m.index = i));
 
-				// Re-index DOM elements scoped to the active chat container
-				try {
-					const root = _dom?.chatEl || document;
-					root.querySelectorAll(".chat-message").forEach((msgEl, i) => {
-						msgEl.dataset.index = i;
-					});
-				} catch (e) { /* ignore */ }
+				// Re-index the rendered messages of this chat by id (bubbles that
+				// are still sending are not in the list and keep no index)
+				if (state.contactUserId === capturedContactId) {
+					try {
+						const pos = new Map(currentArr.map((m, i) => [String(m.id), i]));
+						_dom.chatEl.querySelectorAll(".chat-message[data-message-id]").forEach((msgEl) => {
+							const i = pos.get(String(msgEl.dataset.messageId));
+							if (i !== undefined) msgEl.dataset.index = String(i);
+						});
+						_removeEmptyDateSeparators(_dom.chatEl);
+					} catch (e) { /* ignore */ }
 
-				state.pinnedIndexes = currentArr
-					.map((m, i) => (m.isPinned ? i : -1))
-					.filter((i) => i !== -1);
+					state.pinnedIndexes = currentArr
+						.map((m, i) => (m.isPinned ? i : -1))
+						.filter((i) => i !== -1);
+				}
 				// Ensure pinnedData cache does not retain deleted messages
 				try {
 					if (messageId) updatePinnedData(capturedContactId, messageId, removedCandidate, false);
@@ -331,16 +348,21 @@ export function deleteMessage(msg, index) {
 					if (remaining.length > 0) {
 						const lastMsg = remaining.at(-1);
 						friend.lastMessage = getContactPreviewText(lastMsg);
+						friend.lastMessageId = lastMsg.id ?? null;
 						friend.lastMessageTime = lastMsg.time;
 						friend.lastMessageDate = lastMsg.date || "";
+						const ts = new Date(lastMsg.createdAt).getTime();
+						friend.lastMessageTs = Number.isFinite(ts) ? ts : 0;
 						// Only explicit `false` means unseen.
 						friend.lastMessageSeen = lastMsg.user
 							? lastMsg.isSeen !== false
 							: true;
 					} else {
 						friend.lastMessage = "";
+						friend.lastMessageId = null;
 						friend.lastMessageTime = "";
 						friend.lastMessageDate = "";
+						friend.lastMessageTs = 0;
 						friend.lastMessageSeen = true;
 					}
 					refreshCard(friend);
@@ -351,12 +373,13 @@ export function deleteMessage(msg, index) {
 						!friend.isPinned &&
 						!friend.isSaved &&
 						friend.unreadCount === 0 &&
-						friend.lastMessageSeen === true
+						friend.lastMessageSeen === true &&
+						state.contactUserId !== capturedContactId
 					) {
 						moveToContacts(friend);
 					}
 				}
-				if (remaining.length === 0) {
+				if (remaining.length === 0 && state.contactUserId === capturedContactId) {
 					showEmptyState(_dom.chatEl, _dom.emptyStateEl);
 				}
 
@@ -393,7 +416,7 @@ export function deleteMessage(msg, index) {
 				setTimeout(() => {
 					msg.style.transition = "";
 				}, 150);
-				// optionally show toast via UI; keep message in state
+				try { showToast("Couldn't delete the message. Try again."); } catch (err) { /* ignore */ }
 			}
 		})();
 	}, 3000);
@@ -411,23 +434,29 @@ export function undoDeleteMessage(msg) {
 }
 
 // ─── Build forwarded message ──────────────────────────────────────────────────
+// The forwarded copy names the original author by their real name (it is
+// shown to someone else, so "You" would point at the wrong person).
 export function buildForwardedMsg(originalMsg, targetContactId) {
-	const senderName = originalMsg.user
-		? "You"
-		: (contacts.find((c) => c.id === state.contactUserId)?.name ??
-			"Unknown");
+	const source = contacts.find((c) => c.id === state.contactUserId);
+	const me = getCurrentUser();
+	let author;
+	const shown = messageForDisplay(originalMsg, state.contactUserId);
+	if (shown && shown.forwardedFrom) {
+		// forwarding a forwarded message keeps its original author
+		author = shown.forwardedFrom === "You" ? me?.name || "Unknown" : shown.forwardedFrom;
+	} else if (originalMsg.user || source?.isSaved) {
+		author = me?.name || "Unknown";
+	} else {
+		author = source?.contact?.name || displayName(source) || "Unknown";
+	}
 	return {
 		user: true,
 		text: originalMsg.text,
-		time: new Date().toLocaleTimeString([], {
-			hour: "2-digit",
-			minute: "2-digit",
-			hour12: false,
-		}),
-		date: new Date().toISOString().slice(0, 10),
+		time: formatClock(new Date()),
+		date: localDateKey(new Date()),
 		isEdited: false,
 		replyTo: null,
-		forwardedFrom: senderName,
+		forwardedFrom: author,
 		isSeen: false,
 		index: (messages[targetContactId] || []).length,
 	};
@@ -511,7 +540,14 @@ export function editMessage() {
 	// Determine if user was near bottom before we change layout (used to keep view pinned)
 	const wasNearBottomBefore = nearBottom(_dom.chatEl, 20);
 
+	// editing replaces a reply or forward that was being prepared
+	state.replyTo = null;
+	state.isForwarding = false;
+	state.forwardingMsg = null;
+	state.forwardingMsgs = [];
 	state.isEditing = true;
+	// remembered by id: other messages may come and go while editing
+	state.editingMessageId = msg.id ?? null;
 
 	// Breadcrumb for monitoring (optional, if Sentry loaded)
 	try {
@@ -584,9 +620,24 @@ export function editMessage() {
 export function replyMessage() {
 	const msg = getMessageByIndex(state.contactUserId, Number(state.msgIndex));
 	if (!msg) return;
-	const senderName = msg.user
-		? "You"
-		: contacts.find((c) => c.id === state.contactUserId)?.name;
+	const source = contacts.find((c) => c.id === state.contactUserId);
+	const me = getCurrentUser();
+	const mine = !!msg.user || !!source?.isSaved;
+	// label shown here, and the author's real name stored with the reply
+	const senderName = mine ? "You" : displayName(source);
+	const realName = mine ? me?.name || "" : source?.contact?.name || displayName(source);
+	// a reply replaces an edit (its text leaves the box) or a forward
+	if (state.isEditing) {
+		state.isEditing = false;
+		state.editingMessageId = null;
+		if (_dom.messageInput) {
+			_dom.messageInput.value = "";
+			_dom.messageInput.dispatchEvent(new Event("input", { bubbles: true }));
+		}
+	}
+	state.isForwarding = false;
+	state.forwardingMsg = null;
+	state.forwardingMsgs = [];
 	_dom.msgAction.style.display = "flex";
 	state.actionPreviewHeight =
 		_dom.msgAction.getBoundingClientRect().height / 14;
@@ -603,6 +654,8 @@ export function replyMessage() {
 	state.replyTo = {
 		text: msg.text,
 		sender: senderName,
+		name: realName,
+		senderId: mine ? me?.id ?? null : source?.contactId ?? null,
 		index: Number(state.msgIndex),
 		id: msg.id,
 	};

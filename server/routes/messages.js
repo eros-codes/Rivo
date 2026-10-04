@@ -1,39 +1,88 @@
 import { Router } from "express";
 import prisma from "../prisma.js";
 import { requireAuth } from "../middleware/auth.js";
-import { isNonEmptyString, parseIntSafe, MAX_MESSAGE_LENGTH } from "../utils/validators.js";
-import { generateDEK, encryptMessage, wrapDEK, unwrapDEK, decryptMessage } from "../utils/encryption.js";
+import { parseIntSafe } from "../utils/validators.js";
+import { decryptBody, isCapsuleLocked, loadReplySenders, serializeMessage } from "../utils/messageView.js";
+import { sendMessageAs, editMessageAs, deleteMessageAs, togglePinAs } from "../socket/index.js";
 
 const router = Router();
-const ACTIVE_KEY_ID = process.env.ACTIVE_KEY_ID || "v1";
+
+// Errors returned by the shared message actions → HTTP status codes
+function statusFor(result) {
+	const e = String(result && result.error || "");
+	if (!e) return 200;
+	if (e === "Server error") return 500;
+	if (e === "Not found" || e === "Message not found") return 404;
+	if (e === "Forbidden" || e === "Message could not be delivered" || e === "Unblock this contact to send messages") return 403;
+	if (e === "This account no longer exists") return 410;
+	return 400;
+}
+
+// Searching decrypts many messages on the server, so each user gets a
+// limited number of searches per minute (typing already waits between keys).
+const SEARCH_WINDOW_MS = 60 * 1000;
+const SEARCH_MAX_PER_WINDOW = parseInt(process.env.SEARCH_MAX_PER_MINUTE || "40", 10) || 40;
+const _searchLog = new Map(); // userId => timestamps
+function _searchAllowed(userId) {
+	const now = Date.now();
+	const recent = (_searchLog.get(userId) || []).filter((t) => now - t < SEARCH_WINDOW_MS);
+	if (recent.length >= SEARCH_MAX_PER_WINDOW) {
+		_searchLog.set(userId, recent);
+		return false;
+	}
+	recent.push(now);
+	_searchLog.set(userId, recent);
+	return true;
+}
+setInterval(() => {
+	const now = Date.now();
+	for (const [uid, times] of _searchLog) {
+		if (!times.some((t) => now - t < SEARCH_WINDOW_MS)) _searchLog.delete(uid);
+	}
+}, SEARCH_WINDOW_MS).unref?.();
 
 // ─── Search messages ───────────────────────────────────────────────────────
 router.get("/search", requireAuth, async (req, res) => {
-    const q = String(req.query.q || "").trim().toLowerCase();
-    if (!q || q.length < 2) {
-        return res.json({ results: [] });
-    }
+	const q = String(req.query.q || "").trim().toLowerCase();
+	if (!q || q.length < 2) {
+		return res.json({ results: [] });
+	}
+	if (q.length > 100) {
+		return res.status(400).json({ error: "Query too long" });
+	}
+	if (!_searchAllowed(req.userId)) {
+		return res.status(429).json({ error: "Too many searches. Please wait a moment." });
+	}
 
-    const MAX_RESULTS = 50;
-    const MAX_SCAN = 1000;
+	const MAX_RESULTS = 50;
+	const BATCH = 1000;
+	const MAX_SCAN = parseInt(process.env.SEARCH_MAX_SCAN || "5000", 10) || 5000;
 
-    try {
-        const memberships = await prisma.conversationMember.findMany({
-            where: { userId: req.userId },
-            select: { conversationId: true },
-        });
+	try {
+		// Only chats this user still has in their list
+		const rows = await prisma.contact.findMany({
+			where: { ownerId: req.userId },
+			select: { conversationId: true },
+		});
+		const convIds = [...new Set(rows.map((r) => r.conversationId))];
+		if (convIds.length === 0) return res.json({ results: [] });
 
-        const convIds = memberships.map((m) => m.conversationId);
-        if (convIds.length === 0) return res.json({ results: [] });
-
-        const rows = await prisma.message.findMany({
-            where: {
-                conversationId: { in: convIds },
-                isDeleted: false,
-            },
-            orderBy: { createdAt: "desc" },
-            take: MAX_SCAN,
-			select: {
+		const results = [];
+		const now = new Date();
+		let scanned = 0;
+		let cursor = null;
+		// Messages are encrypted, so they are decrypted and matched here,
+		// newest first, in batches.
+		while (results.length < MAX_RESULTS && scanned < MAX_SCAN) {
+			const batch = await prisma.message.findMany({
+				where: {
+					conversationId: { in: convIds },
+					isDeleted: false,
+					...(cursor ? { id: { lt: cursor } } : {}),
+				},
+				orderBy: { id: "desc" },
+				take: BATCH,
+				select: {
 					id: true,
 					conversationId: true,
 					senderId: true,
@@ -47,51 +96,52 @@ router.get("/search", requireAuth, async (req, res) => {
 					isEdited: true,
 					isPinned: true,
 					isSeen: true,
-					// time-capsule metadata needed for search filtering
+					isOneTime: true,
 					isTimeCapsule: true,
 					scheduledFor: true,
 					openedAt: true,
 				},
-        });
+			});
+			if (batch.length === 0) break;
+			scanned += batch.length;
+			cursor = batch[batch.length - 1].id;
 
-        const results = [];
-        for (const m of rows) {
-            if (results.length >= MAX_RESULTS) break;
+			for (const m of batch) {
+				if (results.length >= MAX_RESULTS) break;
+				const isSender = m.senderId === req.userId;
+				// locked time capsules and other people's one-time messages stay hidden
+				if (isCapsuleLocked(m, now) && !isSender) continue;
+				if (m.isOneTime && !isSender) continue;
 
-			// Respect time-capsule locks: do not reveal plaintext for locked capsules
-			if (m.isTimeCapsule && !m.openedAt && m.scheduledFor && new Date(m.scheduledFor) > new Date() && m.senderId !== req.userId) {
-				continue;
+				const body = decryptBody(m);
+				if (!body.ok) continue;
+				if (!body.text.toLowerCase().includes(q)) continue;
+
+				results.push({
+					id: m.id,
+					messageId: m.id,
+					conversationId: m.conversationId,
+					senderId: m.senderId,
+					text: body.text,
+					createdAt: m.createdAt,
+					isEdited: m.isEdited,
+					isPinned: m.isPinned,
+					isSeen: m.isSeen,
+					isOneTime: m.isOneTime,
+					isTimeCapsule: m.isTimeCapsule,
+					isLocked: false,
+					scheduledFor: m.scheduledFor ? m.scheduledFor.toISOString() : null,
+					openedAt: m.openedAt ? m.openedAt.toISOString() : null,
+				});
 			}
+			if (batch.length < BATCH) break;
+		}
 
-			let plaintext = m.text || "";
-			if (!plaintext && m.ciphertext && m.wrapped_dek) {
-				try {
-					const dek = unwrapDEK(m.wrapped_dek, m.key_id || "v1");
-					plaintext = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
-				} catch {
-					continue;
-				}
-			}
-
-            if (!plaintext.toLowerCase().includes(q)) continue;
-
-            results.push({
-                messageId: m.id,
-                conversationId: m.conversationId,
-                senderId: m.senderId,
-                text: plaintext,
-                createdAt: m.createdAt,
-                isEdited: m.isEdited,
-                isPinned: m.isPinned,
-                isSeen: m.isSeen,
-            });
-        }
-
-        return res.json({ results, truncated: rows.length >= MAX_SCAN });
-    } catch (err) {
-        console.error("Search error:", err);
-        return res.status(500).json({ error: "Search failed" });
-    }
+		return res.json({ results, truncated: scanned >= MAX_SCAN });
+	} catch (err) {
+		console.error("Search error:", err);
+		return res.status(500).json({ error: "Search failed" });
+	}
 });
 
 // ─── Get pinned messages for a conversation ──────────────────────────────────
@@ -108,7 +158,7 @@ router.get('/:conversationId/pinned', requireAuth, async (req, res) => {
 
 		const pinned = await prisma.message.findMany({
 			where: { conversationId: convId, isPinned: true, isDeleted: false },
-			orderBy: { createdAt: 'asc' },
+			orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
 			select: {
 				id: true,
 				text: true,
@@ -125,21 +175,12 @@ router.get('/:conversationId/pinned', requireAuth, async (req, res) => {
 			},
 		});
 
+		const now = new Date();
 		const results = pinned.map((m) => {
-			let text = m.text || '';
-			const isLocked = m.isTimeCapsule && !m.openedAt && m.scheduledFor && new Date(m.scheduledFor) > new Date();
-			const isSender = m.senderId === req.userId;
-			try {
-				if (!text && m.ciphertext && m.wrapped_dek && (!isLocked || isSender)) {
-					const dek = unwrapDEK(m.wrapped_dek, m.key_id || 'v1');
-					text = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
-				}
-			} catch (e) {
-				// ignore per-message decryption errors
-			}
+			const hidden = isCapsuleLocked(m, now) && m.senderId !== req.userId;
 			return {
 				id: m.id,
-				text: (isLocked && !isSender) ? null : text,
+				text: hidden ? null : decryptBody(m).text,
 				senderId: m.senderId,
 				createdAt: m.createdAt,
 			};
@@ -215,7 +256,7 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
 		// fetch newest messages first then reverse so client receives ascending order
 		const msgs = await prisma.message.findMany({
 			where,
-			orderBy: [ { createdAt: "desc" }, { id: "desc" } ],
+			orderBy: [{ createdAt: "desc" }, { id: "desc" }],
 			take: limit,
 			include: {
 				sender: {
@@ -223,7 +264,6 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
 						id: true,
 						name: true,
 						username: true,
-						profilePics: true,
 					},
 				},
 				reactions: {
@@ -232,118 +272,19 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
 			},
 		});
 
-		// decrypt messages synchronously (page size limited) and return sanitized objects
 		const reversed = msgs.reverse();
-		const decrypted = reversed.map((m) => {
+		const replySenders = await loadReplySenders(reversed);
+		const now = new Date();
+		const out = reversed.map((m) => {
 			try {
-				let text = "";
-				let replyToTextPlain = null;
-				let forwardedTextPlain = null;
-				let dek = null;
-
-				const isLocked = m.isTimeCapsule && !m.openedAt && m.scheduledFor && new Date(m.scheduledFor) > new Date();
-				const isSender = m.senderId === req.userId;
-				if (!isLocked || isSender) {
-					if (m.ciphertext) {
-						try {
-							dek = unwrapDEK(m.wrapped_dek, m.key_id || "v1");
-							text = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
-						} catch (e) {
-							console.error("decrypt failed for message", m.id, e.message);
-							text = "Message unavailable";
-						}
-					} else if (m.text) {
-						text = m.text;
-					} else {
-						text = "Message unavailable";
-					}
-				} else {
-					text = "";
-				}
-
-				// replyToText: may be stored as encrypted JSON {c,iv,t} or legacy plaintext
-				if (!isLocked || isSender) {
-					if (m.replyToText) {
-						try {
-							const parsed = JSON.parse(m.replyToText);
-							if (parsed && parsed.c && parsed.iv && parsed.t) {
-								if (dek) {
-									try {
-										replyToTextPlain = decryptMessage(parsed.c, parsed.iv, parsed.t, dek);
-									} catch (e) {
-										console.error("failed to decrypt replyToText", m.id, e.message);
-										replyToTextPlain = "Message unavailable";
-									}
-								} else {
-									replyToTextPlain = "Message unavailable";
-								}
-							} else {
-								replyToTextPlain = m.replyToText;
-							}
-						} catch (e) {
-							replyToTextPlain = m.replyToText;
-						}
-					}
-				}
-
-				// forwardedText: same logic
-				if (!isLocked || isSender) {
-					if (m.forwardedText) {
-						try {
-							const parsed = JSON.parse(m.forwardedText);
-							if (parsed && parsed.c && parsed.iv && parsed.t) {
-								if (dek) {
-									try {
-										forwardedTextPlain = decryptMessage(parsed.c, parsed.iv, parsed.t, dek);
-									} catch (e) {
-										console.error("failed to decrypt forwardedText", m.id, e.message);
-										forwardedTextPlain = "Message unavailable";
-									}
-								} else {
-									forwardedTextPlain = "Message unavailable";
-								}
-							} else {
-								forwardedTextPlain = m.forwardedText;
-							}
-						} catch (e) {
-							forwardedTextPlain = m.forwardedText;
-						}
-					}
-				}
-
-				// time-capsule lock logic: hide real text for non-senders until opened
-				const exposedText = (isLocked && !isSender) ? null : text;
-
-				return {
-					id: m.id,
-					conversationId: m.conversationId,
-					sender: m.sender,
-					senderId: m.senderId,
-					text: exposedText,
-					isSeen: m.isSeen,
-					isEdited: m.isEdited,
-					isPinned: m.isPinned,
-					isOneTime: m.isOneTime || false,
-					isTimeCapsule: m.isTimeCapsule || false,
-					scheduledFor: m.scheduledFor ? m.scheduledFor.toISOString() : null,
-					openedAt: m.openedAt ? m.openedAt.toISOString() : null,
-					isLocked: isLocked && !isSender,
-					isDeleted: m.isDeleted,
-					replyToId: m.replyToId,
-					replyToName: m.replyToName,
-					replyToText: (isLocked && !isSender) ? null : replyToTextPlain,
-					forwardedText: (isLocked && !isSender) ? null : forwardedTextPlain,
-					forwardedFrom: m.forwardedFrom,
-					reactions: m.reactions || [],
-					createdAt: m.createdAt,
-				};
+				return serializeMessage(m, req.userId, { now, replySenders });
 			} catch (err) {
 				console.error(err);
-				return { id: m.id, conversationId: m.conversationId, sender: m.sender, senderId: m.senderId, text: "Message unavailable", createdAt: m.createdAt };
+				return { id: m.id, conversationId: m.conversationId, senderId: m.senderId, text: "Message unavailable", createdAt: m.createdAt, reactions: [] };
 			}
 		});
 
-		return res.json(decrypted);
+		return res.json(out);
 	} catch (err) {
 		console.error(err);
 		return res.status(500).json({ error: "Server error" });
@@ -351,304 +292,32 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
 });
 
 // ─── Send message ─────────────────────────────────────────────────────────────
+// Same rules and real-time delivery as sending over the socket.
 router.post("/", requireAuth, async (req, res) => {
-	const {
-		conversationId,
-		text,
-		replyToId,
-		replyToName,
-		replyToText,
-		forwardedFrom,
-		forwardedText,
-		isOneTime,
-		isTimeCapsule,
-		scheduledFor,
-	} = req.body;
-
-	const convId = parseIntSafe(conversationId);
-	if (!convId || !isNonEmptyString(text, MAX_MESSAGE_LENGTH)) {
-		return res
-			.status(400)
-			.json({ error: "conversationId and text are required or invalid" });
-	}
-
-	try {
-		const member = await prisma.conversationMember.findFirst({
-			where: {
-				conversationId: convId,
-				userId: req.userId,
-			},
-		});
-
-		if (!member) {
-			return res.status(403).json({ error: "Forbidden" });
-		}
-
-		// Encrypt message before persisting. Do NOT store plaintext.
-		// Validate time-capsule constraints. Use minute-precision: truncate
-		// both provided time and "now" to minutes (seconds=0) so seconds are ignored.
-		let scheduledForToStore = null;
-		if (isTimeCapsule) {
-			if (!scheduledFor) return res.status(400).json({ error: "scheduledFor required" });
-			const sfRawDate = new Date(scheduledFor);
-			if (isNaN(sfRawDate.getTime())) return res.status(400).json({ error: "scheduledFor invalid" });
-			const truncateToMinute = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), 0, 0);
-			const scheduledTrunc = truncateToMinute(sfRawDate);
-			const nowTrunc = truncateToMinute(new Date());
-			const minTime = new Date(nowTrunc.getTime() + 5 * 60 * 1000); // +5 minutes
-			const maxTime = new Date(nowTrunc.getTime() + 365 * 24 * 60 * 60 * 1000); // +1 year
-			if (scheduledTrunc < minTime || scheduledTrunc > maxTime) {
-				return res.status(400).json({ error: "scheduledFor out of range" });
-			}
-			scheduledForToStore = scheduledTrunc;
-		}
-
-		if (replyToId) {
-			const target = await prisma.message.findUnique({
-				where: { id: parseIntSafe(replyToId) || 0 },
-				select: { conversationId: true },
-			});
-			if (!target || target.conversationId !== convId) {
-				return res.status(400).json({ error: "Invalid replyToId" });
-			}
-		}
-
-		const dek = generateDEK();
-		const { ciphertext, iv, authTag } = encryptMessage(text.trim(), dek);
-		const keyId = ACTIVE_KEY_ID;
-		const wrappedDek = wrapDEK(dek, keyId);
-
-		// Optionally encrypt replyToText and forwardedText using same DEK
-		let replyToTextEncrypted = null;
-		let forwardedTextEncrypted = null;
-		if (replyToText && typeof replyToText === 'string' && replyToText.trim()) {
-			const r = encryptMessage(replyToText.trim(), dek);
-			replyToTextEncrypted = JSON.stringify({ c: r.ciphertext, iv: r.iv, t: r.authTag });
-		}
-		if (forwardedText && typeof forwardedText === 'string' && forwardedText.trim()) {
-			const f = encryptMessage(forwardedText.trim(), dek);
-			forwardedTextEncrypted = JSON.stringify({ c: f.ciphertext, iv: f.iv, t: f.authTag });
-		}
-
-		const message = await prisma.message.create({
-			data: {
-				conversationId: convId,
-				senderId: req.userId,
-				// keep legacy text column null during migration
-				text: null,
-				isOneTime: isOneTime === true,
-				isTimeCapsule: isTimeCapsule === true,
-						...(isTimeCapsule && scheduledForToStore ? { scheduledFor: scheduledForToStore } : {}),
-				ciphertext,
-				iv,
-				auth_tag: authTag,
-				wrapped_dek: wrappedDek,
-				key_id: keyId,
-				...(replyToId && { replyToId }),
-				...(replyToName && typeof replyToName === "string" && { replyToName: replyToName.trim().slice(0, 100) }),
-				...(replyToTextEncrypted && { replyToText: replyToTextEncrypted }),
-				...(forwardedTextEncrypted && { forwardedText: forwardedTextEncrypted }),
-				...(forwardedFrom && typeof forwardedFrom === "string" && { forwardedFrom: forwardedFrom.trim().slice(0, 100) }),
-			},
-			include: {
-				sender: {
-					select: {
-						id: true,
-						name: true,
-						username: true,
-						profilePics: true,
-					},
-				},
-			},
-		});
-
-		// lastMessageAt conversation رو آپدیت کن
-		await prisma.conversation.update({
-			where: { id: convId },
-			data: { lastMessageAt: message.createdAt },
-		});
-
-		// do not return ciphertext/wrapped keys to the client; include plaintexts in response
-		const safe = {
-			id: message.id,
-			conversationId: message.conversationId,
-			sender: message.sender,
-			senderId: message.senderId,
-			text: text.trim(),
-			isOneTime: message.isOneTime || false,
-			isTimeCapsule: message.isTimeCapsule || false,
-			scheduledFor: message.scheduledFor ? message.scheduledFor.toISOString() : null,
-			openedAt: message.openedAt ? message.openedAt.toISOString() : null,
-			replyToText: replyToText || null,
-			forwardedText: forwardedText || null,
-			isSeen: message.isSeen,
-			isEdited: message.isEdited,
-			isPinned: message.isPinned,
-			isDeleted: message.isDeleted,
-			replyToId: message.replyToId,
-			replyToName: message.replyToName,
-			forwardedFrom: message.forwardedFrom,
-			createdAt: message.createdAt,
-		};
-
-		return res.status(201).json(safe);
-	} catch (err) {
-		console.error(err);
-		return res.status(500).json({ error: "Server error" });
-	}
+	const result = await sendMessageAs({ userId: req.userId, socketId: null }, req.body || {});
+	if (result.error) return res.status(statusFor(result)).json({ error: result.error });
+	return res.status(201).json(result.message);
 });
 
 // ─── Edit message ─────────────────────────────────────────────────────────────
 router.patch("/:id", requireAuth, async (req, res) => {
-	const messageId = parseIntSafe(req.params.id);
-	if (!messageId) return res.status(400).json({ error: "Invalid messageId" });
-	const { text } = req.body;
-
-	if (!isNonEmptyString(text, MAX_MESSAGE_LENGTH)) {
-		return res.status(400).json({ error: "Text is required" });
-	}
-
-	try {
-		const message = await prisma.message.findUnique({
-			where: { id: messageId },
-		});
-
-		if (!message) {
-			return res.status(404).json({ error: "Message not found" });
-		}
-
-		if (message.senderId !== req.userId) {
-			return res.status(403).json({ error: "Forbidden" });
-		}
-
-		if (message.isDeleted) {
-			return res.status(400).json({ error: "Cannot edit a deleted message" });
-		}
-		if (message.isTimeCapsule && !message.openedAt) {
-			return res.status(400).json({ error: "Cannot edit a sealed time capsule" });
-		}
-		if (message.isOneTime) {
-			return res.status(400).json({ error: "One-time messages cannot be edited" });
-		}
-
-		// Encrypt new text and update encrypted fields
-		const dek = generateDEK();
-		const { ciphertext, iv, authTag } = encryptMessage(text.trim(), dek);
-		const keyId = ACTIVE_KEY_ID;
-		const wrappedDek = wrapDEK(dek, keyId);
-
-		const updated = await prisma.message.update({
-			where: { id: messageId },
-			data: {
-				// clear legacy plaintext
-				text: null,
-				ciphertext,
-				iv,
-				auth_tag: authTag,
-				wrapped_dek: wrappedDek,
-				key_id: keyId,
-				isEdited: true,
-			},
-		});
-
-		// do not return wrapped keys/ciphertext to the client
-		const safe = {
-			id: updated.id,
-			conversationId: updated.conversationId,
-			senderId: updated.senderId,
-			isEdited: updated.isEdited,
-			isPinned: updated.isPinned,
-			isDeleted: updated.isDeleted,
-			createdAt: updated.createdAt,
-		};
-
-		return res.json(safe);
-	} catch (err) {
-		console.error(err);
-		return res.status(500).json({ error: "Server error" });
-	}
+	const result = await editMessageAs({ userId: req.userId, socketId: null }, { messageId: req.params.id, text: (req.body || {}).text });
+	if (result.error) return res.status(statusFor(result)).json({ error: result.error });
+	return res.json({ success: true });
 });
 
 // ─── Delete message ───────────────────────────────────────────────────────────
 router.delete("/:id", requireAuth, async (req, res) => {
-	const messageId = parseIntSafe(req.params.id);
-	if (!messageId) return res.status(400).json({ error: "Invalid messageId" });
-
-	try {
-		const message = await prisma.message.findUnique({
-			where: { id: messageId },
-		});
-
-		if (!message) {
-			return res.status(404).json({ error: "Message not found" });
-		}
-
-		if (message.senderId !== req.userId) {
-			return res.status(403).json({ error: "Forbidden" });
-		}
-
-		await prisma.message.update({
-			where: { id: messageId },
-			data: {
-				isDeleted: true,
-				...(message.isOneTime
-					? { ciphertext: null, iv: null, auth_tag: null, wrapped_dek: null, text: null }
-					: {}),
-			},
-		});
-
-		return res.json({ success: true });
-	} catch (err) {
-		console.error(err);
-		return res.status(500).json({ error: "Server error" });
-	}
+	const result = await deleteMessageAs({ userId: req.userId, socketId: null }, { messageId: req.params.id });
+	if (result.error) return res.status(statusFor(result)).json({ error: result.error });
+	return res.json({ success: true });
 });
 
 // ─── Pin message ──────────────────────────────────────────────────────────────
 router.post("/:id/pin", requireAuth, async (req, res) => {
-	const messageId = parseIntSafe(req.params.id);
-	if (!messageId) return res.status(400).json({ error: "Invalid messageId" });
-
-	try {
-		const message = await prisma.message.findUnique({
-			where: { id: messageId },
-		});
-
-		if (!message) {
-			return res.status(404).json({ error: "Message not found" });
-		}
-
-		// چک کن user عضو این conversation هست
-		const member = await prisma.conversationMember.findFirst({
-			where: {
-				conversationId: message.conversationId,
-				userId: req.userId,
-			},
-		});
-
-		if (!member) {
-			return res.status(403).json({ error: "Forbidden" });
-		}
-
-		if (!message.isPinned) {
-			const pinnedCount = await prisma.message.count({
-				where: { conversationId: message.conversationId, isPinned: true, isDeleted: false },
-			});
-			if (pinnedCount >= 20) {
-				return res.status(400).json({ error: "Pin limit reached (20). Unpin something first." });
-			}
-		}
-
-		const updated = await prisma.message.update({
-			where: { id: messageId },
-			data: { isPinned: !message.isPinned },
-		});
-
-		return res.json({ isPinned: updated.isPinned });
-	} catch (err) {
-		console.error(err);
-		return res.status(500).json({ error: "Server error" });
-	}
+	const result = await togglePinAs({ userId: req.userId, socketId: null }, { messageId: req.params.id });
+	if (result.error) return res.status(statusFor(result)).json({ error: result.error });
+	return res.json({ isPinned: result.isPinned });
 });
 
 export default router;

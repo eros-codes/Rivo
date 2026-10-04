@@ -11,6 +11,8 @@ let _timer = null;
 let _visible = false;
 // flag set when hideNotification(true) is used so transitionend shouldn't trigger next
 let _hideWasImmediate = false;
+// a swipe that dismissed the notification must not also open the chat
+let _suppressClick = false;
 
 export function initInAppNotification() {
   if (_container) return;
@@ -57,6 +59,10 @@ export function initInAppNotification() {
 
   // Click opens chat (handled by main via custom event)
   _notif.addEventListener('click', () => {
+    if (_suppressClick) {
+      _suppressClick = false;
+      return;
+    }
     const cid = Number(_notif.dataset.contactId || 0);
     const mid = _notif.dataset.messageId ? Number(_notif.dataset.messageId) : null;
     if (!cid) return;
@@ -75,6 +81,7 @@ export function initInAppNotification() {
     startY = ev.clientY;
     dragging = true;
     lastDelta = 0;
+    _suppressClick = false;
     try {
       _notif.setPointerCapture(pointerId);
     } catch (_e) {
@@ -91,13 +98,15 @@ export function initInAppNotification() {
       _notif.style.transform = `translateY(${delta}px)`;
       lastDelta = delta;
     }
+    // a drag is not a tap
+    if (Math.abs(delta) > 8) _suppressClick = true;
   });
 
   function endDrag() {
     if (!dragging) return;
     dragging = false;
     try {
-      if (pointerId) _notif.releasePointerCapture(pointerId);
+      if (pointerId !== null) _notif.releasePointerCapture(pointerId);
     } catch (e) {
       void e;
     }

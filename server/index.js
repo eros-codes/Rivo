@@ -181,6 +181,21 @@ const authLimiter = rateLimit({
 	max: Number(process.env.AUTH_RATE_MAX) || 10,
 	standardHeaders: true,
 	legacyHeaders: false,
+	// Only failed attempts count: a normal sign-up (availability check, code,
+	// verification, register, login) must never run into the limit, while
+	// password guessing still does. Email sending has its own limits.
+	skipSuccessfulRequests: true,
+	// Many people can share one IP (mobile carrier NAT, a reverse proxy), so
+	// failures are counted per IP *and* account name: one person's typos do
+	// not lock everyone else out.
+	keyGenerator: (req) => {
+		const b = req.body || {};
+		const who = String(b.identifier || b.email || b.username || "").trim().toLowerCase().slice(0, 100);
+		return `${req.ip}|${who}`;
+	},
+	// Logging out is not a credential attempt: counting it meant that after a
+	// few logins/logouts the logout request got 429 and the user stayed signed in.
+	skip: (req) => req.path === "/logout",
 	// Without a custom handler, the client receives a plain-text response instead of JSON.
 	handler: (req, res) => res.status(429).json({ error: "Too many attempts, try again later" }),
 });
@@ -228,13 +243,17 @@ if (process.env.SENTRY_DSN) {
 const csrfExcluded = new Set([
 	"/api/auth/login",
 	"/api/auth/register",
-	"/api/auth/reset-password",
+	"/api/auth/check-availability",
 	// Allow unauthenticated verification flows
 	"/api/auth/send-code",
 	"/api/auth/verify-code",
 	// Password recovery via emailed link: the user is logged out and has no CSRF cookie yet.
 	"/api/auth/request-password-reset",
 	"/api/auth/reset-password-with-token",
+	// Logging out must always work, even when the CSRF cookie is missing or
+	// stale. The session cookies are SameSite=Lax, so a cross-site POST does not
+	// carry them anyway.
+	"/api/auth/logout",
 ]);
 
 function csrfProtection(req, res, next) {
@@ -263,28 +282,21 @@ if (enableHttpRateLimiter) {
 			max: HTTP_RATE_MAX,
 			standardHeaders: true,
 			legacyHeaders: false,
-			// skip static/socket/diag endpoints to avoid accidental blocking
-			skip: (req) => {
-				const p = req.path || "";
-				return (
-					p.startsWith("/public") ||
-					p.startsWith("/src") ||
-					p.startsWith("/node_modules") ||
-					p.startsWith("/socket.io") ||
-					p.startsWith("/__diag")
-				);
-			},
+			// Only the API is limited: one page load fetches dozens of static
+			// files, and many people can share an IP (carrier NAT).
+			skip: (req) => !(req.path || "").startsWith("/api/"),
 			handler: (req, res) => res.status(429).json({ error: "Too many requests" }),
 		}),
 	);
 }
 app.use(express.static("public"));
 app.use("/public", express.static("public"));
-// Only expose raw source in non-production environments to avoid leaking
-// server-side logic and helpers.
+// The sign-in page loads /utils/fetch.js directly (it is not bundled), so the
+// browser-side helpers must be served in every environment.
+app.use("/utils", express.static("src/utils"));
+// Only expose raw source in non-production environments
 if (process.env.NODE_ENV !== "production") {
 	app.use("/components", express.static("src/components"));
-	app.use("/utils", express.static("src/utils"));
 }
 
 if (process.env.NODE_ENV !== "production") {

@@ -1,14 +1,58 @@
-import { createMessage } from "../../../components/messages/messages.js";
+import { applyReactionsToMessage, createMessage } from "../../../components/messages/messages.js";
 import { updateContact as apiUpdateContact } from "./api.js";
-import { refreshCard, sortActiveChats, sortContacts } from "./chat-logic.js";
+import { moveToActiveChats, refreshCard, sortActiveChats, sortContacts } from "./chat-logic.js";
 import { resetInput } from "./chat-open.js";
 import { _updateContactCard } from "./chat-receive.js";
-import { createDateSeparator } from "./chat-render.js";
+import { createDateSeparator, messageForDisplay } from "./chat-render.js";
 import { nearBottom, scrollChatToBottom, scrollChatToBottomAfterPadding } from "./chat-scroll.js";
-import { _dom, getContactPreviewText, pendingMessages } from "./chat-state.js";
+import { _currentUserId, _dom, getContactPreviewText, newClientMessageId, normalizeServerMessage, pendingMessages } from "./chat-state.js";
 import { emitEditMessage, emitMessage } from "./socket.js";
-import { contacts, findMessageById, messages, state } from "./state.js";
+import { contacts, messages, state } from "./state.js";
 import { hideEmptyState, showToast } from "./ui.js";
+import { formatClock, localDateKey } from "../../../utils/date.js";
+
+// Sending to an archived chat brings it back (the server is told too)
+function _unarchiveOnSend(contact) {
+	if (!contact || !contact.isArchived) return;
+	contact.isArchived = false;
+	apiUpdateContact(contact.id, { isArchived: false }).catch(() => {});
+}
+
+// Redraws an edited message from its data (links, direction, "edited")
+function _redrawMessage(msgEl, msg) {
+	if (!msgEl || !msgEl.isConnected || !msg) return;
+	const contactId = state.contactUserId;
+	const idx = (messages[contactId] || []).indexOf(msg);
+	if (idx !== -1) msg.index = idx;
+	const el = createMessage(messageForDisplay(msg, contactId));
+	if (msg.id != null) el.dataset.messageId = String(msg.id);
+	if (Array.isArray(msg.reactions) && msg.reactions.length > 0) {
+		try {
+			applyReactionsToMessage(el, msg.reactions, _currentUserId() || null);
+		} catch (e) {
+			/* ignore */
+		}
+	}
+	if (msgEl.classList.contains("selected")) el.classList.add("selected");
+	msgEl.replaceWith(el);
+}
+
+function _findEditedMessage() {
+	const list = messages[state.contactUserId] || [];
+	if (state.editingMessageId != null) {
+		return list.find((m) => String(m.id) === String(state.editingMessageId)) || null;
+	}
+	// a message without a server id (still local)
+	return typeof state.msgIndex !== "undefined" ? list[Number(state.msgIndex)] || null : null;
+}
+
+function _messageElement(msg) {
+	if (!msg || !_dom.chatEl) return null;
+	if (msg.id != null) {
+		return _dom.chatEl.querySelector(`.chat-message[data-message-id="${msg.id}"]`);
+	}
+	return state.selectedMsg || null;
+}
 
 export async function sendMessage() {
 	// Edit mode
@@ -16,22 +60,15 @@ export async function sendMessage() {
 		// locate message object robustly
 		const txt = _dom.messageInput.value;
 		if (!txt || txt.trim() === "") return;
-		let msg = null;
-		if (
-			typeof state.msgIndex !== "undefined" &&
-			messages[state.contactUserId]
-		) {
-			msg = messages[state.contactUserId][Number(state.msgIndex)];
+		const msg = _findEditedMessage();
+		if (!msg) {
+			// it was deleted meanwhile
+			state.isEditing = false;
+			state.editingMessageId = null;
+			resetInput();
+			showToast("This message no longer exists");
+			return;
 		}
-		// fallback: try find by messageId present on selected DOM element
-		if (!msg && state.selectedMsg) {
-			const mid = state.selectedMsg.dataset?.messageId;
-			if (mid) {
-				const found = findMessageById(mid);
-				if (found) msg = found.message;
-			}
-		}
-		if (!msg) return;
 
 		// Breadcrumb: attempted edit
 		try {
@@ -51,6 +88,7 @@ export async function sendMessage() {
 		}
 		if (msg.text === txt.trim()) {
 			state.isEditing = false;
+			state.editingMessageId = null;
 			resetInput();
 			return;
 		}
@@ -59,19 +97,7 @@ export async function sendMessage() {
 		if (!msg.id) {
 			msg.text = txt.trim();
 			msg.isEdited = true;
-			if (state.selectedMsg) {
-				const textEl =
-					state.selectedMsg.querySelector(".chat-message-text");
-				if (textEl) textEl.textContent = msg.text;
-				if (!state.selectedMsg.querySelector(".chat-edited-label")) {
-					const label = document.createElement("span");
-					label.className = "chat-edited-label";
-					label.textContent = "edited";
-					state.selectedMsg
-						.querySelector(".chat-message-meta")
-						?.prepend(label);
-				}
-			}
+			_redrawMessage(_messageElement(msg), msg);
 			// if user was near bottom before editing, keep them scrolled to bottom
 			const nearBottomAfterEdit = nearBottom(
 				_dom.chatEl,
@@ -79,29 +105,29 @@ export async function sendMessage() {
 			);
 			if (nearBottomAfterEdit) scrollChatToBottomAfterPadding();
 			state.isEditing = false;
+			state.editingMessageId = null;
 			resetInput();
 			// local edit applied; no toast for edits
 			return;
 		}
 
 		// Normal path: message has server id — send edit request
+		const editedText = txt.trim();
+		const editedChat = state.contactUserId;
+		state.isEditing = false;
+		state.editingMessageId = null;
+		resetInput();
 		try {
-			await emitEditMessage(msg.id, txt.trim());
+			await emitEditMessage(msg.id, editedText);
 			// update local state
-			msg.text = txt.trim();
+			msg.text = editedText;
 			msg.isEdited = true;
-			if (state.selectedMsg) {
-				const textEl =
-					state.selectedMsg.querySelector(".chat-message-text");
-				if (textEl) textEl.textContent = msg.text;
-				if (!state.selectedMsg.querySelector(".chat-edited-label")) {
-					const label = document.createElement("span");
-					label.className = "chat-edited-label";
-					label.textContent = "edited";
-					state.selectedMsg
-						.querySelector(".chat-message-meta")
-						?.prepend(label);
-				}
+			if (state.contactUserId === editedChat) _redrawMessage(_messageElement(msg), msg);
+			// the edited message may be the chat's preview
+			const friend = contacts.find((c) => c.id === editedChat);
+			if (friend && String(friend.lastMessageId) === String(msg.id)) {
+				friend.lastMessage = getContactPreviewText(msg);
+				refreshCard(friend);
 			}
 		} catch (e) {
 			console.error("edit failed", e);
@@ -110,66 +136,80 @@ export async function sendMessage() {
 				"",
 			);
 		}
-		state.isEditing = false;
-		resetInput();
 		return;
 	}
 
 	// Forward mode
 	if (state.isForwarding) {
-		const msgsToSend =
+		const msgsToSend = (
 			state.forwardingMsgs.length > 0
 				? state.forwardingMsgs
-				: [state.forwardingMsg];
+				: [state.forwardingMsg]
+		).filter(Boolean);
 
 		const contact = contacts.find((c) => c.id === state.contactUserId);
 		if (!contact) return;
 		hideEmptyState(_dom.chatEl, _dom.emptyStateEl);
+		_unarchiveOnSend(contact);
+		if (!Array.isArray(messages[contact.id])) messages[contact.id] = [];
 
+		state.forwardingMsgs = [];
+		state.forwardingMsg = null;
+		state.isForwarding = false;
+		const extraText = _dom.messageInput.value;
+		resetInput();
+
+		let failed = 0;
+		let lastError = "";
 		for (const msg of msgsToSend) {
 			try {
 				const sent = await emitMessage({
 					conversationId: contact.conversationId,
 					text: msg.text,
-					forwardedFrom:
-						msg.forwardedFrom || (msg.user ? "You" : null),
+					forwardedFrom: msg.forwardedFrom || null,
 					forwardedText: msg.text,
+					clientMessageId: newClientMessageId(),
 				});
+				const list = messages[contact.id];
+				if (list.some((m) => String(m.id) === String(sent.id))) continue;
 				const normalized = _normalizeOutgoing(sent);
-				normalized.index = messages[state.contactUserId].length;
-				messages[state.contactUserId].push(normalized);
-				// Insert date separator if this message starts a new day
-				const prev =
-					messages[state.contactUserId][normalized.index - 1] || null;
-				if (!prev || prev.date !== normalized.date) {
-					_dom.chatEl.appendChild(
-						createDateSeparator(normalized.date),
-					);
+				normalized.index = list.length;
+				list.push(normalized);
+				// only draw it if this chat is still the one on screen
+				if (state.contactUserId === contact.id) {
+					// Insert date separator if this message starts a new day
+					const prev = list[normalized.index - 1] || null;
+					if (!prev || prev.date !== normalized.date) {
+						_dom.chatEl.appendChild(createDateSeparator(normalized.date));
+					}
+					_dom.chatEl.appendChild(createMessage(messageForDisplay(normalized, contact.id)));
 				}
-				_dom.chatEl.appendChild(createMessage(normalized));
-			} catch {
-				showToast("Failed to forward message", "");
+			} catch (e) {
+				failed++;
+				lastError = e?.message || "";
 			}
 		}
+		if (failed > 0) {
+			showToast(
+				msgsToSend.length > 1
+					? `${failed} of ${msgsToSend.length} messages could not be forwarded`
+					: lastError && lastError !== "Request timed out" && lastError !== "Socket not connected"
+						? lastError
+						: "Failed to forward message",
+				"",
+			);
+		}
 
-		state.forwardingMsgs = [];
-		state.forwardingMsg = null;
-		state.isForwarding = false;
+		if (state.contactUserId === contact.id) _updateContactCard();
 
-		if (_dom.messageInput.value.trim() !== "") {
-			if (state.isForwarding) {
-				state.isForwarding = false;
-				console.warn("sendMessage: forwarding flag still set, aborting recursion");
-			} else {
-				try {
-					await sendMessage();
-				} catch (e) {
-					console.error("nested sendMessage failed", e);
-				}
+		// Text typed next to the forwarded message(s) goes out as a normal message
+		if (extraText.trim() !== "" && state.contactUserId === contact.id) {
+			_dom.messageInput.value = extraText;
+			try {
+				await sendMessage();
+			} catch (e) {
+				console.error("sending the extra text failed", e);
 			}
-		} else {
-			resetInput();
-			_updateContactCard();
 		}
 		scrollChatToBottom();
 		return;
@@ -181,38 +221,31 @@ export async function sendMessage() {
 	const contact = contacts.find((c) => c.id === state.contactUserId);
 	if (!contact) return;
 
-	// Auto-unarchive on send
-	if (contact.isArchived) {
-		contact.isArchived = false;
-		apiUpdateContact(contact.id, { isArchived: false }).catch(() => {});
-		document.dispatchEvent(
-			new CustomEvent("contact:unarchived", {
-				detail: { id: contact.id },
-			}),
-		);
-	}
+	_unarchiveOnSend(contact);
 
 	const text = _dom.messageInput.value;
 	const replyTo = state.replyTo;
 
-	// Preserve previous contact preview state for rollback
-	const prevContactState = contact
-		? {
-				lastMessage: contact.lastMessage,
-				lastMessageTime: contact.lastMessageTime,
-				lastMessageDate: contact.lastMessageDate,
-				lastMessageSeen: contact.lastMessageSeen,
-			}
-		: null;
-
 	// create pending UI and send; messages[] is not updated until confirmation
-	_sendOutgoingMessage(contact, text, replyTo, prevContactState);
+	_sendOutgoingMessage(contact, text, replyTo, _snapshotPreview(contact));
 
 	resetInput();
 	state.replyTo = null;
 	scrollChatToBottom();
 	const msgInputEl = _dom.messageInput;
 	if (msgInputEl && typeof msgInputEl.focus === "function") msgInputEl.focus();
+}
+
+// Preview state of a contact before a send, to restore it if the send fails
+function _snapshotPreview(contact) {
+	return {
+		lastMessage: contact.lastMessage,
+		lastMessageId: contact.lastMessageId ?? null,
+		lastMessageTime: contact.lastMessageTime,
+		lastMessageDate: contact.lastMessageDate,
+		lastMessageTs: contact.lastMessageTs,
+		lastMessageSeen: contact.lastMessageSeen,
+	};
 }
 
 export async function sendOneTimeMessage() {
@@ -222,21 +255,11 @@ export async function sendOneTimeMessage() {
 	const contact = contacts.find((c) => c.id === state.contactUserId);
 	if (!contact) return;
 
-	if (contact.isArchived) {
-		contact.isArchived = false;
-		apiUpdateContact(contact.id, { isArchived: false }).catch(() => {});
-	}
+	_unarchiveOnSend(contact);
 
 	const replyTo = state.replyTo;
-	const prevContactState = {
-		lastMessage: contact.lastMessage,
-		lastMessageTime: contact.lastMessageTime,
-		lastMessageDate: contact.lastMessageDate,
-		lastMessageSeen: contact.lastMessageSeen,
-	};
-
 	// Use the existing pending-message flow, but pass isOneTime: true
-	_sendOutgoingMessage(contact, text, replyTo, prevContactState, true);
+	_sendOutgoingMessage(contact, text, replyTo, _snapshotPreview(contact), true);
 
 	resetInput();
 	state.replyTo = null;
@@ -251,20 +274,10 @@ export async function sendTimeCapsuleMessage(scheduledFor) {
 	const contact = contacts.find((c) => c.id === state.contactUserId);
 	if (!contact) return;
 
-	if (contact.isArchived) {
-		contact.isArchived = false;
-		apiUpdateContact(contact.id, { isArchived: false }).catch(() => {});
-	}
+	_unarchiveOnSend(contact);
 
 	const replyTo = state.replyTo;
-	const prevContactState = {
-		lastMessage: contact.lastMessage,
-		lastMessageTime: contact.lastMessageTime,
-		lastMessageDate: contact.lastMessageDate,
-		lastMessageSeen: contact.lastMessageSeen,
-	};
-
-	_sendOutgoingMessage(contact, text, replyTo, prevContactState, false, true, scheduledFor);
+	_sendOutgoingMessage(contact, text, replyTo, _snapshotPreview(contact), false, true, scheduledFor);
 
 	resetInput();
 	state.replyTo = null;
@@ -273,30 +286,11 @@ export async function sendTimeCapsuleMessage(scheduledFor) {
 }
 
 export function _normalizeOutgoing(m) {
-	return {
-		id: m.id,
-		user: true,
-		text: m.text,
-		time: new Date(m.createdAt).toLocaleTimeString([], {
-			hour: "2-digit",
-			minute: "2-digit",
-			hour12: false,
-		}),
-		date: new Date(m.createdAt).toISOString().slice(0, 10),
-		isEdited: false,
-		isPinned: m.isPinned || false,
-		replyTo: m.replyToId
-			? { id: m.replyToId, sender: m.replyToName, text: m.replyToText }
-			: null,
-		forwardedFrom: m.forwardedFrom || null,
-		forwardedText: m.forwardedText || null,
-		isSeen: m.isSeen || false,
-		isOneTime: m.isOneTime || false,
-		isTimeCapsule: m.isTimeCapsule || false,
-		scheduledFor: m.scheduledFor || null,
-		openedAt: m.openedAt || null,
-		isLocked: false,
-	};
+	const normalized = normalizeServerMessage(m);
+	normalized.user = true;
+	normalized.isEdited = false;
+	normalized.isLocked = false;
+	return normalized;
 }
 
 // Pending message helpers
@@ -371,13 +365,7 @@ export function _openFailedPanel(msgEl, pendingId) {
 			if (entry.prevContactState) {
 				const contact = contacts.find((c) => c.id === entry.contactId);
 				if (contact) {
-					contact.lastMessage = entry.prevContactState.lastMessage;
-					contact.lastMessageTime =
-						entry.prevContactState.lastMessageTime;
-					contact.lastMessageDate =
-						entry.prevContactState.lastMessageDate;
-					contact.lastMessageSeen =
-						entry.prevContactState.lastMessageSeen;
+					Object.assign(contact, entry.prevContactState);
 					refreshCard(contact);
 					sortActiveChats();
 					sortContacts();
@@ -419,12 +407,18 @@ export function _retryPending(pendingId) {
 	if (entry.node && entry.node.parentNode)
 		entry.node.parentNode.removeChild(entry.node);
 	pendingMessages.delete(pendingId);
+	// Same kind of message, same id: if the first attempt did reach the
+	// server, this returns that message instead of sending a second one.
 	if (contact)
 		_sendOutgoingMessage(
 			contact,
 			entry.text,
 			entry.replyTo,
 			entry.prevContactState,
+			entry.isOneTime,
+			entry.isTimeCapsule,
+			entry.scheduledFor,
+			entry.clientMessageId,
 		);
 }
 
@@ -437,6 +431,9 @@ export function _markPendingFailed(pendingId) {
 		text: entry.text,
 		time: entry.time,
 		failed: true,
+		isOneTime: entry.isOneTime,
+		isTimeCapsule: entry.isTimeCapsule,
+		scheduledFor: entry.scheduledFor,
 	});
 	if (failedNode) {
 		failedNode.dataset.pendingId = pendingId;
@@ -445,6 +442,7 @@ export function _markPendingFailed(pendingId) {
 			entry.node.parentNode.replaceChild(failedNode, entry.node);
 		entry.node = failedNode;
 		entry.timeoutId = null;
+		entry.failed = true;
 		pendingMessages.set(pendingId, entry);
 	}
 }
@@ -457,34 +455,45 @@ export async function _confirmPending(pendingId, sent) {
 	} catch (e) {
 		/* ignore */
 	}
-	// normalize and push into messages array
-	const normalized = _normalizeOutgoing(sent);
-	// preserve one-time flag
-	normalized.isOneTime = sent.isOneTime || false;
-	if (!messages[entry.contactId]) messages[entry.contactId] = [];
-	normalized.index = messages[entry.contactId].length;
-	messages[entry.contactId].push(normalized);
-
-	// replace DOM node with confirmed message
-	const newNode = createMessage(normalized);
-	if (newNode) {
-		newNode.dataset.index = normalized.index;
-		newNode.dataset.messageId = normalized.id;
-		// find current node and replace
-		if (entry.node && entry.node.parentNode)
-			entry.node.parentNode.replaceChild(newNode, entry.node);
-	}
-
 	// remove pending tracking
 	pendingMessages.delete(pendingId);
+
+	// normalize and push into messages array (once)
+	const normalized = _normalizeOutgoing(sent);
+	if (!messages[entry.contactId]) messages[entry.contactId] = [];
+	const list = messages[entry.contactId];
+	const already = list.find((m) => String(m.id) === String(normalized.id));
+	if (!already) {
+		normalized.index = list.length;
+		list.push(normalized);
+	}
+
+	// replace DOM node with confirmed message
+	const shown = already || normalized;
+	const newNode = createMessage(messageForDisplay(shown, entry.contactId));
+	if (newNode) {
+		newNode.dataset.index = shown.index;
+		newNode.dataset.messageId = shown.id;
+		if (entry.node && entry.node.parentNode) {
+			entry.node.parentNode.replaceChild(newNode, entry.node);
+		} else if (state.contactUserId === entry.contactId && _dom.chatEl && !already) {
+			// the chat was redrawn meanwhile and the pending bubble went with it
+			const prev = list[normalized.index - 1] || null;
+			if (!prev || prev.date !== normalized.date) _dom.chatEl.appendChild(createDateSeparator(normalized.date));
+			_dom.chatEl.appendChild(newNode);
+		}
+	}
 
 	// update contact preview
 	const contact = contacts.find((c) => c.id === entry.contactId);
 	if (contact) {
 		contact.lastMessage = getContactPreviewText(normalized);
+		contact.lastMessageId = normalized.id;
 		contact.lastMessageTime = normalized.time;
 		contact.lastMessageDate = normalized.date;
-		contact.lastMessageSeen = false;
+		const _sentTs = new Date(sent?.createdAt).getTime();
+		if (Number.isFinite(_sentTs)) contact.lastMessageTs = _sentTs;
+		contact.lastMessageSeen = normalized.isSeen === true;
 		refreshCard(contact);
 		sortActiveChats();
 	}
@@ -499,56 +508,57 @@ export function _sendOutgoingMessage(
 	isOneTime = false,
 	isTimeCapsule = false,
 	scheduledFor = null,
+	clientMessageId = null,
 ) {
 	if (!contact) return;
+	if (!_dom.chatEl) return;
+	const cmid = clientMessageId || newClientMessageId();
 
 	// Remove empty-state placeholder if present so the pending message replaces it
 	hideEmptyState(_dom.chatEl, _dom.emptyStateEl);
 	const now = new Date();
-	const timeStr = now.toLocaleTimeString([], {
-		hour: "2-digit",
-		minute: "2-digit",
-		hour12: false,
-	});
-	const dateStr = now.toISOString().slice(0, 10);
+	const timeStr = formatClock(now);
+	const dateStr = localDateKey(now);
 
 	// create pending DOM node
 	const pendingId = `p_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-	const pendingNode = createMessage({
+	const pendingNode = createMessage(messageForDisplay({
 		user: true,
 		text,
 		time: timeStr,
 		pending: true,
+		replyTo: replyTo ? { id: replyTo.id, sender: replyTo.sender, senderId: replyTo.senderId ?? null, text: replyTo.text } : null,
 		isOneTime: !!isOneTime,
 		isTimeCapsule: !!isTimeCapsule,
 		scheduledFor: scheduledFor || null,
 		isLocked: false,
-	});
+	}, contact.id));
 	pendingNode.dataset.pendingId = pendingId;
 	pendingNode.dataset.contactId = contact.id;
 
-	// insert date separator if needed
+	// insert date separator if needed (compare with the last thing on screen)
 	const prev =
 		messages[contact.id] && messages[contact.id].length
 			? messages[contact.id][messages[contact.id].length - 1]
 			: null;
-	if (!_dom.chatEl) return;
-	if (!prev || prev.date !== dateStr) {
+	const lastSep = Array.from(_dom.chatEl.querySelectorAll(".date-separator")).pop();
+	if ((!prev || prev.date !== dateStr) && (!lastSep || lastSep.dataset.date !== dateStr)) {
 		_dom.chatEl.appendChild(createDateSeparator(dateStr));
 	}
 	_dom.chatEl.appendChild(pendingNode);
 	scrollChatToBottom();
 
 	// update contact preview immediately
-	if (contact) {
-		contact.lastMessage = text;
-		contact.lastMessageTime = timeStr;
-		contact.lastMessageDate = dateStr;
-		contact.lastMessageSeen = false;
-		refreshCard(contact);
-		sortActiveChats();
-		sortContacts();
-	}
+	contact.lastMessage = text;
+	contact.lastMessageTime = timeStr;
+	contact.lastMessageDate = dateStr;
+	// used to order the Contacts section (most recent first)
+	contact.lastMessageTs = now.getTime();
+	contact.lastMessageSeen = false;
+	moveToActiveChats(contact);
+	refreshCard(contact);
+	sortActiveChats();
+	sortContacts();
 
 	// store pending entry
 	const timeoutId = setTimeout(() => {
@@ -565,6 +575,7 @@ export function _sendOutgoingMessage(
 		isOneTime: !!isOneTime,
 		isTimeCapsule: !!isTimeCapsule,
 		scheduledFor: scheduledFor || null,
+		clientMessageId: cmid,
 	});
 
 	// send via socket (don't await here to allow timeout behavior)
@@ -574,18 +585,24 @@ export function _sendOutgoingMessage(
 				conversationId: contact.conversationId,
 				text,
 				replyToId: replyTo?.id || null,
-				replyToName: replyTo?.sender || replyTo?.name || null,
+				// the quoted author's real name (labels are worked out per viewer)
+				replyToName: replyTo?.name || replyTo?.sender || null,
 				replyToText: replyTo?.text || null,
 				isOneTime: !!isOneTime,
 				isTimeCapsule: !!isTimeCapsule,
 				scheduledFor: scheduledFor || null,
+				clientMessageId: cmid,
 			});
 			// confirm pending (if still present)
 			await _confirmPending(pendingId, sent);
 		} catch (e) {
 			console.error("Failed to send message", e);
-			// mark failed in UI
+			// mark failed in UI, and say why when the server refused it
 			_markPendingFailed(pendingId);
+			const reason = e?.message || "";
+			if (reason && reason !== "Request timed out" && reason !== "Socket not connected" && reason !== "Server error") {
+				showToast(reason);
+			}
 		}
 	})();
 }

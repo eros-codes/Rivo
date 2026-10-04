@@ -14,7 +14,7 @@ router.get('/publicKey', (req, res) => {
 // Subscribe current user
 router.post('/subscribe', requireAuth, async (req, res) => {
   const sub = req.body;
-  if (!sub || !sub.endpoint) return res.status(400).json({ error: 'Invalid subscription' });
+  if (!sub || typeof sub.endpoint !== 'string' || !sub.endpoint) return res.status(400).json({ error: 'Invalid subscription' });
   try {
     const ok = await push.addSubscription(req.userId, sub);
     if (!ok) return res.status(500).json({ error: 'Failed to save subscription' });
@@ -28,7 +28,7 @@ router.post('/subscribe', requireAuth, async (req, res) => {
 // Unsubscribe current user's subscription by endpoint
 router.post('/unsubscribe', requireAuth, async (req, res) => {
   const { endpoint } = req.body || {};
-  if (!endpoint) return res.status(400).json({ error: 'Missing endpoint' });
+  if (typeof endpoint !== 'string' || !endpoint) return res.status(400).json({ error: 'Missing endpoint' });
   try {
     const ok = await push.removeSubscriptionByEndpoint(req.userId, endpoint);
     if (!ok) return res.status(500).json({ error: 'Failed to remove subscription' });

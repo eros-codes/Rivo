@@ -5,6 +5,8 @@
     justify-content : center;
     min-height: 100vh;
     overflow: hidden;
+    /* no double-tap zoom, and taps are not delayed */
+    touch-action: manipulation;
 }
 .container{
     display : flex;

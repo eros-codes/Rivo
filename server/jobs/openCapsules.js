@@ -1,11 +1,20 @@
 import prisma from "../prisma.js";
-import { unwrapDEK, decryptMessage } from "../utils/encryption.js";
+import { decryptBody } from "../utils/messageView.js";
 import push from "../utils/push.js";
+import { deliverToConversation, getRecipientsCached, hasVisibleSocket } from "../socket/index.js";
 
 // Process due time-capsules in bounded batches to avoid large DB/CPU spikes
 const OPEN_CAPSULES_BATCH_SIZE = parseInt(process.env.OPEN_CAPSULES_BATCH_SIZE || "50", 10) || 50;
 
-export async function openDueCapsules(io, userSockets) {
+let _running = false;
+
+// `io` and `userSockets` are accepted for backwards compatibility; delivery
+// goes through the shared socket helpers.
+// eslint-disable-next-line no-unused-vars
+export async function openDueCapsules(_io, _userSockets) {
+	// a slow run must not overlap with the next tick
+	if (_running) return;
+	_running = true;
 	const now = new Date();
 	try {
 		const whereClause = {
@@ -14,9 +23,6 @@ export async function openDueCapsules(io, userSockets) {
 			isDeleted: false,
 			scheduledFor: { lte: now },
 		};
-
-		const totalDue = await prisma.message.count({ where: whereClause });
-		if (!totalDue) return;
 
 		// Fetch a bounded batch ordered by scheduled time (oldest first)
 		const due = await prisma.message.findMany({
@@ -41,78 +47,55 @@ export async function openDueCapsules(io, userSockets) {
 
 			processed += 1;
 
-			let text = null;
-			let decryptionFailed = false;
-			try {
-				if (msg.ciphertext && msg.wrapped_dek) {
-					const dek = unwrapDEK(msg.wrapped_dek, msg.key_id || "v1");
-					text = decryptMessage(msg.ciphertext, msg.iv, msg.auth_tag, dek);
-				} else if (msg.text) {
-					text = msg.text;
-				}
-			} catch (e) {
-				console.error('failed to decrypt time capsule', msg.id, e);
-				decryptionFailed = true;
-				text = null;
-			}
-
-			const roomName = `conversation:${msg.conversationId}`;
+			const body = decryptBody(msg);
 			const payload = {
 				messageId: msg.id,
 				conversationId: msg.conversationId,
-				text,
+				senderId: msg.senderId,
+				text: body.ok ? body.text : null,
 				openedAt: now.toISOString(),
-				...(decryptionFailed ? { error: true } : {}),
+				...(body.ok ? {} : { error: true }),
 			};
 
-			// Emit to the conversation room first
-			io.to(roomName).emit("message:capsule:opened", payload);
-
-			// Also attempt to deliver to connected sockets not joined to the room
+			// Every device of both people (the sender sees "Opened" too)
 			try {
-				const members = await prisma.conversationMember.findMany({ where: { conversationId: msg.conversationId }, select: { userId: true } });
-				for (const m of members) {
-					const uid = m.userId;
-					if (uid === msg.senderId) continue; // skip sender
-					let deliveredToSocket = false;
-					const sidSet = (userSockets && userSockets.get(uid)) || new Set();
-					for (const sid of sidSet) {
-						const s = io.sockets.sockets.get(sid);
-						if (s) {
-							try {
-								if (!(s.rooms && s.rooms.has(roomName))) {
-									s.emit('message:capsule:opened', payload);
-								}
-								deliveredToSocket = true;
-							} catch (e) {
-								/* ignore per-socket errors */
-							}
-						}
-					}
-					// If user had no active socket receives, fallback to push
-					if (!deliveredToSocket) {
-						try {
-							await push.sendNotificationToUser(uid, {
-								title: 'Time capsule unlocked',
-								body: 'A time capsule in your chat has been unlocked. Open the app to view.',
-								data: { conversationId: msg.conversationId, messageId: msg.id, url: `/?conversationId=${msg.conversationId}&messageId=${msg.id}` },
-							});
-						} catch (e) {
-							/* suppress push errors */
-						}
-					}
-				}
+				await deliverToConversation(msg.conversationId, "message:capsule:opened", payload);
 			} catch (e) {
 				console.error('openDueCapsules delivery failed', e);
 			}
+
+			// Notify recipients who do not have the app open
+			try {
+				const rows = await getRecipientsCached(msg.conversationId);
+				const notified = new Set();
+				for (const r of rows) {
+					const uid = r.ownerId;
+					if (uid === msg.senderId || notified.has(uid) || r.isMuted || r.isBlocked) continue;
+					notified.add(uid);
+					if (hasVisibleSocket(uid)) continue;
+					push.sendNotificationToUser(uid, {
+						title: r.nickname || 'Time capsule unlocked',
+						body: 'A time capsule in your chat has been unlocked. Open the app to view.',
+						data: {
+							conversationId: msg.conversationId,
+							messageId: msg.id,
+							url: `/chat/main.html?conversationId=${msg.conversationId}&messageId=${msg.id}`,
+						},
+						tag: `conversation-${msg.conversationId}`,
+					}).catch(() => { /* suppress push errors */ });
+				}
+			} catch (e) {
+				console.error('openDueCapsules push failed', e);
+			}
 		}
 
-		if (totalDue > processed) {
-			console.info(`openDueCapsules: processed ${processed}/${totalDue} due capsules (batch size ${OPEN_CAPSULES_BATCH_SIZE}); ${totalDue - processed} remain`);
-		} else {
-			console.info(`openDueCapsules: processed ${processed} due capsules`);
+		if (processed > 0) {
+			const more = due.length === OPEN_CAPSULES_BATCH_SIZE ? " (more may remain for the next run)" : "";
+			console.info(`openDueCapsules: opened ${processed} capsule(s)${more}`);
 		}
 	} catch (e) {
 		console.error('openDueCapsules error', e);
+	} finally {
+		_running = false;
 	}
 }

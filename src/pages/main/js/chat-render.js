@@ -1,21 +1,20 @@
 import { applyReactionsToMessage, createMessage } from "../../../components/messages/messages.js";
 import { handleCapsuleOpened } from "./chat-capsule.js";
 import { openChat } from "./chat-open.js";
-import { updatePinCount } from "./chat-pinned.js";
+import { updatePinnedMessage } from "./chat-pinned.js";
 import { nearBottom, scrollChatToBottom } from "./chat-scroll.js";
-import { _dom, _pendingCapsuleReveals, _revealedCapsuleIds, _suppressInjectScroll, _unreadSeparatorContactId, _unreadSeparatorIndex } from "./chat-state.js";
+import { _currentUserId, _dom, _pendingCapsuleReveals, _revealedCapsuleIds, _suppressInjectScroll, _unreadSeparatorContactId, _unreadSeparatorIndex, displayName, pendingMessages } from "./chat-state.js";
 import { getCurrentUser } from "./currentUser.js";
 import { contacts, messages, state } from "./state.js";
 import { hideEmptyState, showEmptyState } from "./ui.js";
+import { dateFromKey, localDateKey, previousDateKey } from "../../../utils/date.js";
 
 export function formatDateLabel(dateStr) {
-	const date = new Date(dateStr);
-	const today = new Date();
-	const yesterday = new Date();
-	yesterday.setDate(today.getDate() - 1);
-
-	if (dateStr === today.toISOString().slice(0, 10)) return "Today";
-	if (dateStr === yesterday.toISOString().slice(0, 10)) return "Yesterday";
+	const today = localDateKey();
+	if (dateStr === today) return "Today";
+	if (dateStr === previousDateKey(today)) return "Yesterday";
+	const date = dateFromKey(dateStr);
+	if (Number.isNaN(date.getTime())) return "";
 	return date.toLocaleDateString("en-US", {
 		month: "long",
 		day: "numeric",
@@ -23,9 +22,36 @@ export function formatDateLabel(dateStr) {
 	});
 }
 
+/**
+ * Labels as the viewer should read them: a quote shows "You" when it quotes
+ * the viewer, otherwise the contact (whatever name the sender stored).
+ */
+export function messageForDisplay(message, contactId = state.contactUserId) {
+	if (!message) return message;
+	const contact = contacts.find((c) => c.id === contactId);
+	const other = contact && !contact.isSaved ? displayName(contact) : "";
+	let replyTo = message.replyTo;
+	if (replyTo) {
+		let label;
+		if (replyTo.senderId != null) {
+			label = Number(replyTo.senderId) === Number(_currentUserId()) ? "You" : other || replyTo.sender || "";
+		} else if (replyTo.sender === "You") {
+			// older messages stored "You" from the sender's point of view
+			label = message.user ? "You" : other || "You";
+		} else {
+			label = replyTo.sender || other || "";
+		}
+		replyTo = { ...replyTo, sender: label };
+	}
+	let forwardedFrom = message.forwardedFrom;
+	if (forwardedFrom === "You" && !message.user && other) forwardedFrom = other;
+	return { ...message, replyTo, forwardedFrom };
+}
+
 export function createDateSeparator(dateStr) {
 	const el = document.createElement("div");
 	el.className = "date-separator";
+	el.dataset.date = dateStr || "";
 	const span = document.createElement("span");
 	span.textContent = formatDateLabel(dateStr);
 	el.appendChild(span);
@@ -43,6 +69,23 @@ export function createUnreadSeparator() {
 	return el;
 }
 
+// Messages still being sent (or that failed) are not in messages[] yet; a
+// redraw must keep them at the end instead of dropping them.
+function _reattachPending(userId) {
+	let any = false;
+	try {
+		for (const entry of pendingMessages.values()) {
+			if (entry && entry.contactId === userId && entry.node) {
+				if (!entry.node.isConnected) _dom.chatEl.appendChild(entry.node);
+				any = true;
+			}
+		}
+	} catch (e) {
+		/* ignore */
+	}
+	return any;
+}
+
 export function injectMessages(userId) {
 	if (!_dom.chatEl) return;
 
@@ -57,8 +100,13 @@ export function injectMessages(userId) {
 		/* ignore */
 	}
 	const userMessages = messages[userId];
-	if (!userMessages) {
+	if (!Array.isArray(userMessages) || userMessages.length === 0) {
+		_dom.chatEl.textContent = "";
+		_dom.pinnedMessageContainer.style.display = "none";
+		_dom.chatHeader.style.borderRadius = "1rem";
+		state.pinnedIndexes = [];
 		showEmptyState(_dom.chatEl, _dom.emptyStateEl);
+		if (state.contactUserId === userId && _reattachPending(userId)) hideEmptyState(_dom.chatEl, _dom.emptyStateEl);
 		return;
 	}
 
@@ -67,11 +115,6 @@ export function injectMessages(userId) {
 	_dom.chatHeader.style.borderRadius = "1rem";
 	state.pinnedIndexes = [];
 	let lastDate = null;
-
-	if (Array.isArray(userMessages) && userMessages.length === 0) {
-		showEmptyState(_dom.chatEl, _dom.emptyStateEl);
-		return;
-	}
 	hideEmptyState(_dom.chatEl, _dom.emptyStateEl);
 
 	// find the first incoming message that is unseen.
@@ -128,17 +171,6 @@ export function injectMessages(userId) {
 		}
 	}
 
-	// Debug: log unseen summary to help diagnose missing separator
-	try {
-		const _unseenCount = Array.isArray(userMessages)
-			? userMessages.filter((m) => m.isSeen !== true && !m.user).length
-			: 0;
-		const contact = contacts.find((c) => c.id === userId);
-		const _contactUnread = contact ? contact.unreadCount || 0 : 0;
-	} catch (e) {
-		/* ignore debug errors */
-	}
-
 	const fragment = document.createDocumentFragment();
 	userMessages.forEach((message, index) => {
 		message.index = index;
@@ -153,7 +185,7 @@ export function injectMessages(userId) {
 			fragment.appendChild(createUnreadSeparator());
 		}
 
-		const _msgEl = createMessage(message);
+		const _msgEl = createMessage(messageForDisplay(message, userId));
 		if (message.reactions && message.reactions.length > 0) {
 			try {
 				const _cu = getCurrentUser();
@@ -168,17 +200,19 @@ export function injectMessages(userId) {
 		if (message.isPinned) state.pinnedIndexes.push(index);
 	});
 
-	if (state.pinnedIndexes.length > 0) {
-		state.pinnedIndexes.sort((a, b) => a - b);
-		const lastIdx = state.pinnedIndexes[state.pinnedIndexes.length - 1];
-		_dom.pinnedMessageText.textContent = messages[userId][lastIdx].text;
-		_dom.pinnedMessageText.dataset.messageId = String(messages[userId][lastIdx].id);
-		_dom.pinnedMessageContainer.style.display = "flex";
-		_dom.chatHeader.style.borderRadius = "1rem 1rem 0 0";
-		updatePinCount(lastIdx);
+	state.pinnedIndexes.sort((a, b) => a - b);
+	// The banner prefers the server's full pinned list (it also covers
+	// messages that are not loaded yet) and falls back to the loaded ones.
+	if (state.contactUserId === userId) {
+		try {
+			updatePinnedMessage(userId);
+		} catch (e) {
+			/* ignore */
+		}
 	}
 
 	_dom.chatEl.appendChild(fragment);
+	if (state.contactUserId === userId) _reattachPending(userId);
 
 	// Track messageIds we schedule reveals for during this render so we
 	// don't double-schedule the same reveal from the offline-scan below.
@@ -218,7 +252,7 @@ export function injectMessages(userId) {
 						if (existingEl) {
 							// If element wasn't rendered as locked, replace with a locked rendering
 							if (!existingEl.classList.contains('capsule-locked')) {
-								const newEl = createMessage({ ...m, isLocked: true });
+								const newEl = createMessage(messageForDisplay({ ...m, isLocked: true }, userId));
 								newEl.dataset.messageId = m.id;
 								existingEl.parentNode.replaceChild(newEl, existingEl);
 							}
@@ -301,24 +335,4 @@ export function injectMessages(userId) {
 			});
 		}
 	} catch (e) { /* ignore */ }
-
-	// After rendering messages, apply reaction badges for messages that have reactions
-	try {
-		const _cu = getCurrentUser();
-		const currentUserId = _cu?.id || null;
-		userMessages.forEach((msg) => {
-			if (
-				msg &&
-				Array.isArray(msg.reactions) &&
-				msg.reactions.length > 0
-			) {
-				const msgEl = _dom.chatEl.querySelector(
-					`.chat-message[data-message-id="${msg.id}"]`,
-				);
-				try { applyReactionsToMessage(msgEl, msg.reactions, currentUserId); } catch (e) { /* ignore */ }
-					}
-				});
-	} catch (e) {
-		/* ignore */
-	}
 }

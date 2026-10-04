@@ -1,7 +1,7 @@
 {
   "name": "Rivo",
   "short_name": "Rivo",
-  "start_url": "/index.html",
+  "start_url": "/chat/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#1a1a2e",

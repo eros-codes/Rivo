@@ -2,8 +2,9 @@ import "emoji-picker-element";
 import {
 	updateContact as apiUpdateContact,
 	logout as apiLogout,
-	getContacts,
 	getMe,
+	getMessagesPage,
+	getPinnedMessages,
 	deleteAccount,
 } from "./js/api.js";
 import { createContactCard } from "../../components/contact-cards/contact-card.js";
@@ -34,11 +35,11 @@ import {
 	nearTop,
 	clearOpenSuppression,
 	loadOlderMessages,
-		updatePinCount,
-		updatePinnedMessage,
-		updatePinnedData,
-		getPinnedData,
-		scrollToPinnedMessage,
+	updatePinCount,
+	updatePinnedMessage,
+	updatePinnedData,
+	getPinnedData,
+	scrollToPinnedMessage,
 	basePadding,
 	lineHeight,
 	maxLines,
@@ -46,7 +47,18 @@ import {
 	receiveMessage,
 	handleMessagesSeen,
 	handleOnetimeDeleted,
+	getContactPreviewText,
+	DEFAULT_PAGE_LIMIT,
 } from "./js/chat.js";
+import { markOpenChatSeen } from "./js/chat-open.js";
+import { messageForDisplay } from "./js/chat-render.js";
+import { setContactsSync } from "./js/chat-receive.js";
+import { normalizeServerMessage, displayName, pinnedData } from "./js/chat-state.js";
+import {
+	normalizeServerContact,
+	fetchAllContacts,
+	syncContactsWithServer,
+} from "./js/contact-model.js";
 import {
 	initChatLogic,
 	updateTotalUnreadCount,
@@ -70,8 +82,8 @@ import {
 import {
 	initSelection,
 	enterSelectionMode,
+	toggleSelectedMessage,
 	cancelSelection,
-	updateSelectionCount,
 	handleBulkDelete,
 	prepareBulkForward,
 	executeBulkForward,
@@ -80,12 +92,14 @@ import {
 	initProfile,
 	openProfile,
 	closeProfile,
+	applyComposerState,
 	handleDeleteChat,
 	handleEditNickname,
 	handleEditNicknameDone,
 	handleEditNicknameCancel,
 	handleBlockContact,
 	handleDeleteContact,
+	refreshProfile,
 } from "./js/profile.js";
 import { initCardContextMenu, closeAllSwipes } from "./js/card-context-menu.js";
 import {
@@ -96,7 +110,7 @@ import { initSearch, runSearch } from "./js/search.js";
 import { initEditProfile, openEditProfile } from "./js/edit-profile.js";
 import { initSettings, openSettings, closeSettings } from "./js/settings.js";
 import { initAddContact } from "./js/add-contact.js";
-import { initAllContacts, setAllContacts, CONTACTS_PREVIEW_COUNT } from "./js/all-contacts.js";
+import { initAllContacts } from "./js/all-contacts.js";
 import {
 	initSocket,
 	emitTypingStart,
@@ -107,8 +121,7 @@ import {
 	setOnetimeDeletedHandler,
 	setCapsuleOpenedHandler,
 } from "./js/socket.js";
-import { applyReactionsToMessage } from "../../components/messages/messages.js";
-// findMessageById imported via chat/state when needed
+import { applyReactionsToMessage, createMessage } from "../../components/messages/messages.js";
 import { loadThemeFromStorage } from "../../utils/theme.js";
 import { parseSvg } from "../../utils/svg.js";
 import {
@@ -117,6 +130,7 @@ import {
 	mountAvatar,
 	refreshUserAvatars,
 } from "../../utils/dom.js";
+import { formatClock, localDateKey } from "../../utils/date.js";
 import { getCurrentUser } from "./js/currentUser.js";
 import { copyIcon, deleteIcon, pinIcon, replyIcon, archiveIcon, savedIconSvg } from "./js/icons.js";
 
@@ -161,176 +175,77 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 	try {
 		initInAppNotification();
-		// open chat when in-app notification is clicked — use same flow as archived dialog
-		document.addEventListener("in-app-notif:open", async (e) => {
+		// a tap on an in-app notification (or a push) opens that chat, at the
+		// message when one is given
+		document.addEventListener("in-app-notif:open", (e) => {
+			const id = Number(e?.detail?.contactId);
+			if (!Number.isFinite(id) || !id) return;
+			const messageId = e?.detail?.messageId || null;
 			try {
-				const id = e?.detail?.contactId;
-				const messageId = e?.detail?.messageId || null;
-				if (!id) return;
-				// Mirror contact-click flow exactly
-				const prevFriend = contacts.find(
-					(c) => c.id === state.contactUserId,
-				);
-				if (prevFriend && prevFriend.id !== Number(id)) {
-					try {
-						const sock = getSocket();
-						if (sock && prevFriend.conversationId) {
-							sock.emit("conversation:leave", {
-								conversationId: prevFriend.conversationId,
-							});
-						}
-					} catch (err) {
-						/* ignore */
-					}
-
-					if (
-						!prevFriend.isPinned &&
-						!prevFriend.isSaved &&
-						prevFriend.unreadCount === 0 &&
-						prevFriend.lastMessageSeen !== false
-					) {
-						moveToContacts(prevFriend);
-						sortActiveChats();
-						sortContacts();
-					}
-				}
-
-				state.contactUserId = Number(id);
-				const friend = contacts.find(
-					(c) => c.id === state.contactUserId,
-				);
-				if (!friend) return;
-
-				// join the new conversation room so server considers us present
-				try {
-					const sock = getSocket();
-					if (sock && friend.conversationId) {
-						setActiveConversation(friend.conversationId);
-						sock.emit("conversation:join", {
-							conversationId: friend.conversationId,
-						});
-					}
-				} catch (e) {
-					/* ignore */
-				}
-
-				if (friend.unreadCount > 0) {
-					friend.lastMessageSeen = true;
-				}
-				friend.unreadCount = 0;
-				updateTotalUnreadCount();
-
-				// remember where this card came from so undo/delete logic can restore correctly
-				friend._previousContainer = "contacts";
-				const existingCard = activeChatsContainer.querySelector(
-					`[data-user-id="${friend.id}"]`,
-				);
-				if (existingCard) {
-					const wrapper =
-						existingCard.closest(".active-chat-wrapper") ??
-						existingCard;
-					wrapper.replaceWith(createActiveChatCard(friend));
-				} else {
-					// remove from contacts list if present and append to active
-					const card = document.querySelector(
-						`[data-user-id="${friend.id}"]`,
-					);
-					if (card) card.remove();
-					activeChatsContainer.appendChild(
-						createActiveChatCard(friend),
-					);
-				}
-
-				mountAvatar(chatProfilePicture, {
-					name: friend.name,
-					nickname: friend.nickname,
-					profilePics: friend.profilePics,
-					className: "chat-profile-picture",
-					isOnline: friend.isOnline,
-				});
-				try {
-					const chatProfileWrapper =
-						document.querySelector(".chat-profile");
-					if (chatProfileWrapper)
-						chatProfileWrapper.setAttribute(
-							"data-user-id",
-							String(friend.id),
-						);
-				} catch (e) {
-					/* ignore */
-				}
-				chatName.textContent = friend.nickname || friend.name;
 				closeSettings();
-				try {
-					await openChat(true);
-				} catch (e) { /* ignore */ }
-
-				// If notification supplied a messageId, try to scroll to it after messages load
-				if (messageId) {
-					let attempts = 0;
-					const tryScroll = () => {
-						const el = document.querySelector(`.chat-message[data-message-id="${messageId}"]`);
-						if (el) {
-							el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-							try { highlightMessage(el); } catch (e) { /* ignore */ }
-						} else if (attempts < 6) {
-							attempts++;
-							setTimeout(tryScroll, 500);
-						}
-					};
-					tryScroll();
-				}
-
-				if (friend.isBlocked) {
-					messageContainer.style.display = "none";
-					const _ub = unblockActionBtn[0];
-					if (_ub) _ub.style.display = "flex";
-				} else {
-					messageContainer.style.display = "flex";
-					const _ub = unblockActionBtn[0];
-					if (_ub) _ub.style.display = "none";
-				}
-				if (window.innerWidth <= 700) {
-					chatPart.style.display = "flex";
-					peoplePart.style.display = "none";
-				}
 			} catch (err) {
-				// ignore
+				/* ignore */
 			}
+			openChatWithContact(id, { focusMessageId: messageId }).catch(() => {});
 		});
 	} catch (e) {
 		// ignore init errors
 	}
 
-	// Rely on HttpOnly cookie for auth; if user info not present, ask server for current user.
+	// Rely on HttpOnly cookie for auth; the stored copy only has display data.
+	const _storeMe = (me) => {
+		const safeUser = {
+			id: me.id,
+			name: me.name || "",
+			username: me.username || "",
+			nickname: me.username || "",
+			profilePics: Array.isArray(me.profilePics) ? me.profilePics : [],
+			bio: me.bio || "",
+			email: me.email || "",
+		};
+		try {
+			localStorage.setItem("user", JSON.stringify(safeUser));
+		} catch (e) {
+			/* storage blocked: the page still works with the in-memory copy */
+		}
+		return safeUser;
+	};
 	let currentUser = getCurrentUser();
 	if (!currentUser || !currentUser.id) {
 		try {
 			const me = await getMe();
 			if (me && me.id) {
-				// store only non-sensitive fields
-				const safeUser = {
-					id: me.id,
-					name: me.name || "",
-					username: me.username || "",
-					nickname: me.nickname || me.username || "",
-					profilePics: me.profilePics || [],
-					isSaved: me.isSaved || false,
-					isOnline: me.isOnline || false,
-					conversationId: me.conversationId || null,
-					bio: me.bio || "",
-					email: me.email || "",
-				};
-				localStorage.setItem("user", JSON.stringify(safeUser));
-				currentUser = safeUser;
+				currentUser = _storeMe(me);
 			} else {
-				window.location.href = "/auth/auth.html";
+				window.location.replace("/auth/auth.html");
 				return;
 			}
 		} catch (e) {
-			window.location.href = "/auth/auth.html";
+			window.location.replace("/auth/auth.html");
 			return;
 		}
+	} else {
+		// The stored copy may be old (changed on another device) or even belong
+		// to another account (signed in as someone else in another tab).
+		getMe()
+			.then((me) => {
+				if (!me || !me.id) return;
+				if (Number(me.id) !== Number(currentUser.id)) {
+					_storeMe(me);
+					window.location.reload();
+					return;
+				}
+				const fresh = _storeMe(me);
+				Object.assign(currentUser, fresh);
+				try {
+					refreshUserAvatars(currentUser);
+				} catch (err) {
+					/* ignore */
+				}
+			})
+			.catch(() => {
+				/* offline: keep the stored copy (an ended session redirects) */
+			});
 	}
 
 	// Theme
@@ -435,6 +350,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 	const blockContactBtns = document.querySelectorAll("#block-contact-btn");
 	const deleteContactBtns = document.querySelectorAll("#delete-contact-btn");
 	const unblockActionBtn = document.querySelectorAll("#unblock-action-btn");
+	const chatUnavailableNotice = document.getElementById("chat-unavailable-notice");
 	const emojiBtn = document.querySelector(".emoji-btn");
 	const emojiPicker = document.querySelector("emoji-picker");
 	let savedSelectionStart = 0;
@@ -572,45 +488,71 @@ document.addEventListener("DOMContentLoaded", async function () {
 	);
 
 	// Delete account dialog listeners
+	const _resetDeleteAccountDialog = () => {
+		if (deleteAccountPassword) deleteAccountPassword.value = "";
+		if (deleteAccountError) deleteAccountError.textContent = "";
+		if (deleteAccountConfirm) deleteAccountConfirm.disabled = false;
+	};
 	deleteAccountCancel?.addEventListener("click", () => {
 		try {
 			deleteAccountDialog.close();
 		} catch (e) {
 			/* ignore */
 		}
-		if (deleteAccountPassword) deleteAccountPassword.value = "";
-		if (deleteAccountError) deleteAccountError.textContent = "";
 	});
+	// however it closes (button or Esc), the password is not kept
+	deleteAccountDialog?.addEventListener("close", _resetDeleteAccountDialog);
 
+	let _deletingAccount = false;
 	deleteAccountConfirm?.addEventListener("click", async () => {
-		const password =
-			(deleteAccountPassword &&
-				deleteAccountPassword.value &&
-				deleteAccountPassword.value.trim()) ||
-			"";
+		if (_deletingAccount) return;
+		// passwords are compared exactly as typed
+		const password = (deleteAccountPassword && deleteAccountPassword.value) || "";
 		if (!password) {
 			if (deleteAccountError)
 				deleteAccountError.textContent = "Please enter your password.";
 			return;
 		}
 		if (deleteAccountError) deleteAccountError.textContent = "";
+		_deletingAccount = true;
 		if (deleteAccountConfirm) deleteAccountConfirm.disabled = true;
 
 		try {
 			const res = await deleteAccount(password);
 			if (res?.success) {
-				window.location.href = "/auth/auth.html";
-			} else {
-				if (deleteAccountError)
-					deleteAccountError.textContent =
-						res?.error || "Incorrect password.";
-				if (deleteAccountConfirm) deleteAccountConfirm.disabled = false;
+				try {
+					getSocket()?.disconnect();
+				} catch (e) {
+					/* ignore */
+				}
+				try {
+					if (window.pushUnsubscribe)
+						await Promise.race([
+							window.pushUnsubscribe(),
+							new Promise((resolve) => setTimeout(resolve, 2000)),
+						]);
+				} catch (e) {
+					/* ignore */
+				}
+				try {
+					localStorage.removeItem("user");
+				} catch (e) {
+					/* ignore */
+				}
+				window.location.replace("/auth/auth.html");
+				return;
 			}
+			if (deleteAccountError)
+				deleteAccountError.textContent = res?.error || "Incorrect password.";
 		} catch (err) {
 			if (deleteAccountError)
-				deleteAccountError.textContent = err?.message || "Connection error.";
-			if (deleteAccountConfirm) deleteAccountConfirm.disabled = false;
+				deleteAccountError.textContent =
+					err?.status === 403
+						? "Incorrect password."
+						: err?.message || "Connection error.";
 		}
+		_deletingAccount = false;
+		if (deleteAccountConfirm) deleteAccountConfirm.disabled = false;
 	});
 
 	// ─── Empty state element ──────────────────────────────────────────────────
@@ -636,6 +578,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 	// search debounce
 	let _searchDebounce = null;
 	let _lastSearchQuery = "";
+
+	// Counts chat openings: a slow opening must not finish over a newer one
+	// (declared before anything below can open a chat)
+	let _openSeq = 0;
 
 	// ─── Init all modules ─────────────────────────────────────────────────────
 	initToast({ toaster, messageContainer, toastMessage, toastIcon, undoBtn });
@@ -723,6 +669,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 		msgActionmsg,
 		messageInput,
 		sendMessageBtn,
+		// forwarding opens the target chat exactly like tapping it
+		openChatWithContact: (id) => openChatWithContact(id),
 	});
 
 	initProfile({
@@ -743,54 +691,32 @@ document.addEventListener("DOMContentLoaded", async function () {
 		chatProfilePic,
 		activeChatsContainer,
 		contactsContainer,
+		messageContainer,
+		unblockActionBtn,
+		unavailableNotice: chatUnavailableNotice,
 		deleteIcon,
 		onContactAction: _onContactAction,
 	});
+	// Esc closes the desktop profile dialog natively: tidy up the same way
+	profileDialog?.addEventListener("close", () => {
+		if (state.isProfileDialogOpen) closeProfile();
+	});
+	// A closed chat leaves no menu or selection behind
+	document.addEventListener("chat:closed", () => {
+		if (state.isMenuOpen) closeContextMenu();
+		if (state.isSelecting) cancelSelection();
+	});
 
 	initAllContacts({
-		onOpen: (userId) => {
-			const card = contactsContainer.querySelector(`[data-wrapper-user-id="${userId}"]`) || document.querySelector(`[data-wrapper-user-id="${userId}"]`);
-			if (card) card.click();
-		},
+		onContactAction: _onContactAction,
+		// exactly the same flow as tapping a card on the main page
+		onOpenChat: (userId) => openChatWithContact(userId),
 	});
 
-	initCardContextMenu(activeChatsContainer, (action, userId) => {
-		state.contactUserId = userId;
-		const friend = contacts.find((c) => c.id === userId);
-		if (!friend) return;
-		// Do not allow actions that would move or modify the Saved Messages card
-		if (friend.isSaved) return;
-
-		if (action === "pin") {
-			friend.isPinned = !friend.isPinned;
-			apiUpdateContact(friend.id, { isPinned: friend.isPinned });
-			if (friend.isPinned) {
-				moveToActiveChats(friend);
-			} else {
-				if (
-					friend.unreadCount === 0 &&
-					friend.lastMessageSeen !== false
-				) {
-					moveToContacts(friend);
-				} else {
-					refreshCard(friend);
-				}
-			}
-			sortActiveChats();
-			sortContacts();
-		}
-		if (action === "mute") {
-			friend.isMuted = !friend.isMuted;
-			apiUpdateContact(friend.id, { isMuted: friend.isMuted });
-			refreshCard(friend);
-		}
-		if (action === "archive") {
-			_archiveContact(userId);
-		}
-		if (action === "delete") {
-			handleDeleteChat();
-		}
-	});
+	// Swipe actions on Active Chats cards: the same actions as the card menu
+	initCardContextMenu(activeChatsContainer, (action, userId) =>
+		_onContactAction(action, userId),
+	);
 
 	initSearch({
 		mainContent,
@@ -798,47 +724,14 @@ document.addEventListener("DOMContentLoaded", async function () {
 		searchContactsList,
 		searchMessagesList,
 		onContactAction: _onContactAction,
-		onMessageClick: async (contact, msgIndex) => {
+		// a contact (messageId = null) or a message result
+		onMessageClick: (contact, messageId) => {
 			searchbar.classList.remove("open");
 			searchInput.value = "";
+			_lastSearchQuery = "";
 			runSearch("");
-
-			state.contactUserId = contact.id;
-			mountAvatar(chatProfilePicture, {
-				name: contact.name,
-				nickname: contact.nickname,
-				profilePics: contact.profilePics,
-				className: "chat-profile-picture",
-				isOnline: contact.isOnline,
-			});
-			try {
-				const chatProfileWrapper =
-					document.querySelector(".chat-profile");
-				if (chatProfileWrapper)
-					chatProfileWrapper.setAttribute(
-						"data-user-id",
-						String(contact.id),
-					);
-			} catch (_e) {
-				/* ignore */
-			}
-			chatName.textContent = contact.nickname || contact.name;
-			try { await openChat(true); } catch (e) { /* ignore */ }
-
-			if (msgIndex === null) return;
-
-			setTimeout(() => {
-				const msgEl = chatEl.querySelector(
-					`[data-index="${msgIndex}"]`,
-				);
-				if (msgEl) {
-					msgEl.scrollIntoView({
-						behavior: "smooth",
-						block: "center",
-					});
-					highlightMessage(msgEl);
-				}
-			}, 500);
+			if (!contact) return;
+			openChatWithContact(contact.id, { focusMessageId: messageId || null }).catch(() => {});
 		},
 	});
 	initSettings(
@@ -909,560 +802,684 @@ document.addEventListener("DOMContentLoaded", async function () {
 			addFriendsBtn,
 		},
 		async (newContact) => {
-			const normalized = {
-				...newContact,
-				contactId: newContact.contact?.id,
-				conversationId: newContact.conversationId,
-				profilePics: newContact.contact?.profilePics || [],
-				name: newContact.nickname || newContact.contact?.name || "",
-				username: newContact.contact?.username || "",
-				isOnline: newContact.contact?.isOnline || false,
-				lastSeen: newContact.contact?.lastSeen || null,
-				bio: newContact.contact?.bio || "",
-				email: newContact.contact?.email || "",
-				lastMessage: "",
-				lastMessageTime: null,
-				lastMessageDate: null,
-				unreadCount: 0,
-				lastMessageSeen: true,
-				_previousContainer: "contacts",
-			};
-
-			// keep in-memory list in sync
-			contacts.push(normalized);
-
-			const _sock = getSocket();
-			if (_sock && normalized.conversationId) {
-				setActiveConversation(normalized.conversationId);
-				_sock.emit("conversation:join", {
-					conversationId: normalized.conversationId,
-				});
-			}
-
+			if (!newContact || newContact.id == null) return;
+			const normalized = normalizeServerContact(newContact, currentUser.id);
+			normalized._previousContainer = "contacts";
+			const existing = contacts.find((c) => c.id === normalized.id);
+			if (existing) Object.assign(existing, normalized);
+			else contacts.push(normalized);
 			updateContactsEmptyState();
-
-			// build card from the normalized object so it has profile/name/bio filled
-			const card = createContactCard(
-				{ ...normalized, hasMessages: false },
-				_onContactAction,
-			);
-			contactsContainer.appendChild(card);
-
-			// set chat header immediately so opening the chat shows correct info
-			mountAvatar(chatProfilePicture, {
-				name: normalized.name,
-				nickname: normalized.nickname,
-				profilePics: normalized.profilePics,
-				className: "chat-profile-picture",
-				isOnline: normalized.isOnline,
-			});
-			try {
-				const chatProfileWrapper =
-					document.querySelector(".chat-profile");
-				if (chatProfileWrapper)
-					chatProfileWrapper.setAttribute(
-						"data-user-id",
-						String(normalized.id),
-					);
-			} catch (e) {
-				/* ignore */
-			}
-			chatName.textContent = normalized.nickname || normalized.name;
-
-			state.contactUserId = normalized.id;
-			try { await openChat(true); } catch (e) { /* ignore */ }
-
-			// Ensure the send input and unblock action reflect the contact's
-			// blocked state immediately after adding.
-			if (normalized.isBlocked) {
-				messageContainer.style.display = "none";
-				const _ub = unblockActionBtn[0];
-				if (_ub) _ub.style.display = "flex";
-			} else {
-				messageContainer.style.display = "flex";
-				const _ub = unblockActionBtn[0];
-				if (_ub) _ub.style.display = "none";
-			}
+			sortContacts();
+			// the same flow as tapping the new contact's card
+			await openChatWithContact(normalized.id);
 		},
 	);
 
-	// Handler invoked when server notifies that a user's profile changed
-	function _handleUserUpdated(user) {
-		try {
-			// Keep in-memory contact objects in sync
-			for (const c of contacts) {
-				if (c.id === user.id) {
-					c.profilePics = user.profilePics || [];
-					if (user.name) c.name = user.name;
-					// If the server anonymized this account (delete flow) it will set
-					// `name` to "Deleted account" and replace username/email with
-					// generated placeholders like `deleted_user_<id>_<ts>` / `@deleted.rivo`.
-					// We should not display those garbled values in the UI — clear them.
-					const isDeletedAccount =
-						user.name &&
-						String(user.name).toLowerCase() === "deleted account";
-					const isAnonUsername =
-						user.username &&
-						String(user.username).startsWith("deleted_user_");
-					const isAnonEmail =
-						user.email &&
-						String(user.email).endsWith("@deleted.rivo");
-					if (isDeletedAccount || isAnonUsername || isAnonEmail) {
-						c.username = "";
-						c.email = "";
-					} else {
-						if (user.username) c.username = user.username;
-						if (user.email) c.email = user.email;
-					}
-					// Do not overwrite a user's custom local `nickname` when the
-					// remote user updates their profile. `nickname` is a local-only
-					// field set by the current user and must not be clobbered.
-				}
+	// ─── Chat header ──────────────────────────────────────────────────────────
+	// Picture (or the Saved Messages icon), name and online dot of the chat on
+	// screen.
+	function setChatHeader(friend) {
+		if (!friend || !chatProfilePicture) return;
+		if (friend.isSaved) {
+			const avatarEl = chatProfilePicture.querySelector(
+				"img, .contact-profile, .initial-avatar, .chat-profile-picture",
+			);
+			if (avatarEl) avatarEl.style.display = "none";
+			chatProfilePicture.classList.add("saved-icon");
+			chatProfilePicture.querySelector(".saved-icon-svg")?.remove();
+			const icon = parseSvg(savedIconSvg);
+			if (icon) {
+				icon.classList.add("saved-icon-svg");
+				chatProfilePicture.appendChild(icon);
 			}
-			// Update DOM avatars immediately
-			try {
-				refreshUserAvatars(user);
-			} catch (e) {
-				/* ignore */
-			}
-
-			// If the currently open chat is with this user, update header
-			if (
-				state.contactUserId &&
-				Number(state.contactUserId) === Number(user.id)
-			) {
-				const friend = contacts.find((c) => c.id === Number(user.id));
-				if (friend && typeof chatName !== "undefined" && chatName) {
-					chatName.textContent = friend.nickname || friend.name;
-				}
-			}
-		} catch (e) {
-			/* ignore handler failures */
+			chatProfilePicture.classList.remove("online");
+		} else {
+			mountAvatar(chatProfilePicture, {
+				name: friend.name,
+				nickname: friend.nickname,
+				profilePics: friend.profilePics,
+				className: "chat-profile-picture",
+				isOnline: friend.isOnline,
+				isDeleted: !!friend.isDeleted,
+			});
+			chatProfilePicture.classList.toggle(
+				"online",
+				!!friend.isOnline && !friend.isDeleted,
+			);
 		}
+		chatProfilePicture.setAttribute("data-user-id", String(friend.id));
+		if (chatName) chatName.textContent = displayName(friend);
 	}
 
-	initSocket({
-		// new message
-		onMessage: (msg) => receiveMessage(msg),
-		// edit
-		onMessageEdited: (data) => {
-			// Locate the message across all conversations to keep in-memory state consistent
-			let foundUserId = null;
-			let foundIndex = -1;
-			for (const [uid, msgs] of Object.entries(messages)) {
-				if (!Array.isArray(msgs)) continue;
-				const idx = msgs.findIndex((m) => m.id === data.messageId);
-				if (idx !== -1) {
-					foundUserId = Number(uid);
-					foundIndex = idx;
-					break;
-				}
-			}
-			if (foundUserId === null) return;
-			const userMsgs = messages[foundUserId];
-			userMsgs[foundIndex].text = data.text;
-			userMsgs[foundIndex].isEdited = true;
-			// If this edited message is the conversation's last message, update contact preview
-			const friend = contacts.find((c) => c.id === foundUserId);
-			if (friend && foundIndex === userMsgs.length - 1) {
-				const lastMsg = userMsgs.at(-1);
-				friend.lastMessage =
-					lastMsg &&
-					lastMsg.isTimeCapsule &&
-					lastMsg.isLocked &&
-					!lastMsg.user
-						? ""
-						: lastMsg?.text || "";
-				refreshCard(friend);
-				sortActiveChats();
-				sortContacts();
-			}
-			if (state.contactUserId === foundUserId) {
-				const msgEl = document.querySelector(
-					`.chat-message[data-index="${foundIndex}"]`,
-				);
-				if (!msgEl) return;
-				const textEl = msgEl.querySelector(".chat-message-text");
-				if (textEl) textEl.textContent = data.text;
-				if (!msgEl.querySelector(".chat-edited-label")) {
-					const label = document.createElement("span");
-					label.className = "chat-edited-label";
-					label.textContent = "edited";
-					msgEl.querySelector(".chat-message-meta")?.prepend(label);
-				}
-			}
-		},
-		// delete
-		onMessageDeleted: (data) => {
-			// Find which conversation contains this messageId
-			let foundUserId = null;
-			let foundIndex = -1;
-			for (const [uid, msgs] of Object.entries(messages)) {
-				if (!Array.isArray(msgs)) continue;
-				const idx = msgs.findIndex((m) => m.id === data.messageId);
-				if (idx !== -1) {
-					foundUserId = Number(uid);
-					foundIndex = idx;
-					break;
-				}
-			}
-			if (foundUserId === null) return;
-			const userMsgs = messages[foundUserId];
-			// preserve the removed message so we can adjust unread counters
-			const removedMsg = userMsgs[foundIndex];
-			userMsgs.splice(foundIndex, 1);
-			// Ensure pinnedData cache reflects deletions
-			try { updatePinnedData(Number(foundUserId), data.messageId, removedMsg, false); } catch (e) {}
+	// ─── Profile changes ──────────────────────────────────────────────────────
+	// `user.id` is the ACCOUNT id. Cards and state use the Contact row id
+	// (contact.id), so contacts are matched by `contact.contactId`.
+	function _handleUserUpdated(user) {
+		try {
+			if (!user || user.id == null) return;
+			const accountId = Number(user.id);
+			const pics = Array.isArray(user.profilePics) ? user.profilePics : null;
+			const isDeleted = user.isDeleted === true;
 
-			// If the deleted message was incoming and unseen, decrement unread
-			// so the contact preview reflects the deletion.
-			try {
-				const friend = contacts.find((c) => c.id === foundUserId);
-				if (
-					friend &&
-					removedMsg &&
-					!removedMsg.user &&
-					!removedMsg.isSeen
-				) {
-					friend.unreadCount = Math.max(
-						0,
-						(friend.unreadCount || 0) - 1,
-					);
-					updateTotalUnreadCount();
-				}
-			} catch (e) {
-				// ignore
-			}
-
-			// If this conversation is open, re-render messages so indexes stay correct
-			if (state.contactUserId === foundUserId) {
-				injectMessages(foundUserId);
-				// Refresh pinned banner after messages re-rendered
+			// Our own profile (changed in this tab or on another device)
+			if (currentUser && Number(currentUser.id) === accountId && !isDeleted) {
+				if (pics) currentUser.profilePics = pics;
+				if (user.name) currentUser.name = user.name;
+				if (user.username) currentUser.username = user.username;
+				if (typeof user.bio === "string") currentUser.bio = user.bio;
 				try {
-					updatePinnedMessage();
+					const stored = getCurrentUser() || {};
+					localStorage.setItem(
+						"user",
+						JSON.stringify({
+							...stored,
+							name: currentUser.name || "",
+							username: currentUser.username || "",
+							nickname: currentUser.username || "",
+							bio: currentUser.bio || "",
+							profilePics: currentUser.profilePics || [],
+						}),
+					);
+				} catch (e) {
+					/* ignore */
+				}
+				try {
+					refreshUserAvatars(currentUser);
 				} catch (e) {
 					/* ignore */
 				}
 			}
 
-			// Update contact card last-message preview
-			const friend = contacts.find((c) => c.id === foundUserId);
-			if (friend) {
-				if (userMsgs.length > 0) {
-					const lastMsg = userMsgs.at(-1);
-					friend.lastMessage =
-						lastMsg &&
-						lastMsg.isTimeCapsule &&
-						lastMsg.isLocked &&
-						!lastMsg.user
-							? ""
-							: lastMsg.text || "";
-					friend.lastMessageTime = lastMsg.time;
-					friend.lastMessageDate = lastMsg.date || "";
-					friend.lastMessageTs = lastMsg.createdAt;
-					// Only explicit false means unseen
-					friend.lastMessageSeen = lastMsg.user
-						? lastMsg.isSeen !== false
-						: true;
+			// Keep in-memory contact objects in sync. A nickname is this user's
+			// own name for the contact and is never replaced by their profile.
+			const changed = [];
+			for (const c of contacts) {
+				// Saved Messages points at our own account: never rename it
+				if (c.isSaved || Number(c.contactId) !== accountId) continue;
+				if (isDeleted) {
+					c.isDeleted = true;
+					c.nickname = null;
+					c.name = "Deleted account";
+					c.username = "";
+					c.email = "";
+					c.bio = "";
+					c.profilePics = [];
+					c.isOnline = false;
+					c.lastSeen = null;
 				} else {
-					friend.lastMessage = "";
-					friend.lastMessageTime = "";
-					friend.lastMessageDate = "";
-					friend.lastMessageTs = 0;
-					friend.lastMessageSeen = true;
-				}
-				refreshCard(friend);
-				sortActiveChats();
-				sortContacts();
-			}
-		},
-		// bulk delete
-		onMessagesBulkDeleted: (data) => {
-			const ids = Array.isArray(data?.messageIds)
-				? data.messageIds.map((id) => Number(id)).filter(Number.isFinite)
-				: [];
-			if (!ids.length) return;
-			const idSet = new Set(ids);
-			const changedUserIds = [];
-			for (const [uid, msgs] of Object.entries(messages)) {
-				if (!Array.isArray(msgs)) continue;
-				const beforeLen = msgs.length;
-				const filtered = msgs.filter((m) => !idSet.has(m.id));
-				if (filtered.length !== beforeLen) {
-					messages[uid] = filtered;
-					changedUserIds.push(Number(uid));
-				}
-			}
-			if (!changedUserIds.length) return;
-			for (const uid of changedUserIds) {
-				if (state.contactUserId === uid) {
-					injectMessages(uid);
-					try { updatePinnedMessage(); } catch (e) {}
-				}
-				const friend = contacts.find((c) => c.id === uid);
-				if (!friend) continue;
-				const userMsgs = messages[uid] || [];
-				if (userMsgs.length > 0) {
-					const lastMsg = userMsgs.at(-1);
-					friend.lastMessage =
-						lastMsg &&
-						lastMsg.isTimeCapsule &&
-						lastMsg.isLocked &&
-						!lastMsg.user
-							? ""
-							: lastMsg.text || "";
-					friend.lastMessageTime = lastMsg.time;
-					friend.lastMessageDate = lastMsg.date || "";
-					friend.lastMessageTs = lastMsg.createdAt;
-					friend.lastMessageSeen = lastMsg.user ? lastMsg.isSeen !== false : true;
-				} else {
-					friend.lastMessage = "";
-					friend.lastMessageTime = "";
-					friend.lastMessageDate = "";
-					friend.lastMessageTs = 0;
-					friend.lastMessageSeen = true;
-				}
-				refreshCard(friend);
-			}
-			sortActiveChats();
-			sortContacts();
-		},
-		// online
-		onUserOnline: (userId) => {
-			const contact = contacts.find((c) => c.contactId === userId);
-			if (!contact) return;
-			contact.isOnline = true;
-			if (state.contactUserId === contact.id) {
-				if (contact.isSaved) return; // saved messages don't show online status
-				chatProfilePicture.classList.add("online");
-			}
-			refreshCard(contact);
-		},
-		// offline
-		onUserOffline: (userId, lastSeen) => {
-			const contact = contacts.find((c) => c.contactId === userId);
-			if (!contact) return;
-			if (contact.isSaved) return; // saved messages don't show online status
-			contact.isOnline = false;
-			contact.lastSeen = lastSeen;
-			if (state.contactUserId === contact.id) {
-				chatProfilePicture.classList.remove("online");
-			}
-			refreshCard(contact);
-		},
-		// payload: { conversationId, messageIds, seenBy }
-		onMessageSeen: (payload) => {
-			handleMessagesSeen(
-				payload.conversationId,
-				payload.messageIds,
-				payload.seenBy,
-			);
-		},
-		// start typing
-		onTypingStart: (userId) => {
-			const contact = contacts.find((c) => c.contactId === userId);
-			if (!contact || state.contactUserId !== contact.id) return;
-			chatTypingStatus.textContent = "typing...";
-		},
-		// stop typing
-		onTypingStop: (userId) => {
-			const contact = contacts.find((c) => c.contactId === userId);
-			if (!contact || state.contactUserId !== contact.id) return;
-			chatTypingStatus.textContent = "";
-		},
-		// message pinned
-		onMessagePinned: ({ messageId, isPinned }) => {
-			for (const [uid, msgs] of Object.entries(messages)) {
-				if (!Array.isArray(msgs)) continue;
-				const idx = msgs.findIndex((m) => m.id === messageId);
-				if (idx !== -1) {
-					msgs[idx].isPinned = isPinned;
-					try { updatePinnedData(Number(uid), messageId, msgs[idx], isPinned); } catch (e) {}
-					if (state.contactUserId === Number(uid)) {
-						injectMessages(Number(uid));
+					if (pics) c.profilePics = pics;
+					if (user.name) {
+						if (c.contact) c.contact.name = user.name;
+						c.name = c.nickname || user.name;
 					}
-					break;
+					if (user.username) {
+						if (c.contact) c.contact.username = user.username;
+						c.username = user.username;
+					}
+					if (typeof user.bio === "string") c.bio = user.bio;
 				}
+				changed.push(c);
 			}
-		},
-		onUserUpdated: _handleUserUpdated,
-		// contact removed handler
-		onContactRemoved: (payload) => {
+
+			// Rebuild every place that shows them (cards, All contacts, chat
+			// header, profile panel) from the updated data
+			changed.forEach((friend) => {
+				refreshCard(friend);
+				if (state.contactUserId !== friend.id) return;
+				setChatHeader(friend);
+				applyComposerState(friend);
+				refreshProfile(friend);
+			});
+		} catch (e) {
+			/* ignore handler failures */
+		}
+	}
+
+	// ─── Live updates ─────────────────────────────────────────────────────────
+	function _findMessage(messageId) {
+		if (messageId == null) return null;
+		for (const [uid, msgs] of Object.entries(messages)) {
+			if (!Array.isArray(msgs)) continue;
+			const idx = msgs.findIndex((m) => String(m.id) === String(messageId));
+			if (idx !== -1) return { contactId: Number(uid), index: idx, msg: msgs[idx], list: msgs };
+		}
+		return null;
+	}
+
+	function _contactOf(found, conversationId) {
+		if (found) return contacts.find((c) => c.id === found.contactId) || null;
+		if (conversationId == null) return null;
+		return contacts.find((c) => String(c.conversationId) === String(conversationId)) || null;
+	}
+
+	function _setPreview(friend, last) {
+		if (last) {
+			friend.lastMessage = getContactPreviewText(last);
+			friend.lastMessageId = last.id ?? null;
+			friend.lastMessageTime = last.time || "";
+			friend.lastMessageDate = last.date || "";
+			const ts = new Date(last.createdAt).getTime();
+			friend.lastMessageTs = Number.isFinite(ts) ? ts : 0;
+			// Only an explicit false means "not seen yet"
+			friend.lastMessageSeen = last.user ? last.isSeen !== false : true;
+		} else {
+			friend.lastMessage = "";
+			friend.lastMessageId = null;
+			friend.lastMessageTime = "";
+			friend.lastMessageDate = "";
+			friend.lastMessageTs = 0;
+			friend.lastMessageSeen = true;
+		}
+	}
+
+	// Card preview from the newest loaded message (the newest page is always
+	// the one that is loaded)
+	function _previewFromLoaded(friend) {
+		const list = messages[friend.id];
+		_setPreview(friend, Array.isArray(list) && list.length ? list[list.length - 1] : null);
+	}
+
+	// The chat's messages were never loaded here: ask the server for the newest
+	async function _refreshPreviewFromServer(friend) {
+		if (!friend?.conversationId) return;
+		try {
+			const page = await getMessagesPage(friend.conversationId, { limit: 1 });
+			if (!contacts.includes(friend)) return;
+			if (Array.isArray(messages[friend.id])) _previewFromLoaded(friend);
+			else
+				_setPreview(
+					friend,
+					Array.isArray(page) && page.length ? normalizeServerMessage(page[page.length - 1]) : null,
+				);
+			_settleCard(friend);
+		} catch (e) {
+			/* offline: the next sync fixes it */
+		}
+	}
+
+	// Active Chats holds Saved Messages, pinned chats, the chat on screen and
+	// chats with something unread or not yet seen; the rest are contact cards.
+	function _settleCard(friend) {
+		if (!friend) return;
+		refreshCard(friend);
+		const keepActive =
+			friend.isSaved ||
+			friend.isPinned ||
+			state.contactUserId === friend.id ||
+			(friend.unreadCount || 0) > 0 ||
+			friend.lastMessageSeen === false;
+		if (!keepActive) moveToContacts(friend);
+		sortActiveChats();
+		sortContacts();
+	}
+
+	// Redraws one message of the open chat from its data
+	function _rerenderMessageEl(contactId, msg) {
+		if (state.contactUserId !== contactId || !msg || msg.id == null || !chatEl) return;
+		const old = chatEl.querySelector(`.chat-message[data-message-id="${msg.id}"]`);
+		if (!old) return;
+		if (state.isMenuOpen && state.selectedMsg === old) closeContextMenu();
+		const idx = (messages[contactId] || []).indexOf(msg);
+		if (idx !== -1) msg.index = idx;
+		const el = createMessage(messageForDisplay(msg, contactId));
+		if (Array.isArray(msg.reactions) && msg.reactions.length > 0) {
 			try {
-				const partnerUserId =
-					payload?.contactUserId ||
-					payload?.userId ||
-					payload?.contactId;
-				if (!partnerUserId) return;
-				const idx = contacts.findIndex(
-					(c) => c.contactId === partnerUserId,
-				);
-				if (idx === -1) return;
-				const removed = contacts.splice(idx, 1)[0];
-				// remove DOM card if present
-				const card = document.querySelector(
-					`[data-user-id="${removed.id}"]`,
-				);
-				if (card) card.remove();
-				updateContactsEmptyState();
-				// if this conversation is currently open, close it
-				if (state.contactUserId === removed.id) {
-					try {
-						closeChat();
-					} catch (e) {
-						/* ignore */
-					}
+				applyReactionsToMessage(el, msg.reactions, currentUser?.id || null);
+			} catch (e) {
+				/* ignore */
+			}
+		}
+		if (old.classList.contains("selected")) el.classList.add("selected");
+		old.replaceWith(el);
+	}
+
+	// A change that moves messages around must not leave a menu or a
+	// selection pointing at the wrong one
+	function _resetMessageUi(contactId) {
+		if (state.contactUserId !== contactId) return;
+		if (state.isMenuOpen) closeContextMenu();
+		if (state.isSelecting) cancelSelection();
+	}
+
+	function _removeCards(contactId) {
+		activeChatsContainer
+			?.querySelectorAll(`[data-user-id="${contactId}"]`)
+			.forEach((el) => (el.closest(".active-chat-wrapper") ?? el).remove());
+		contactsContainer
+			?.querySelectorAll(`[data-user-id="${contactId}"]`)
+			.forEach((el) => el.remove());
+	}
+
+	// Closes the chat (and its profile) when it shows this contact
+	function _closeChatOf(contactId) {
+		if (state.contactUserId !== contactId) return;
+		state.skipShowChatOnProfileClose = true;
+		if (state.isProfileDialogOpen) closeProfile();
+		else state.skipShowChatOnProfileClose = false;
+		if (chatEl) chatEl.textContent = "";
+		closeChat();
+	}
+
+	function _onMessageEdited(data) {
+		if (!data || data.messageId == null) return;
+		const found = _findMessage(data.messageId);
+		const friend = _contactOf(found, data.conversationId);
+		if (found) {
+			found.msg.text = data.text;
+			found.msg.isEdited = true;
+			_rerenderMessageEl(found.contactId, found.msg);
+		}
+		if (!friend) return;
+		const pin = (pinnedData[friend.id] || []).find((p) => String(p.id) === String(data.messageId));
+		if (pin) {
+			pin.text = data.text;
+			if (state.contactUserId === friend.id) updatePinnedMessage();
+		}
+		if (String(friend.lastMessageId) === String(data.messageId)) {
+			friend.lastMessage = found ? getContactPreviewText(found.msg) : data.text || "";
+			refreshCard(friend);
+		}
+	}
+
+	function _onMessageDeleted(data) {
+		if (!data || data.messageId == null) return;
+		const messageId = data.messageId;
+		const found = _findMessage(messageId);
+		const friend = _contactOf(found, data.conversationId);
+		if (!friend) return;
+		try {
+			updatePinnedData(friend.id, messageId, found ? found.msg : null, false);
+		} catch (e) {
+			/* ignore */
+		}
+
+		// someone else's message that was still unread here (a catch-up after
+		// a reconnect already has the server's counter)
+		const senderId = found ? found.msg.senderId : data.senderId;
+		const fromOther = found
+			? !found.msg.user
+			: senderId != null && Number(senderId) !== Number(currentUser.id);
+		const wasUnseen = found ? found.msg.isSeen !== true : data.isSeen === false;
+		if (!data.fromSync && fromOther && wasUnseen && (friend.unreadCount || 0) > 0) {
+			friend.unreadCount -= 1;
+			updateTotalUnreadCount();
+		}
+
+		if (found) {
+			_resetMessageUi(friend.id);
+			found.list.splice(found.index, 1);
+			if (state.contactUserId === friend.id) injectMessages(friend.id);
+			_previewFromLoaded(friend);
+			_settleCard(friend);
+			return;
+		}
+		if (state.contactUserId === friend.id) updatePinnedMessage();
+		if (String(friend.lastMessageId) === String(messageId)) _refreshPreviewFromServer(friend);
+		else _settleCard(friend);
+	}
+
+	// The whole chat was cleared (for both people)
+	function _onChatCleared(data) {
+		const friend = _contactOf(null, data?.conversationId);
+		if (!friend) return;
+		const ids = new Set((Array.isArray(data.messageIds) ? data.messageIds : []).map(String));
+		_resetMessageUi(friend.id);
+		if (Array.isArray(messages[friend.id])) {
+			messages[friend.id] = messages[friend.id].filter((m) => m.id == null || !ids.has(String(m.id)));
+		}
+		pinnedData[friend.id] = (pinnedData[friend.id] || []).filter((p) => !ids.has(String(p.id)));
+		friend.unreadCount = 0;
+		updateTotalUnreadCount();
+		if (state.contactUserId === friend.id) injectMessages(friend.id);
+		_previewFromLoaded(friend);
+		_settleCard(friend);
+	}
+
+	function _onPresence(userId, online, lastSeen = null) {
+		const friend = contacts.find(
+			(c) => !c.isSaved && Number(c.contactId) === Number(userId),
+		);
+		if (!friend) return;
+		friend.isOnline = !!online && !friend.isDeleted;
+		if (!online) friend.lastSeen = lastSeen || null;
+		if (state.contactUserId === friend.id && chatProfilePicture)
+			chatProfilePicture.classList.toggle("online", friend.isOnline);
+		refreshCard(friend);
+		refreshProfile(friend);
+	}
+
+	// "typing..." also goes away by itself if the stop event never comes
+	let _typingClearTimer = null;
+	function _setTyping(text) {
+		clearTimeout(_typingClearTimer);
+		if (chatTypingStatus) chatTypingStatus.textContent = text;
+		if (text)
+			_typingClearTimer = setTimeout(() => {
+				if (chatTypingStatus) chatTypingStatus.textContent = "";
+			}, 6000);
+	}
+	function _onTyping(userId, typing) {
+		const friend = contacts.find(
+			(c) => !c.isSaved && Number(c.contactId) === Number(userId),
+		);
+		if (!friend || state.contactUserId !== friend.id) return;
+		_setTyping(typing ? "typing..." : "");
+	}
+
+	async function _reloadPinned(friend) {
+		if (!friend?.conversationId) return;
+		try {
+			const res = await getPinnedMessages(friend.conversationId);
+			pinnedData[friend.id] = Array.isArray(res?.pinned) ? res.pinned : [];
+			if (state.contactUserId === friend.id) updatePinnedMessage();
+		} catch (e) {
+			/* ignore */
+		}
+	}
+
+	function _onMessagePinned(data) {
+		if (!data || data.messageId == null) return;
+		const found = _findMessage(data.messageId);
+		const friend = _contactOf(found, data.conversationId);
+		if (!friend) return;
+		const isPinned = !!data.isPinned;
+		if (!found) {
+			// not loaded here: the server has its text
+			if (state.contactUserId === friend.id || pinnedData[friend.id]) _reloadPinned(friend);
+			return;
+		}
+		found.msg.isPinned = isPinned;
+		try {
+			updatePinnedData(friend.id, data.messageId, found.msg, isPinned);
+		} catch (e) {
+			/* ignore */
+		}
+		if (state.contactUserId !== friend.id) return;
+		_rerenderMessageEl(friend.id, found.msg);
+		state.pinnedIndexes = (messages[friend.id] || [])
+			.map((m, i) => (m.isPinned ? i : -1))
+			.filter((i) => i !== -1);
+		updatePinnedMessage();
+	}
+
+	// Another device of this user removed the contact
+	function _onContactRemoved(payload) {
+		const rowId = Number(payload?.contactRowId);
+		let idx = Number.isFinite(rowId) ? contacts.findIndex((c) => c.id === rowId) : -1;
+		if (idx === -1 && payload?.contactUserId != null) {
+			idx = contacts.findIndex(
+				(c) => !c.isSaved && Number(c.contactId) === Number(payload.contactUserId),
+			);
+		}
+		if (idx === -1) return;
+		const removed = contacts[idx];
+		_closeChatOf(removed.id);
+		contacts.splice(idx, 1);
+		delete messages[removed.id];
+		delete pinnedData[removed.id];
+		_removeCards(removed.id);
+		updateContactsEmptyState();
+		updateTotalUnreadCount();
+		sortActiveChats();
+		sortContacts();
+	}
+
+	function _onReactionUpdated(data) {
+		if (!data || data.messageId == null) return;
+		const { messageId, reactions, actorId, emoji, action } = data;
+		const list = Array.isArray(reactions) ? reactions : [];
+		const found = _findMessage(messageId);
+		const friend = _contactOf(found, data.conversationId);
+		if (found) found.msg.reactions = list;
+		chatEl
+			?.querySelectorAll(`.chat-message[data-message-id="${messageId}"]`)
+			.forEach((msgEl) => {
+				try {
+					applyReactionsToMessage(msgEl, list, currentUser?.id || null);
+				} catch (e) {
+					/* ignore */
 				}
+			});
+
+		// Tell this user when someone reacts to their message in a chat that
+		// is not on screen (a hidden app gets a push notification instead)
+		if (action !== "added" && action !== "changed") return;
+		if (!friend || friend.isMuted || !found || !found.msg.user) return;
+		if (Number(actorId) === Number(currentUser?.id)) return;
+		if (state.contactUserId === friend.id) return;
+		if (document.visibilityState === "hidden") return;
+		try {
+			showNotification(friend, {
+				id: messageId,
+				text: `${displayName(friend) || "Someone"} reacted ${emoji || ""} to your message`,
+			});
+		} catch (e) {
+			/* ignore */
+		}
+	}
+
+	// ─── Keeping up with the server ───────────────────────────────────────────
+	// Puts a contact's card where it belongs (see _settleCard)
+	function _placeCard(friend) {
+		if (!friend) return;
+		const activeCard = activeChatsContainer?.querySelector(
+			`.active-chat[data-user-id="${friend.id}"]`,
+		);
+		const wantActive =
+			!friend.isArchived &&
+			(friend.isSaved ||
+				friend.isPinned ||
+				state.contactUserId === friend.id ||
+				(friend.unreadCount || 0) > 0 ||
+				friend.lastMessageSeen === false);
+		if (friend.isArchived) {
+			if (activeCard) (activeCard.closest(".active-chat-wrapper") ?? activeCard).remove();
+			return;
+		}
+		if (!wantActive) {
+			if (activeCard) moveToContacts(friend);
+			else refreshCard(friend);
+			return;
+		}
+		if (activeCard) {
+			refreshCard(friend);
+		} else if (friend.isSaved) {
+			const card = createActiveChatCard(friend);
+			card.dataset.saved = "true";
+			activeChatsContainer.prepend(card);
+		} else {
+			moveToActiveChats(friend);
+		}
+	}
+
+	// Brings the contact list in line with the server and redraws the cards
+	let _syncing = null;
+	function _syncContacts() {
+		if (_syncing) return _syncing;
+		_syncing = (async () => {
+			try {
+				const { added, updated, removed } = await syncContactsWithServer(currentUser.id);
+				for (const r of removed) {
+					_closeChatOf(r.id);
+					delete messages[r.id];
+					delete pinnedData[r.id];
+					_removeCards(r.id);
+				}
+				[...added, ...updated].forEach(_placeCard);
 				updateTotalUnreadCount();
 				sortActiveChats();
 				sortContacts();
-			} catch (e) {
-				/* ignore handler errors */
+				updateContactsEmptyState();
+				const open = contacts.find((c) => c.id === state.contactUserId);
+				if (open) {
+					setChatHeader(open);
+					applyComposerState(open);
+					refreshProfile(open);
+				}
+			} finally {
+				_syncing = null;
 			}
-		},
-		// onReactionUpdated
-		onReactionUpdated: ({ messageId, reactions, actorId, emoji, action }) => {
-			const currentUser = getCurrentUser();
-			const currentUserId = currentUser?.id || null;
+		})();
+		return _syncing;
+	}
 
-			// Update reactions in messages array and capture which conversation/user it belongs to
-			let foundUserId = null;
-			let belongsToMe = false;
-			for (const [uid, msgs] of Object.entries(messages)) {
-				if (!Array.isArray(msgs)) continue;
-				// Compare IDs as strings to avoid type-mismatch (number vs string)
-				const idx = msgs.findIndex(
-					(m) => String(m.id) === String(messageId),
-				);
-				if (idx !== -1) {
-					foundUserId = Number(uid);
-					msgs[idx].reactions = reactions;
-					belongsToMe = !!msgs[idx].user;
-					break;
+	// Messages, edits, deletions, reactions and read receipts the chat on
+	// screen missed while the connection was down
+	async function _catchUpOpenChat() {
+		const contactId = state.contactUserId;
+		const friend = contacts.find((c) => c.id === contactId);
+		if (!friend?.conversationId) return;
+		let page;
+		try {
+			page = await getMessagesPage(friend.conversationId, { limit: DEFAULT_PAGE_LIMIT });
+		} catch (e) {
+			return;
+		}
+		if (state.contactUserId !== contactId || !Array.isArray(page)) return;
+		const convId = friend.conversationId;
+		const local = Array.isArray(messages[contactId]) ? [...messages[contactId]] : [];
+		const localById = new Map(local.filter((m) => m.id != null).map((m) => [String(m.id), m]));
+		const freshIds = new Set(page.map((m) => String(m.id)));
+
+		if (page.length === 0) {
+			const ids = local.filter((m) => m.id != null).map((m) => m.id);
+			if (ids.length) _onChatCleared({ conversationId: convId, messageIds: ids });
+		} else {
+			const oldest = new Date(page[0].createdAt).getTime();
+			for (const m of local) {
+				if (m.id == null || freshIds.has(String(m.id))) continue;
+				const t = new Date(m.createdAt).getTime();
+				if (Number.isFinite(t) && t >= oldest) {
+					_onMessageDeleted({ messageId: m.id, conversationId: convId, fromSync: true });
 				}
 			}
+		}
 
-			// Update DOM message elements for this messageId
-			document
-				.querySelectorAll(
-					`.chat-message[data-message-id="${messageId}"]`,
-				)
-				.forEach((msgEl) => {
-					try {
-						applyReactionsToMessage(
-							msgEl,
-							reactions,
-							currentUserId,
-						);
-					} catch (e) {
-						/* ignore */
-					}
+		// the counter from the server already includes the missed messages
+		const syncedUnread = friend.unreadCount || 0;
+		const seenIds = [];
+		for (const s of page) {
+			if (state.contactUserId !== contactId) return;
+			const mine = localById.get(String(s.id));
+			if (!mine) {
+				await receiveMessage(s);
+				continue;
+			}
+			const fresh = normalizeServerMessage(s);
+			if (fresh.isEdited && !mine.isLocked && fresh.text !== mine.text) {
+				_onMessageEdited({ messageId: s.id, conversationId: convId, text: fresh.text });
+			}
+			if (mine.user && fresh.isSeen && !mine.isSeen) seenIds.push(s.id);
+			if (JSON.stringify(fresh.reactions) !== JSON.stringify(mine.reactions || [])) {
+				_onReactionUpdated({ messageId: s.id, conversationId: convId, reactions: fresh.reactions, action: "sync" });
+			}
+			if (fresh.isPinned !== !!mine.isPinned) {
+				_onMessagePinned({ messageId: s.id, conversationId: convId, isPinned: fresh.isPinned });
+			}
+			if (mine.isTimeCapsule && !mine.openedAt && fresh.openedAt) {
+				handleCapsuleOpened({
+					messageId: s.id,
+					text: fresh.text,
+					openedAt: fresh.openedAt,
+					conversationId: convId,
+					senderId: s.senderId,
 				});
-
-			// Notification logic:
-			// - Do NOT show a local toast for my own reaction.
-			// - Show an in-app notification for others reacting to my message
-			//   only when I'm NOT currently viewing that conversation.
-			try {
-				if (action !== "removed") {
-					const actorNum = Number(actorId);
-					// Skip local toast entirely for my own actions
-					if (actorNum !== Number(currentUserId)) {
-						// Only notify if the reaction was on one of my messages
-						// and the conversation is not currently open.
-						if (
-							belongsToMe &&
-							state.contactUserId !== foundUserId
-						) {
-							let reactorContact = contacts.find(
-								(c) =>
-									Number(c.contactId) === actorNum ||
-									Number(c.id) === actorNum,
-							);
-							if (!reactorContact) {
-								const possible =
-									contacts.find(
-										(c) => c.conversationId === foundUserId,
-									) || {};
-								reactorContact = {
-									id: possible.id || actorNum,
-									contactId: possible.contactId || actorNum,
-									name:
-										possible.nickname ||
-										possible.name ||
-										"Someone",
-									nickname:
-										possible.nickname ||
-										possible.name ||
-										"Someone",
-									profilePics: possible.profilePics || [],
-								};
-							}
-							try {
-								showNotification(reactorContact, {
-									text: `${reactorContact.nickname || reactorContact.name || "Someone"} reacted ${emoji} to your message`,
-								});
-							} catch (e) {
-								/* ignore */
-							}
-						}
-					}
-				}
-			} catch (e) {
-				// Protect notification path from crashing the handler (errors suppressed)
 			}
+		}
+		if (seenIds.length) handleMessagesSeen(convId, seenIds, friend.contactId);
+		if ((friend.unreadCount || 0) !== syncedUnread) {
+			friend.unreadCount = syncedUnread;
+			updateTotalUnreadCount();
+			refreshCard(friend);
+		}
+	}
+
+	async function _resyncAfterReconnect() {
+		try {
+			await _syncContacts();
+		} catch (e) {
+			return;
+		}
+		await _catchUpOpenChat();
+		// the chat on screen is being read
+		if (state.contactUserId != null) markOpenChatSeen();
+	}
+
+	setContactsSync(_syncContacts);
+
+	// The newest messages of the open chat are on screen: mark them read
+	let _seenAtBottomTimer = null;
+	function _markSeenAtBottom() {
+		if (_seenAtBottomTimer || state.initializingChat) return;
+		const list = messages[state.contactUserId] || [];
+		if (!list.some((m) => !m.user && m.isSeen !== true)) return;
+		_seenAtBottomTimer = setTimeout(() => {
+			_seenAtBottomTimer = null;
+			markOpenChatSeen();
+		}, 300);
+	}
+
+	initSocket({
+		onMessage: (msg) => {
+			// the partner's message ends their "typing..."
+			const open = contacts.find((c) => c.id === state.contactUserId);
+			if (
+				open &&
+				msg &&
+				String(msg.conversationId) === String(open.conversationId) &&
+				Number(msg.senderId) !== Number(currentUser.id)
+			)
+				_setTyping("");
+			return receiveMessage(msg);
+		},
+		onMessageEdited: _onMessageEdited,
+		onMessageDeleted: _onMessageDeleted,
+		onMessagesBulkDeleted: _onChatCleared,
+		onUserOnline: (userId) => _onPresence(userId, true),
+		onUserOffline: (userId, lastSeen) => _onPresence(userId, false, lastSeen),
+		// payload: { conversationId, messageIds, seenBy }
+		onMessageSeen: (payload) => {
+			handleMessagesSeen(payload?.conversationId, payload?.messageIds, payload?.seenBy ?? null);
+		},
+		onTypingStart: (userId) => _onTyping(userId, true),
+		onTypingStop: (userId) => _onTyping(userId, false),
+		onMessagePinned: _onMessagePinned,
+		onUserUpdated: _handleUserUpdated,
+		onContactRemoved: _onContactRemoved,
+		onReactionUpdated: _onReactionUpdated,
+		onReconnect: () => {
+			_resyncAfterReconnect().catch(() => {});
 		},
 	});
-	// Wire one-time-deleted events from socket to chat handler
 	try {
 		setOnetimeDeletedHandler(handleOnetimeDeleted);
-	} catch (e) {
-		/* ignore */
-	}
-	try {
 		setCapsuleOpenedHandler(handleCapsuleOpened);
 	} catch (e) {
 		/* ignore */
 	}
-	// Rejoin active conversation after socket reconnect and emit leave on unload
-	try {
-		const sock = getSocket();
-		if (sock) {
-			sock.on("connect", () => {
-				try {
-					const friend = contacts.find(
-						(c) => c.id === state.contactUserId,
-					);
-					if (friend && friend.conversationId) {
-						setActiveConversation(friend.conversationId);
-						sock.emit("conversation:join", {
-							conversationId: friend.conversationId,
-						});
-					}
-				} catch (e) {
-					// ignore
-				}
-			});
-		}
-		window.addEventListener("beforeunload", () => {
-			try {
-				const friend = contacts.find(
-					(c) => c.id === state.contactUserId,
-				);
-				if (friend && friend.conversationId) {
-					const s = getSocket();
-					if (s)
-						s.emit("conversation:leave", {
-							conversationId: friend.conversationId,
-						});
-				}
-			} catch (e) {
-				/* ignore */
+
+	// Coming back to the app with a chat open: its new messages are read now.
+	// Wait a moment so the server has heard that this tab is visible again.
+	document.addEventListener("visibilitychange", () => {
+		if (document.visibilityState !== "visible" || state.contactUserId == null) return;
+		setTimeout(() => {
+			if (document.visibilityState === "visible" && state.contactUserId != null) markOpenChatSeen();
+		}, 400);
+	});
+
+	// Leave the open conversation when the page goes away
+	window.addEventListener("beforeunload", () => {
+		try {
+			const friend = contacts.find((c) => c.id === state.contactUserId);
+			if (friend && friend.conversationId) {
+				getSocket()?.emit("conversation:leave", {
+					conversationId: friend.conversationId,
+				});
 			}
-		});
-	} catch (e) {
-		/* ignore */
-	}
+		} catch (e) {
+			/* ignore */
+		}
+	});
 
 	function updateContactsEmptyState() {
 		const empty = document.getElementById("contacts-empty");
@@ -1472,48 +1489,56 @@ document.addEventListener("DOMContentLoaded", async function () {
 			Array.isArray(contacts) && contacts.length > 0 ? "none" : "flex";
 	}
 
+	// Pin, mute, delete chat, block and archive from a card's menu or swipe.
+	// `userId` is the Contact row id of that card; the chat on screen stays
+	// as it is.
 	function _onContactAction(action, userId) {
-		state.contactUserId = userId;
-		const friend = contacts.find((c) => c.id === userId);
+		const friend = contacts.find((c) => c.id === Number(userId));
 		if (!friend) return;
-		if (friend.isSaved) return;
+		// Saved Messages can only be cleared
+		if (friend.isSaved && action !== "delete") return;
+
 		if (action === "pin") {
-			friend.isPinned = !friend.isPinned;
-			apiUpdateContact(friend.id, { isPinned: friend.isPinned });
-			if (friend.isPinned) {
-				moveToActiveChats(friend);
-			} else {
-				if (
-					friend.unreadCount === 0 &&
-					friend.lastMessageSeen !== false
-				) {
-					moveToContacts(friend);
-				} else {
-					refreshCard(friend);
-				}
-			}
-			sortActiveChats();
-			sortContacts();
+			const next = !friend.isPinned;
+			friend.isPinned = next;
+			_settleCardAfterToggle(friend);
+			apiUpdateContact(friend.id, { isPinned: next }).catch(() => {
+				friend.isPinned = !next;
+				_settleCardAfterToggle(friend);
+				showToast("Couldn't update. Try again.");
+			});
+			return;
 		}
 		if (action === "mute") {
-			friend.isMuted = !friend.isMuted;
-			apiUpdateContact(friend.id, { isMuted: friend.isMuted });
+			const next = !friend.isMuted;
+			friend.isMuted = next;
 			refreshCard(friend);
+			apiUpdateContact(friend.id, { isMuted: next }).catch(() => {
+				friend.isMuted = !next;
+				refreshCard(friend);
+				showToast("Couldn't update. Try again.");
+			});
+			return;
 		}
 		if (action === "delete") {
-			handleDeleteChat();
+			handleDeleteChat(friend.id);
+			return;
 		}
 		if (action === "block") {
-			handleBlockContact();
-			refreshCard(friend);
+			handleBlockContact(friend.id);
+			return;
 		}
 		if (action === "archive") {
-			if (friend.isArchived) {
-				_unarchiveContact(userId);
-			} else {
-				_archiveContact(userId);
-			}
+			if (friend.isArchived) _unarchiveContact(friend.id);
+			else _archiveContact(friend.id);
 		}
+	}
+
+	function _settleCardAfterToggle(friend) {
+		if (friend.isPinned) moveToActiveChats(friend);
+		else _settleCard(friend);
+		sortActiveChats();
+		sortContacts();
 	}
 
 	function openPinnedView() {
@@ -1525,9 +1550,15 @@ document.addEventListener("DOMContentLoaded", async function () {
 		let source = [];
 		if (Array.isArray(allPinned) && allPinned.length > 0) {
 			source = allPinned.slice().reverse();
-		} else if (Array.isArray(state.pinnedIndexes) && state.pinnedIndexes.length > 0) {
+		} else if (
+			Array.isArray(state.pinnedIndexes) &&
+			state.pinnedIndexes.length > 0
+		) {
 			const msgs = messages[state.contactUserId] || [];
-			source = [...state.pinnedIndexes].reverse().map((idx) => msgs[idx]).filter(Boolean);
+			source = [...state.pinnedIndexes]
+				.reverse()
+				.map((idx) => msgs[idx])
+				.filter(Boolean);
 		}
 
 		if (source.length === 0) {
@@ -1549,11 +1580,23 @@ document.addEventListener("DOMContentLoaded", async function () {
 			meta.className = "pinned-view-item-meta";
 			const sender = document.createElement("span");
 			sender.className = "pinned-view-item-sender";
-			const senderLabel = (msg.senderId && Number(msg.senderId) === Number(getCurrentUser()?.id)) ? 'You' : (friend?.nickname || friend?.name || '');
+			const senderLabel =
+				msg.senderId &&
+				Number(msg.senderId) === Number(getCurrentUser()?.id)
+					? "You"
+					: friend?.nickname || friend?.name || "";
 			sender.textContent = senderLabel;
 			const time = document.createElement("span");
 			time.className = "pinned-view-item-time";
-			time.textContent = msg.time || (msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '');
+			time.textContent =
+				msg.time ||
+				(msg.createdAt
+					? new Date(msg.createdAt).toLocaleTimeString([], {
+							hour: "2-digit",
+							minute: "2-digit",
+							hour12: false,
+						})
+					: "");
 			meta.appendChild(sender);
 			meta.appendChild(time);
 
@@ -1570,7 +1613,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 				if (msg.id) {
 					try {
 						await scrollToPinnedMessage(msg.id);
-						const msgEl = chatEl.querySelector(`[data-message-id="${msg.id}"]`);
+						const msgEl = chatEl.querySelector(
+							`[data-message-id="${msg.id}"]`,
+						);
 						if (msgEl) {
 							highlightMessage(msgEl);
 						}
@@ -1581,11 +1626,16 @@ document.addEventListener("DOMContentLoaded", async function () {
 				}
 
 				// Fallback for index-based source
-				if (typeof msg.index !== 'undefined') {
-					const msgEl = chatEl.querySelector(`[data-index="${msg.index}"]`);
+				if (typeof msg.index !== "undefined") {
+					const msgEl = chatEl.querySelector(
+						`[data-index="${msg.index}"]`,
+					);
 					if (!msgEl) return;
 					state.isProgrammaticScroll = true;
-					msgEl.scrollIntoView({ behavior: "smooth", block: "center" });
+					msgEl.scrollIntoView({
+						behavior: "smooth",
+						block: "center",
+					});
 					setTimeout(() => {
 						state.isProgrammaticScroll = false;
 					}, 800);
@@ -1599,171 +1649,117 @@ document.addEventListener("DOMContentLoaded", async function () {
 		pinnedViewDialog.showModal();
 	}
 
-	// ─── Inject initial cards (show skeletons while loading) ────────────────
-	try {
-		// show skeleton placeholders
-		if (contactsContainer) {
-			contactsContainer
-				.querySelectorAll(".skeleton-placeholder")
-				.forEach((n) => n.remove());
-			contactsContainer.appendChild(makeContactSkeleton(6));
-			contactsContainer.setAttribute("aria-busy", "true");
-		}
-		if (activeChatsContainer) {
-			activeChatsContainer
-				.querySelectorAll(".skeleton-placeholder")
-				.forEach((n) => n.remove());
-			activeChatsContainer.appendChild(makeActiveChatSkeleton(4));
-			activeChatsContainer.setAttribute("aria-busy", "true");
-		}
-
-		const serverContacts = await getContacts();
-		serverContacts.forEach((c) => {
-			contacts.push({
-				...c,
-				name: c.isSaved
-					? "Saved Messages"
-					: c.nickname || c.contact?.name || "",
-				username: c.isSaved ? "" : c.contact?.username || "",
-				profilePics: c.isSaved ? [] : c.contact?.profilePics || [],
-				isOnline: c.isSaved ? false : c.contact?.isOnline || false,
-				lastSeen: c.isSaved ? null : c.contact?.lastSeen || null,
-				bio: c.isSaved ? "" : c.contact?.bio || "",
-				email: c.isSaved ? "" : c.contact?.email || "",
-				contactId: c.isSaved ? c.ownerId : c.contact?.id || null,
-				isSaved: c.isSaved ?? false,
-				lastMessage: (() => {
-					const lastMsg = c.conversation?.messages?.[0];
-					if (!lastMsg) return "";
-					const isFromPartner = lastMsg.senderId !== currentUser?.id;
-					if (lastMsg.isTimeCapsule) {
-						// still locked for recipient -> hide preview
-						if (lastMsg.isLocked && isFromPartner) return "";
-						// opened on server -> if server provided plaintext show it,
-						// otherwise show neutral placeholder
-						if (lastMsg.openedAt && isFromPartner) {
-							if (lastMsg.text) return lastMsg.text;
-							return 'Time capsule unlocked';
-						}
-					}
-					return lastMsg.text || "";
-				})(),
-				lastMessageTime: c.conversation?.messages?.[0]
-					? new Date(
-							c.conversation.messages[0].createdAt,
-						).toLocaleTimeString([], {
-							hour: "2-digit",
-							minute: "2-digit",
-							hour12: false,
-						})
-					: null,
-				lastMessageDate: c.conversation?.messages?.[0]
-					? new Date(c.conversation.messages[0].createdAt)
-							.toISOString()
-							.slice(0, 10)
-					: null,
-				lastMessageTs: c.conversation?.messages?.[0]
-					? new Date(c.conversation.messages[0].createdAt).getTime()
-					: 0,
-				unreadCount: c.unreadCount ?? 0,
-				lastMessageSeen: (() => {
-					const lastMsg = c.conversation?.messages?.[0];
-					if (!lastMsg) return true;
-					// Treat missing/undefined `isSeen` as already seen. Only
-					// mark as unseen when `isSeen === false` explicitly.
-					return lastMsg.isSeen !== false;
-				})(),
-				_previousContainer: "contacts",
-			});
-		});
-
-		// If the service worker posts messages (push click), handle them and open the conversation
-		try {
-			if (navigator.serviceWorker && navigator.serviceWorker.addEventListener) {
-				navigator.serviceWorker.addEventListener('message', (ev) => {
-					try {
-						const data = ev.data || {};
-						if (data && data.type === 'push:click') {
-							const payload = data.payload || {};
-							const convId = payload.conversationId || payload.conversationId;
-							const messageId = payload.messageId || null;
-							if (!convId) return;
-							const contact = contacts.find((x) => String(x.conversationId) === String(convId));
-							if (contact) {
-								document.dispatchEvent(new CustomEvent('in-app-notif:open', { detail: { contactId: contact.id, messageId } }));
-							}
-						}
-					} catch (e) { /* ignore */ }
-				});
-			}
-		} catch (e) { /* ignore */ }
-
-		// Handle deep link via query params (e.g. opened by notificationclick opening a URL)
-		try {
-			const params = new URLSearchParams(window.location.search);
-			const convParam = params.get('conversationId');
-			const midParam = params.get('messageId');
-			if (convParam) {
-				const contact = contacts.find((x) => String(x.conversationId) === String(convParam));
-				if (contact) {
-					document.dispatchEvent(new CustomEvent('in-app-notif:open', { detail: { contactId: contact.id, messageId: midParam ? Number(midParam) : null } }));
-				}
-			}
-		} catch (e) { /* ignore */ }
-	} catch (err) {
-		console.error("Failed to load contacts", err);
-	}
-
-	// remove skeleton placeholders before rendering real cards
+	// ─── Contacts: first load (skeletons meanwhile) ──────────────────────────
 	if (contactsContainer) {
 		contactsContainer
 			.querySelectorAll(".skeleton-placeholder")
 			.forEach((n) => n.remove());
-		contactsContainer.removeAttribute("aria-busy");
+		contactsContainer.appendChild(makeContactSkeleton(6));
+		contactsContainer.setAttribute("aria-busy", "true");
 	}
 	if (activeChatsContainer) {
 		activeChatsContainer
 			.querySelectorAll(".skeleton-placeholder")
 			.forEach((n) => n.remove());
-		activeChatsContainer.removeAttribute("aria-busy");
+		activeChatsContainer.appendChild(makeActiveChatSkeleton(4));
+		activeChatsContainer.setAttribute("aria-busy", "true");
 	}
-	// مخاطبینی که در بخش پایین (Contacts) قرار می‌گیرند، برای صفحه‌بندی جدا می‌شوند
-	const plainContacts = [];
-	let renderedPlainCount = 0;
 
-	contacts.forEach((contact) => {
-		if (contact.isArchived) return;
-		if (contact.isSaved) {
-			// saved message is always in active chat
-			const card = createActiveChatCard(contact);
-			card.dataset.saved = "true";
-			activeChatsContainer.prepend(card); // first in list
-			return;
-		}
-		if (
-			contact.isPinned ||
-			contact.unreadCount > 0 ||
-			contact.lastMessageSeen === false
-		) {
-			activeChatsContainer.appendChild(createActiveChatCard(contact));
-		} else {
-			plainContacts.push(contact);
-			// فقط ۸ تای اول در صفحه‌ی اصلی؛ بقیه پشت «Show all contacts»
-			if (renderedPlainCount >= CONTACTS_PREVIEW_COUNT) return;
-			renderedPlainCount += 1;
-			contactsContainer.appendChild(
-				createContactCard(
-					{ ...contact, hasMessages: !!contact.lastMessage },
-					_onContactAction,
-				),
-			);
-		}
+	let _contactsLoaded = false;
+	try {
+		const rows = await fetchAllContacts();
+		rows.forEach((row) => {
+			const c = normalizeServerContact(row, currentUser.id);
+			c._previousContainer = "contacts";
+			// a message may have brought some of them in already
+			const existing = contacts.find((x) => x.id === c.id);
+			if (existing) Object.assign(existing, c);
+			else contacts.push(c);
+		});
+		_contactsLoaded = true;
+	} catch (err) {
+		console.error("Failed to load contacts", err);
+	}
+
+	// remove skeleton placeholders before rendering real cards
+	[contactsContainer, activeChatsContainer].forEach((el) => {
+		if (!el) return;
+		el.querySelectorAll(".skeleton-placeholder").forEach((n) => n.remove());
+		el.removeAttribute("aria-busy");
 	});
-	setAllContacts(plainContacts);
+	// Saved Messages, pinned chats and chats with something unread go to
+	// Active Chats. The Contacts section is rendered from data in
+	// sortContacts(): most recent message first, then contacts without
+	// messages, then blocked ones; only the first 8 are shown here.
+	contacts.forEach(_placeCard);
 	updateTotalUnreadCount();
 	sortActiveChats();
 	sortContacts();
 	updateContactsEmptyState();
+
+	if (_contactsLoaded) {
+		_openFromLink();
+	} else {
+		showToast("Couldn't load your chats. Retrying…");
+		const retry = (delay) =>
+			setTimeout(() => {
+				_syncContacts()
+					.then(() => _openFromLink())
+					.catch(() => retry(Math.min(delay * 2, 30000)));
+			}, delay);
+		retry(3000);
+	}
+
+	// A notification tapped while the app was closed opens its chat (and message)
+	function _openFromLink() {
+		try {
+			const params = new URLSearchParams(window.location.search);
+			const convParam = params.get("conversationId");
+			const midParam = params.get("messageId");
+			if (!convParam) return;
+			// a reload must not open it again
+			try {
+				params.delete("conversationId");
+				params.delete("messageId");
+				const qs = params.toString();
+				history.replaceState(
+					history.state,
+					"",
+					window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash,
+				);
+			} catch (e) {
+				/* ignore */
+			}
+			const contact = contacts.find(
+				(x) => String(x.conversationId) === String(convParam),
+			);
+			if (contact)
+				openChatWithContact(contact.id, {
+					focusMessageId: midParam ? Number(midParam) : null,
+				}).catch(() => {});
+		} catch (e) {
+			/* ignore */
+		}
+	}
+
+	// The service worker reports a tapped notification while the app is open
+	try {
+		navigator.serviceWorker?.addEventListener?.("message", (ev) => {
+			const data = ev.data || {};
+			if (data.type !== "push:click") return;
+			const payload = data.payload || {};
+			if (!payload.conversationId) return;
+			const contact = contacts.find(
+				(x) => String(x.conversationId) === String(payload.conversationId),
+			);
+			if (contact)
+				openChatWithContact(contact.id, {
+					focusMessageId: payload.messageId || null,
+				}).catch(() => {});
+		});
+	} catch (e) {
+		/* ignore */
+	}
 
 	// ─── Settings ─────────────────────────────────────────────────────────────
 	if (settingsSectionLi && settingsList) {
@@ -1778,8 +1774,23 @@ document.addEventListener("DOMContentLoaded", async function () {
 		});
 	}
 
+	function _closeSearch() {
+		searchbar.classList.remove("open");
+		clearTimeout(_searchDebounce);
+		if (searchInput.value || _lastSearchQuery) {
+			searchInput.value = "";
+			_lastSearchQuery = "";
+			runSearch("");
+		}
+	}
+
 	if (searchInput) {
-		searchbar.addEventListener("click", () => {
+		searchbar.addEventListener("click", (e) => {
+			// typing in the box must not fold it away
+			if (e.target === searchInput) {
+				searchbar.classList.add("open");
+				return;
+			}
 			searchbar.classList.toggle("open");
 			if (searchbar.classList.contains("open")) searchInput.focus();
 		});
@@ -1798,23 +1809,64 @@ document.addEventListener("DOMContentLoaded", async function () {
 				runSearch(q).catch(() => {});
 			}, 250);
 		});
+		searchInput.addEventListener("keydown", (e) => {
+			if (e.key === "Escape") {
+				_closeSearch();
+				searchInput.blur();
+			}
+		});
 	}
 
 	if (logoutBtn) {
+		let loggingOut = false;
 		logoutBtn.addEventListener("click", async () => {
+			if (loggingOut) return; // ignore double taps
+			loggingOut = true;
+			// This device's push subscription: the server stops only its
+			// notifications (other devices stay signed in)
+			let endpoint = null;
+			try {
+				if (window.pushEndpoint)
+					endpoint = await Promise.race([
+						window.pushEndpoint(),
+						new Promise((resolve) => setTimeout(() => resolve(null), 1500)),
+					]);
+			} catch (e) {
+				endpoint = null;
+			}
+			try {
+				await apiLogout(endpoint);
+			} catch (err) {
+				// The session cookie is HttpOnly: only the server can end it. If
+				// that failed, say so instead of silently staying on a dead page.
+				console.error("Logout failed", err);
+				loggingOut = false;
+				showToast("Couldn't log out. Check your connection and try again.");
+				return;
+			}
 			try {
 				getSocket()?.disconnect();
 			} catch (e) {
 				// ignore
 			}
-			// Try to unsubscribe from push before logging out
+			// Remove the browser's subscription too. Never let it block the
+			// logout (it used to wait forever when no service worker existed).
 			try {
-				if (window.pushUnsubscribe) await window.pushUnsubscribe();
+				if (window.pushUnsubscribe)
+					await Promise.race([
+						window.pushUnsubscribe({ notifyServer: false }),
+						new Promise((resolve) => setTimeout(resolve, 2000)),
+					]);
 			} catch (e) {
 				// push unsubscribe failed (suppressed)
 			}
-			await apiLogout();
-			window.location.href = "/auth/auth.html";
+			try {
+				localStorage.removeItem("user");
+			} catch (e) {
+				/* ignore */
+			}
+			// replace(): the back button must not bring the chat page back
+			window.location.replace("/auth/auth.html");
 		});
 	}
 
@@ -1822,253 +1874,161 @@ document.addEventListener("DOMContentLoaded", async function () {
 	if (closeChatBtn) {
 		closeChatBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
-            const friend = contacts.find((c) => c.id === state.contactUserId);
-            if (friend) {
-                if (friend.isSaved) {
-                    closeChat();
-                    return;
-                }
-                if (
-                    !friend.isPinned &&
-                    friend.unreadCount === 0 &&
-                    friend.lastMessageSeen !== false
-                ) {
-                    moveToContacts(friend);
-                    sortActiveChats();
-                    sortContacts();
-                }
-            }
-            chatEl.textContent = "";
-
-	// ─── Open chat — active-chats ─────────────────────────────────────────────
-	if (activeChatsContainer) {
-		activeChatsContainer.addEventListener("click", async (e) => {
-			const active = e.target.closest(".active-chat");
-			if (!active) return;
-
-			const prevFriend = contacts.find(
-				(c) => c.id === state.contactUserId,
-			);
-			if (prevFriend && prevFriend.id !== Number(active.dataset.userId)) {
-				// leave previous conversation room if any
-				try {
-					const sock = getSocket();
-					if (sock && prevFriend.conversationId) {
-						sock.emit("conversation:leave", {
-							conversationId: prevFriend.conversationId,
-						});
-					}
-				} catch (e) {
-					/* ignore */
+			const friend = contacts.find((c) => c.id === state.contactUserId);
+			if (friend) {
+				if (friend.isSaved) {
+					closeChat();
+					return;
 				}
-				// local-only `isInChat` removed; nothing to persist
 				if (
-					!prevFriend.isPinned &&
-					!prevFriend.isSaved &&
-					prevFriend.unreadCount === 0 &&
-					prevFriend.lastMessageSeen !== false
+					!friend.isPinned &&
+					friend.unreadCount === 0 &&
+					friend.lastMessageSeen !== false
 				) {
-					moveToContacts(prevFriend);
+					moveToContacts(friend);
 					sortActiveChats();
 					sortContacts();
 				}
 			}
-
-			state.contactUserId = Number(active.dataset.userId);
-			const friend = contacts.find((c) => c.id === state.contactUserId);
-			if (!friend) return;
-
-			// join the new conversation room so server considers us present
-			try {
-				const sock = getSocket();
-				if (sock && friend.conversationId)
-					setActiveConversation(friend.conversationId);
-				if (sock && friend.conversationId)
-					sock.emit("conversation:join", {
-						conversationId: friend.conversationId,
-					});
-			} catch (e) {
-				/* ignore */
-			}
-
-			if (friend.unreadCount > 0) {
-				friend.lastMessageSeen = true;
-			}
-			friend.unreadCount = 0;
-			// local-only `isInChat` removed; no state to set here
-			const unreadEl = active.querySelector(
-				".active-chat-unread-messages",
-			);
-			if (unreadEl) unreadEl.style.opacity = "0";
-			updateTotalUnreadCount();
-
-			if (friend.isSaved) {
-				// hide any current avatar element and show saved-icon
-				const _imgEl = chatProfilePicture.querySelector(
-					"img, .contact-profile, .initial-avatar",
-				);
-				if (_imgEl) _imgEl.style.display = "none";
-				chatProfilePicture.classList.add("saved-icon");
-				const existingSavedIcon =
-					chatProfilePicture.querySelector(".saved-icon-svg");
-				if (existingSavedIcon) existingSavedIcon.remove();
-				const _savedIcon = parseSvg(savedIconSvg);
-				if (_savedIcon) {
-					_savedIcon.classList.add("saved-icon-svg");
-					chatProfilePicture.appendChild(_savedIcon);
-				}
-				if (
-					_imgEl &&
-					_imgEl.tagName &&
-					_imgEl.tagName.toLowerCase() === "img"
-				)
-					_imgEl.src = "";
-			} else {
-				// ensure avatar container shows avatar and remove saved icon
-				const _imgEl = chatProfilePicture.querySelector(
-					"img, .contact-profile, .initial-avatar",
-				);
-				if (_imgEl) _imgEl.style.display = "";
-				chatProfilePicture.classList.remove("saved-icon");
-				const existingSavedIcon =
-					chatProfilePicture.querySelector(".saved-icon-svg");
-				if (existingSavedIcon) existingSavedIcon.remove();
-				mountAvatar(chatProfilePicture, {
-					name: friend.name,
-					nickname: friend.nickname,
-					profilePics: friend.profilePics,
-					className: "chat-profile-picture",
-					isOnline: friend.isOnline,
-				});
-				try {
-					const chatProfileWrapper =
-						document.querySelector(".chat-profile");
-					if (chatProfileWrapper)
-						chatProfileWrapper.setAttribute(
-							"data-user-id",
-							String(friend.id),
-						);
-				} catch (e) {
-					/* ignore */
-				}
-			}
-			chatName.textContent = friend.nickname || friend.name;
-			try { await openChat(true); } catch (e) { /* ignore */ }
-
-			if (friend.isBlocked) {
-				messageContainer.style.display = "none";
-				const _ub = unblockActionBtn[0];
-				if (_ub) _ub.style.display = "flex";
-			} else {
-				messageContainer.style.display = "flex";
-				const _ub = unblockActionBtn[0];
-				if (_ub) _ub.style.display = "none";
-			}
-
-			const existingCard = activeChatsContainer.querySelector(
-				`[data-user-id="${friend.id}"]`,
-			);
-			if (existingCard) {
-				const wrapper =
-					existingCard.closest(".active-chat-wrapper") ??
-					existingCard;
-				wrapper.replaceWith(createActiveChatCard(friend));
-			}
+			chatEl.textContent = "";
+			closeChat();
 		});
 	}
 
-	// ─── Open chat — contacts ─────────────────────────────────────────────────
-	if (contactsContainer) {
-		contactsContainer.addEventListener("click", async (e) => {
-			const card = e.target.closest(".contacts-card");
-			if (!card) return;
+	// ─── Opening a chat ───────────────────────────────────────────────────────
+	// Every way of opening a chat (cards, All contacts, search, notifications,
+	// forwarding, a new contact, archived chats) goes through here.
+	async function openChatWithContact(userId, { focusMessageId = null } = {}) {
+		userId = Number(userId);
+		if (!Number.isFinite(userId)) return;
+		const friend = contacts.find((c) => c.id === userId);
+		if (!friend) return;
+		const seq = ++_openSeq;
 
-			const prevFriend = contacts.find(
-				(c) => c.id === state.contactUserId,
-			);
-			if (prevFriend && prevFriend.id !== Number(card.dataset.userId)) {
-				// leave previous conversation room if any
-				try {
-					const sock = getSocket();
-					if (sock && prevFriend.conversationId) {
-						sock.emit("conversation:leave", {
-							conversationId: prevFriend.conversationId,
-						});
-					}
-				} catch (e) {
-					/* ignore */
-				}
-				// local-only `isInChat` removed
-				if (
-					!prevFriend.isPinned &&
-					!prevFriend.isSaved &&
-					prevFriend.unreadCount === 0 &&
-					prevFriend.lastMessageSeen !== false
-				) {
-					moveToContacts(prevFriend);
-					sortActiveChats();
-					sortContacts();
-				}
-			}
-
-			state.contactUserId = Number(card.dataset.userId);
-			const friend = contacts.find((c) => c.id === state.contactUserId);
-			if (!friend) return;
-
-			// join the new conversation room so server considers us present
+		const prevFriend = contacts.find((c) => c.id === state.contactUserId);
+		if (prevFriend && prevFriend.id !== userId) {
+			// leave the previous conversation room
 			try {
-				const sock = getSocket();
-				if (sock && friend.conversationId)
-					setActiveConversation(friend.conversationId);
-				if (sock && friend.conversationId)
-					sock.emit("conversation:join", {
-						conversationId: friend.conversationId,
+				if (prevFriend.conversationId)
+					getSocket()?.emit("conversation:leave", {
+						conversationId: prevFriend.conversationId,
 					});
 			} catch (e) {
 				/* ignore */
 			}
-
-			if (friend.unreadCount > 0) {
-				friend.lastMessageSeen = true;
+			// a menu, selection, edit, reply, send mode or profile belongs to
+			// the previous chat
+			if (state.isProfileDialogOpen) closeProfile();
+			if (state.isMenuOpen) closeContextMenu();
+			if (state.isSelecting) cancelSelection();
+			if (state.isEditing || state.replyTo || state.isForwarding) {
+				state.isEditing = false;
+				state.editingMessageId = null;
+				state.replyTo = null;
+				state.isForwarding = false;
+				state.forwardingMsg = null;
+				state.forwardingMsgs = [];
+				resetInput();
 			}
-			friend.unreadCount = 0;
-			// local-only `isInChat` removed; no-op
-			updateTotalUnreadCount();
-
-			// remember where this card came from so undo/delete logic can restore correctly
-			friend._previousContainer = "contacts";
-			card.remove();
-			activeChatsContainer.appendChild(createActiveChatCard(friend));
-
-			mountAvatar(chatProfilePicture, {
-				name: friend.name,
-				nickname: friend.nickname,
-				profilePics: friend.profilePics,
-				className: "chat-profile-picture",
-				isOnline: friend.isOnline,
-			});
 			try {
-				const chatProfileWrapper =
-					document.querySelector(".chat-profile");
-				if (chatProfileWrapper)
-					chatProfileWrapper.setAttribute(
-						"data-user-id",
-						String(friend.id),
-					);
+				document.dispatchEvent(new CustomEvent("chat:closed"));
 			} catch (e) {
 				/* ignore */
 			}
-			chatName.textContent = friend.nickname || friend.name;
-			try { await openChat(true); } catch (e) { /* ignore */ }
-			if (friend.isBlocked) {
-				messageContainer.style.display = "none";
-				const _ub = unblockActionBtn[0];
-				if (_ub) _ub.style.display = "flex";
-			} else {
-				messageContainer.style.display = "flex";
-				const _ub = unblockActionBtn[0];
-				if (_ub) _ub.style.display = "none";
+			// it stays in Active Chats only when something keeps it there
+			if (
+				!prevFriend.isPinned &&
+				!prevFriend.isSaved &&
+				!prevFriend.unreadCount &&
+				prevFriend.lastMessageSeen !== false
+			) {
+				moveToContacts(prevFriend);
 			}
+		}
+
+		state.contactUserId = userId;
+		_setTyping("");
+
+		// join the conversation room so the server knows this chat is on screen
+		if (friend.conversationId) {
+			setActiveConversation(friend.conversationId);
+			try {
+				getSocket()?.emit("conversation:join", {
+					conversationId: friend.conversationId,
+				});
+			} catch (e) {
+				/* ignore */
+			}
+		}
+
+		if ((friend.unreadCount || 0) > 0) friend.lastMessageSeen = true;
+		friend.unreadCount = 0;
+		updateTotalUnreadCount();
+
+		// The open chat has a card in Active Chats (archived chats stay hidden)
+		if (!friend.isArchived) {
+			if (friend.isSaved) refreshCard(friend);
+			else moveToActiveChats(friend);
+		}
+		sortActiveChats();
+		sortContacts();
+
+		setChatHeader(friend);
+		applyComposerState(friend);
+		try {
+			await openChat(true);
+		} catch (e) {
+			/* ignore */
+		}
+		// another chat was opened meanwhile
+		if (seq !== _openSeq || state.contactUserId !== userId) return;
+
+		// a chat added from someone we talked to before has its history back
+		if (!friend.lastMessageId && Array.isArray(messages[userId]) && messages[userId].length) {
+			_previewFromLoaded(friend);
+			refreshCard(friend);
+			sortActiveChats();
+		}
+		if (focusMessageId != null && focusMessageId !== "") await _focusMessage(focusMessageId);
+	}
+
+	// Scrolls to a message (loading older pages when needed) and highlights it
+	async function _focusMessage(messageId) {
+		const contactId = state.contactUserId;
+		// let the chat finish its own first scroll to the bottom
+		await new Promise((resolve) =>
+			requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 60))),
+		);
+		if (state.contactUserId !== contactId) return;
+		try {
+			await scrollToPinnedMessage(messageId);
+			const el = chatEl?.querySelector(`.chat-message[data-message-id="${messageId}"]`);
+			if (el) highlightMessage(el);
+		} catch (e) {
+			/* ignore */
+		}
+	}
+
+	if (activeChatsContainer) {
+		activeChatsContainer.addEventListener("click", (e) => {
+			const active = e.target.closest(".active-chat");
+			if (!active) return;
+			openChatWithContact(Number(active.dataset.userId)).catch(() => {});
+		});
+	}
+
+	if (contactsContainer) {
+		contactsContainer.addEventListener("click", (e) => {
+			// the card's own ⋮ menu must not open the chat
+			if (
+				e.target.closest(
+					".contact-menu-btn, .contact-menu-overlay, .contact-menu-panel",
+				)
+			)
+				return;
+			const card = e.target.closest(".contacts-card");
+			if (!card) return;
+			openChatWithContact(Number(card.dataset.userId)).catch(() => {});
 		});
 	}
 
@@ -2247,12 +2207,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 			const capsuleSvg = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="5" y="10" width="14" height="10" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M8 10V7.5C8 5.57 9.57 4 11.5 4H12.5C14.43 4 16 5.57 16 7.5V10" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="15" r="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M12 15V13.8M12 15L13 15.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
 			const MODE_ICON = {
-				"normal": () => originalSendBtnInner || "",
+				normal: () => originalSendBtnInner || "",
 				"one-time": () => oneTimeSendIcon,
 				"time-capsule": () => capsuleSvg,
 			};
 			const MODE_LABEL = {
-				"normal": "Send normally",
+				normal: "Send normally",
 				"one-time": "One-time message",
 				"time-capsule": "Time Capsule",
 			};
@@ -2267,10 +2227,14 @@ document.addEventListener("DOMContentLoaded", async function () {
 			function renderPopup() {
 				const topMode = sendModeSlots[1];
 				const botMode = sendModeSlots[2];
-				if (capsuleBtn) capsuleBtn.innerHTML = MODE_ICON[topMode]?.() || "";
-				if (capsuleLabel) capsuleLabel.textContent = MODE_LABEL[topMode] || "";
-				if (onetimeBtn) onetimeBtn.innerHTML = MODE_ICON[botMode]?.() || "";
-				if (onetimeLabel) onetimeLabel.textContent = MODE_LABEL[botMode] || "";
+				if (capsuleBtn)
+					capsuleBtn.innerHTML = MODE_ICON[topMode]?.() || "";
+				if (capsuleLabel)
+					capsuleLabel.textContent = MODE_LABEL[topMode] || "";
+				if (onetimeBtn)
+					onetimeBtn.innerHTML = MODE_ICON[botMode]?.() || "";
+				if (onetimeLabel)
+					onetimeLabel.textContent = MODE_LABEL[botMode] || "";
 			}
 
 			function swapWithMain(slotIdx) {
@@ -2278,17 +2242,24 @@ document.addEventListener("DOMContentLoaded", async function () {
 				if (sendModeSlots[0] === "time-capsule") {
 					window._pendingCapsuleScheduledFor = null;
 				}
-				[sendModeSlots[0], sendModeSlots[slotIdx]] =
-					[sendModeSlots[slotIdx], sendModeSlots[0]];
+				[sendModeSlots[0], sendModeSlots[slotIdx]] = [
+					sendModeSlots[slotIdx],
+					sendModeSlots[0],
+				];
 				applyMainSlot();
-				try { renderPopup(); } catch (e) { /* ignore */ }
+				try {
+					renderPopup();
+				} catch (e) {
+					/* ignore */
+				}
 			}
 
 			function resetSlots() {
 				sendModeSlots = ["normal", "time-capsule", "one-time"];
 				window._pendingCapsuleScheduledFor = null;
 				state.sendMode = "normal";
-				if (sendMessageBtn && originalSendBtnInner) sendMessageBtn.innerHTML = originalSendBtnInner;
+				if (sendMessageBtn && originalSendBtnInner)
+					sendMessageBtn.innerHTML = originalSendBtnInner;
 			}
 
 			// Ensure main slot reflects initial mode
@@ -2369,9 +2340,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 				// Show floating button content. Use specific mode checks so the
 				// correct floating icon swaps with the main send icon.
 				if (state.sendMode === "one-time" && originalSendBtnInner) {
-				    onetimeBtn.innerHTML = originalSendBtnInner;
+					onetimeBtn.innerHTML = originalSendBtnInner;
 				} else {
-				    onetimeBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+					onetimeBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none">
 					    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.2"
 						    stroke-dasharray="47 10" stroke-linecap="round" stroke-dashoffset="-5"/>
 					    <text x="12" y="16.5" text-anchor="middle" font-size="9.5"
@@ -2409,7 +2380,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 				capsuleWrap.appendChild(capsuleLabel);
 				capsuleWrap.appendChild(capsuleBtn);
 
-
 				// Capsule click: open datetime picker (attach while capsuleBtn is in scope)
 				function toLocalDatetimeInputValue(d) {
 					const pad = (n) => String(n).padStart(2, "0");
@@ -2434,10 +2404,23 @@ document.addEventListener("DOMContentLoaded", async function () {
 					`;
 
 					// Set min = now +5 minutes, max = now +1 year (minute-precision: ignore seconds)
-					const truncateToMinute = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), 0, 0);
+					const truncateToMinute = (d) =>
+						new Date(
+							d.getFullYear(),
+							d.getMonth(),
+							d.getDate(),
+							d.getHours(),
+							d.getMinutes(),
+							0,
+							0,
+						);
 					const nowTrunc = truncateToMinute(new Date());
-					const minDate = new Date(nowTrunc.getTime() + 5 * 60 * 1000);
-					const maxDate = new Date(nowTrunc.getTime() + 365 * 24 * 60 * 60 * 1000);
+					const minDate = new Date(
+						nowTrunc.getTime() + 5 * 60 * 1000,
+					);
+					const maxDate = new Date(
+						nowTrunc.getTime() + 365 * 24 * 60 * 60 * 1000,
+					);
 					const dtInput = pickerWrap.querySelector(
 						"#capsule-datetime-input",
 					);
@@ -2459,11 +2442,24 @@ document.addEventListener("DOMContentLoaded", async function () {
 							const val = dtInput.value;
 							if (!val) return;
 							const sfLocal = new Date(val);
-							const truncateToMinute = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), 0, 0);
+							const truncateToMinute = (d) =>
+								new Date(
+									d.getFullYear(),
+									d.getMonth(),
+									d.getDate(),
+									d.getHours(),
+									d.getMinutes(),
+									0,
+									0,
+								);
 							const scheduledTrunc = truncateToMinute(sfLocal);
 							const nowTrunc2 = truncateToMinute(new Date());
-							const minTime = new Date(nowTrunc2.getTime() + 5 * 60 * 1000);
-							const maxTime = new Date(nowTrunc2.getTime() + 365 * 24 * 60 * 60 * 1000);
+							const minTime = new Date(
+								nowTrunc2.getTime() + 5 * 60 * 1000,
+							);
+							const maxTime = new Date(
+								nowTrunc2.getTime() + 365 * 24 * 60 * 60 * 1000,
+							);
 							if (
 								isNaN(scheduledTrunc.getTime()) ||
 								scheduledTrunc < minTime ||
@@ -2481,18 +2477,23 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 							// swap the chosen slot with main and set pending scheduled time
 							const prevMain = sendModeSlots[0];
-							sendModeSlots[0] = 'time-capsule';
+							sendModeSlots[0] = "time-capsule";
 							sendModeSlots[slotIndex] = prevMain;
-							state.sendMode = 'time-capsule';
+							state.sendMode = "time-capsule";
 							window._pendingCapsuleScheduledFor = scheduledFor;
-							if (sendMessageBtn) sendMessageBtn.innerHTML = capsuleSvg;
-							try { renderPopup(); } catch (e) { /* ignore */ }
+							if (sendMessageBtn)
+								sendMessageBtn.innerHTML = capsuleSvg;
+							try {
+								renderPopup();
+							} catch (e) {
+								/* ignore */
+							}
 						});
 				};
 
 				capsuleBtn.addEventListener("click", (e) => {
 					e.stopPropagation();
-					if (sendModeSlots[1] === 'time-capsule') {
+					if (sendModeSlots[1] === "time-capsule") {
 						openCapsulePicker(1, e);
 					} else {
 						swapWithMain(1);
@@ -2503,14 +2504,22 @@ document.addEventListener("DOMContentLoaded", async function () {
 				capsuleWrap.addEventListener("click", (e) => {
 					// if clicked directly on the button, its handler already ran; otherwise open/swap
 					if (e.target === capsuleBtn) return;
-					if (sendModeSlots[1] === 'time-capsule') openCapsulePicker(1, e);
-					else { swapWithMain(1); hideOneTime(); }
+					if (sendModeSlots[1] === "time-capsule")
+						openCapsulePicker(1, e);
+					else {
+						swapWithMain(1);
+						hideOneTime();
+					}
 				});
 
 				onetimeWrap.appendChild(onetimeLabel);
 				onetimeWrap.appendChild(onetimeBtn);
 				// Ensure popup icons/labels reflect current slot ordering
-				try { renderPopup(); } catch (e) { /* ignore */ }
+				try {
+					renderPopup();
+				} catch (e) {
+					/* ignore */
+				}
 				// group both trigger buttons into a single container to simplify
 				// outside-click handling and DOM management
 				triggerContainer.appendChild(capsuleWrap);
@@ -2519,7 +2528,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 				onetimeBtn.addEventListener("click", (e) => {
 					e.stopPropagation();
-					if (sendModeSlots[2] === 'time-capsule') {
+					if (sendModeSlots[2] === "time-capsule") {
 						openCapsulePicker(2, e);
 					} else {
 						swapWithMain(2);
@@ -2562,7 +2571,11 @@ document.addEventListener("DOMContentLoaded", async function () {
 					if (triggered) hideOneTime();
 					oneTimeOverlayActive = false;
 					// reset slot ordering and canonical send mode when chat fully closes
-					try { resetSlots(); } catch (_e) { /* ignore */ }
+					try {
+						resetSlots();
+					} catch (_e) {
+						/* ignore */
+					}
 				} catch (e) {
 					/* ignore */
 				}
@@ -2592,7 +2605,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 			document.addEventListener("click", (e) => {
 				if (!triggered) return;
 				// If user clicked the trigger container itself, let its handler run.
-				if (triggerContainer && triggerContainer.contains(e.target)) return;
+				if (triggerContainer && triggerContainer.contains(e.target))
+					return;
 				// Ignore the synthetic/initial release click that may occur
 				// right after the long-press activation.
 				if (Date.now() < oneTimeIgnoreClickUntil) return;
@@ -2667,7 +2681,11 @@ document.addEventListener("DOMContentLoaded", async function () {
 				const dx = e.touches[0].clientX - swipeStartX;
 				const dy = e.touches[0].clientY - swipeStartY;
 
-				// if its more likely verticle, its not swipe
+				// a moving finger (scrolling) is not a long press
+				if (Math.abs(dx) > 10 || Math.abs(dy) > 10)
+					clearTimeout(state.touchTimeout);
+
+				// if its more likely vertical, its not swipe
 				if (Math.abs(dy) > Math.abs(dx)) return;
 
 				// right swipe only
@@ -2777,34 +2795,33 @@ document.addEventListener("DOMContentLoaded", async function () {
 			if (state.isSelecting) {
 				const msg = e.target.closest(".chat-message");
 				if (!msg) return;
-				const idx = Number(msg.dataset.index);
-				msg.classList.toggle("selected");
-				if (state.selectedMessages.includes(idx)) {
-					state.selectedMessages = state.selectedMessages.filter(
-						(i) => i !== idx,
-					);
-				} else {
-					state.selectedMessages.push(idx);
-				}
-				if (state.selectedMessages.length === 0) cancelSelection();
-				else updateSelectionCount();
+				toggleSelectedMessage(msg);
 				return;
 			}
 
 			const reply = e.target.closest(".chat-reply");
 			if (!reply) return;
-			// Try to locate by message id first (new format), fallback to index (legacy)
-			const targetMsg =
-				chatEl.querySelector(
-					`[data-message-id="${reply.dataset.replyTo}"]`,
-				) ||
-				chatEl.querySelector(`[data-index="${reply.dataset.replyTo}"]`);
+			// The quoted message, by id (older pages are loaded when needed)
+			const target = reply.dataset.replyTo;
+			if (!target) return;
+			const targetMsg = chatEl.querySelector(
+				`.chat-message[data-message-id="${target}"]`,
+			);
 			if (targetMsg) {
 				targetMsg.scrollIntoView({
 					behavior: "smooth",
 					block: "center",
 				});
 				highlightMessage(targetMsg);
+			} else if (/^\d+$/.test(target)) {
+				scrollToPinnedMessage(target)
+					.then(() => {
+						const el = chatEl.querySelector(
+							`.chat-message[data-message-id="${target}"]`,
+						);
+						if (el) highlightMessage(el);
+					})
+					.catch(() => {});
 			}
 		});
 
@@ -2890,22 +2907,29 @@ document.addEventListener("DOMContentLoaded", async function () {
 				"visible",
 				distanceFromBottom > 300,
 			);
+			// reached the newest messages: they are read now
+			if (distanceFromBottom < 80) _markSeenAtBottom();
 
 			// If server-provided pinned data exists, prefer locating by messageId
 			const allPinned = getPinnedData(state.contactUserId);
 			if (Array.isArray(allPinned) && allPinned.length > 0) {
 				for (let i = allPinned.length - 1; i >= 0; i--) {
 					const mid = allPinned[i].id;
-					const msgEl = chatEl.querySelector(`[data-message-id="${mid}"]`);
+					const msgEl = chatEl.querySelector(
+						`[data-message-id="${mid}"]`,
+					);
 					if (!msgEl) continue;
 					const rect = msgEl.getBoundingClientRect();
 					const chatRect = chatEl.getBoundingClientRect();
 					// consider the message visible if any part overlaps the chat viewport
-					if (rect.bottom >= chatRect.top && rect.top <= chatRect.bottom) {
+					if (
+						rect.bottom >= chatRect.top &&
+						rect.top <= chatRect.bottom
+					) {
 						pinnedMessageText.dataset.messageId = String(mid);
-						pinnedMessageText.textContent = allPinned[i].text || '';
+						pinnedMessageText.textContent = allPinned[i].text || "";
 						// update pin-count UI (mirror chat.js helper)
-						pinnedMessageCount.textContent = '';
+						pinnedMessageCount.textContent = "";
 						const total = Math.min(allPinned.length, 3);
 						if (total > 0) {
 							const pos = i;
@@ -2914,17 +2938,18 @@ document.addEventListener("DOMContentLoaded", async function () {
 								activeSpan = pos;
 							} else {
 								if (pos === 0) activeSpan = 0;
-								else if (pos === allPinned.length - 1) activeSpan = 2;
+								else if (pos === allPinned.length - 1)
+									activeSpan = 2;
 								else activeSpan = 1;
 							}
 							for (let s = 0; s < total; s++) {
-								const span = document.createElement('span');
+								const span = document.createElement("span");
 								if (s === activeSpan) {
-									span.style.height = '1.2rem';
-									span.style.opacity = '1';
+									span.style.height = "1.2rem";
+									span.style.opacity = "1";
 								} else {
-									span.style.height = '0.6rem';
-									span.style.opacity = '0.4';
+									span.style.height = "0.6rem";
+									span.style.opacity = "0.4";
 								}
 								pinnedMessageCount.appendChild(span);
 							}
@@ -2941,7 +2966,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 					const rect = msg.getBoundingClientRect();
 					const chatRect = chatEl.getBoundingClientRect();
 					// consider the message visible if any part overlaps the chat viewport
-					if (rect.bottom >= chatRect.top && rect.top <= chatRect.bottom) {
+					if (
+						rect.bottom >= chatRect.top &&
+						rect.top <= chatRect.bottom
+					) {
 						pinnedMessageText.dataset.index = idx;
 						const msgs = messages[state.contactUserId][idx];
 						if (!msgs) return;
@@ -2958,6 +2986,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 	if (cancelEditBtn && msgAction) {
 		cancelEditBtn.addEventListener("click", () => {
 			state.isEditing = false;
+			state.editingMessageId = null;
 			state.replyTo = null;
 			state.isForwarding = false;
 			state.forwardingMsg = null;
@@ -3072,61 +3101,38 @@ document.addEventListener("DOMContentLoaded", async function () {
 		forwardDialogCloseBtn.addEventListener("click", () =>
 			forwardDialog.close(),
 		);
+		// closed without choosing (button, Esc or a chat was picked): a later
+		// single-message forward must not be taken for a selection forward
+		forwardDialog.addEventListener("close", () => {
+			state.isSelectionForwarding = false;
+		});
 
 		forwardDialog.addEventListener("click", async (e) => {
 			const card = e.target.closest(".forwarded-contact-card");
 			if (!card) return;
 
-			const friend = contacts.find(
+			const target = contacts.find(
 				(c) => c.id === Number(card.dataset.userId),
 			);
-			if (!friend) return;
+			if (!target) return;
 
 			if (state.isSelectionForwarding) {
-				const sourceName =
-					contacts.find((c) => c.id === state.contactUserId)?.name ??
-					"Unknown";
-				executeBulkForward(friend, sourceName);
+				const source = contacts.find((c) => c.id === state.contactUserId);
+				executeBulkForward(target, displayName(source) || "Unknown");
 				return;
 			}
 
-			// Single message forward
-			const senderName = messages[state.contactUserId][
-				Number(state.msgIndex)
-			].user
-				? "You"
-				: contacts.find((c) => c.id === state.contactUserId)?.name;
-			mountAvatar(chatProfilePicture, {
-				name: friend.name,
-				nickname: friend.nickname,
-				profilePics: friend.profilePics,
-				className: "chat-profile-picture",
-				isOnline: friend.isOnline,
-			});
-			try {
-				const chatProfileWrapper =
-					document.querySelector(".chat-profile");
-				if (chatProfileWrapper)
-					chatProfileWrapper.setAttribute(
-						"data-user-id",
-						String(friend.id),
-					);
-			} catch (_e) {
-				/* ignore */
-			}
-			chatName.textContent = friend.nickname || friend.name;
-			try { await openChat(true); } catch (e) { /* ignore */ }
-			if (friend.isBlocked) {
-				messageContainer.style.display = "none";
-				const _ub = unblockActionBtn[0];
-				if (_ub) _ub.style.display = "flex";
-				return;
-			} else {
-				messageContainer.style.display = "flex";
-				const _ub = unblockActionBtn[0];
-				if (_ub) _ub.style.display = "none";
-			}
-			injectMessages(friend.id);
+			// Single message: built while the source chat is still on screen
+			const sourceId = state.contactUserId;
+			const original = (messages[sourceId] || [])[Number(state.msgIndex)];
+			forwardDialog.close();
+			if (!original || original.id == null) return;
+			const source = contacts.find((c) => c.id === sourceId);
+			const senderName = original.user ? "You" : displayName(source) || "Unknown";
+			const forwardingMsg = buildForwardedMsg(original, target.id);
+
+			await openChatWithContact(target.id);
+			if (state.contactUserId !== target.id || target.isBlocked || target.isDeleted) return;
 
 			msgAction.style.display = "flex";
 			state.actionPreviewHeight =
@@ -3134,18 +3140,14 @@ document.addEventListener("DOMContentLoaded", async function () {
 			chatEl.style.paddingBottom =
 				basePadding + state.actionPreviewHeight + "rem";
 			msgActionText.textContent = "Forwarding message from " + senderName;
-			const msgs = messages[state.contactUserId][Number(state.msgIndex)];
-			if (!msgs) return;
-			msgActionmsg.textContent = msgs.text;
+			msgActionmsg.textContent = original.text || "";
 			messageInput.style.borderRadius = "0 0 2rem 2rem";
 			sendMessageBtn.style.display = "block";
 			// Wait for padding/layout changes (msgAction) then scroll.
 			scrollChatToBottomAfterPadding();
 
 			state.isForwarding = true;
-			state.forwardingMsg = buildForwardedMsg(msgs, friend.id);
-			forwardDialog.close();
-			state.contactUserId = friend.id;
+			state.forwardingMsg = forwardingMsg;
 		});
 	}
 
@@ -3168,11 +3170,33 @@ document.addEventListener("DOMContentLoaded", async function () {
 	// ─── Context menu actions ─────────────────────────────────────────────────
 	if (copyMsg[0]) {
 		copyMsg[0].addEventListener("click", () => {
-			navigator.clipboard.writeText(
-				messages[state.contactUserId][Number(state.msgIndex)].text,
-			);
-			showToast("Message copied", copyIcon);
+			const msg = (messages[state.contactUserId] || [])[Number(state.msgIndex)];
 			closeContextMenu();
+			if (!msg || typeof msg.text !== "string") return;
+			const copied = () => showToast("Message copied", copyIcon);
+			// The clipboard API exists only on https (and localhost)
+			const fallback = () => {
+				try {
+					const area = document.createElement("textarea");
+					area.value = msg.text;
+					area.setAttribute("readonly", "");
+					area.style.position = "fixed";
+					area.style.opacity = "0";
+					document.body.appendChild(area);
+					area.select();
+					const ok = document.execCommand("copy");
+					area.remove();
+					if (ok) copied();
+					else showToast("Couldn't copy the message");
+				} catch (e) {
+					showToast("Couldn't copy the message");
+				}
+			};
+			if (navigator.clipboard?.writeText) {
+				navigator.clipboard.writeText(msg.text).then(copied, fallback);
+			} else {
+				fallback();
+			}
 		});
 	}
 
@@ -3183,89 +3207,43 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 	if (deleteMsg[0]) {
 		deleteMsg[0].addEventListener("click", () => {
+			const msgEl = state.selectedMsg;
+			const msgIndex = state.msgIndex;
+			const contactId = state.contactUserId;
 			closeContextMenu();
+			if (!msgEl) return;
 
-			const friend = contacts.find((c) => c.id === state.contactUserId);
-			const prevLastMessage = friend?.lastMessage;
-			const prevLastMessageTime = friend?.lastMessageTime;
-			const prevLastMessageSeen = friend?.lastMessageSeen;
-			const prevLastMessageDate = friend?.lastMessageDate;
+			const friend = contacts.find((c) => c.id === contactId);
+			const prev = friend
+				? {
+						lastMessage: friend.lastMessage,
+						lastMessageId: friend.lastMessageId,
+						lastMessageTime: friend.lastMessageTime,
+						lastMessageDate: friend.lastMessageDate,
+						lastMessageTs: friend.lastMessageTs,
+						lastMessageSeen: friend.lastMessageSeen,
+					}
+				: null;
 
-			const {
-				timeout,
-				deletedMsg,
-				idx: deletedIdx,
-			} = deleteMessage(state.selectedMsg, state.msgIndex);
+			// The message fades out and is deleted after the undo window
+			const { timeout, deletedMsg } = deleteMessage(msgEl, msgIndex);
 			state.deleting = timeout;
 
-			if (friend) {
-				const remaining = messages[state.contactUserId].filter(
-					(_, i) => i !== Number(state.msgIndex),
-				);
-				if (remaining.length > 0) {
-					const lastMsg = remaining.at(-1);
-					friend.lastMessage =
-						lastMsg &&
-						lastMsg.isTimeCapsule &&
-						lastMsg.isLocked &&
-						!lastMsg.user
-							? ""
-							: lastMsg.text || "";
-					friend.lastMessageTime = lastMsg.time;
-					friend.lastMessageDate = lastMsg.date || "";
-					// Only explicit false means unseen
-					friend.lastMessageSeen = lastMsg.user
-						? lastMsg.isSeen !== false
-						: true;
-				} else {
-					friend.lastMessage = "";
-					friend.lastMessageTime = "";
-					friend.lastMessageDate = "";
-					friend.lastMessageSeen = true;
-				}
+			// the card already shows the message before it
+			if (friend && deletedMsg) {
+				const remaining = (messages[contactId] || []).filter((m) => m !== deletedMsg);
+				_setPreview(friend, remaining.length ? remaining[remaining.length - 1] : null);
 				refreshCard(friend);
 				sortActiveChats();
 				sortContacts();
-				if (
-					!friend.isPinned &&
-					!friend.isSaved &&
-					friend.unreadCount === 0 &&
-					friend.lastMessageSeen === true
-				) {
-					moveToContacts(friend);
-					sortActiveChats();
-					sortContacts();
-				}
 			}
 
 			state.currentUndoAction = () => {
-				undoDeleteMessage(state.selectedMsg);
-
-				if (deletedMsg !== undefined) {
-					const arr = messages[state.contactUserId];
-					arr.splice(deletedIdx, 0, deletedMsg);
-					arr.forEach((m, i) => {
-						m.index = i;
-					});
-					state.pinnedIndexes = arr
-						.map((m, i) => (m.isPinned ? i : -1))
-						.filter((i) => i !== -1);
-				}
-
-				if (friend) {
-					friend.lastMessage = prevLastMessage;
-					friend.lastMessageTime = prevLastMessageTime;
-					friend.lastMessageSeen = prevLastMessageSeen;
-					friend.lastMessageDate = prevLastMessageDate;
-
-					const isInContacts = contactsContainer.querySelector(
-						`[data-user-id="${friend.id}"]`,
-					);
-					if (isInContacts) {
-						moveToActiveChats(friend);
-					} else {
-						refreshCard(friend);
-					}
+				// nothing was removed yet: just show it again
+				undoDeleteMessage(msgEl);
+				if (friend && prev) {
+					Object.assign(friend, prev);
+					_placeCard(friend);
 					sortActiveChats();
 					sortContacts();
 				}
@@ -3278,21 +3256,22 @@ document.addEventListener("DOMContentLoaded", async function () {
 	if (forwardMsg[0]) {
 		forwardMsg[0].addEventListener("click", () => {
 			closeContextMenu();
-			forwardDialog.querySelector(
-				".forwarded-contact-dialog",
-			).textContent = "";
-			contacts.forEach((contact) => {
-				forwardDialog
-					.querySelector(".forwarded-contact-dialog")
-					.appendChild(createForwardedContactCard({ ...contact }));
-			});
+			state.isSelectionForwarding = false;
+			const list = forwardDialog.querySelector(".forwarded-contact-dialog");
+			list.textContent = "";
+			// only chats that can receive messages
+			contacts
+				.filter((c) => !c.isBlocked && !c.isDeleted)
+				.forEach((contact) => {
+					list.appendChild(createForwardedContactCard({ ...contact }));
+				});
 			forwardDialog.showModal();
 		});
 	}
 
 	if (selectMsg[0]) {
 		selectMsg[0].addEventListener("click", () => {
-			enterSelectionMode(Number(state.msgIndex));
+			enterSelectionMode(state.selectedMsg);
 			closeContextMenu();
 		});
 	}
@@ -3316,53 +3295,53 @@ document.addEventListener("DOMContentLoaded", async function () {
 	}
 
 	// ─── Profile actions ──────────────────────────────────────────────────────
+	// (wrapped: the handlers take a contact id, not the click event)
 	if (detailsCloseBtn)
-		detailsCloseBtn.addEventListener("click", closeProfile);
-	if (deleteChatBtns.length > 0)
-		deleteChatBtns.forEach((b) =>
-			b.addEventListener("click", handleDeleteChat),
-		);
-	if (editNameBtns.length > 0)
-		editNameBtns.forEach((b) =>
-			b.addEventListener("click", handleEditNickname),
-		);
-	if (editNameDoneBtn.length > 0)
-		editNameDoneBtn.forEach((b) =>
-			b.addEventListener("click", handleEditNicknameDone),
-		);
-	if (cancelEditNameBtn.length > 0)
-		cancelEditNameBtn.forEach((b) =>
-			b.addEventListener("click", handleEditNicknameCancel),
-		);
-	if (blockContactBtns.length > 0)
-		blockContactBtns.forEach((b) =>
-			b.addEventListener("click", handleBlockContact),
-		);
-	if (unblockActionBtn.length > 0)
-		unblockActionBtn.forEach((b) =>
-			b.addEventListener("click", handleBlockContact),
-		);
-	if (deleteContactBtns.length > 0)
-		deleteContactBtns.forEach((b) =>
-			b.addEventListener("click", () => {
-				handleDeleteContact();
-				updateContactsEmptyState();
-			}),
-		);
+		detailsCloseBtn.addEventListener("click", () => closeProfile());
+	deleteChatBtns.forEach((b) =>
+		b.addEventListener("click", () => handleDeleteChat()),
+	);
+	editNameBtns.forEach((b) =>
+		b.addEventListener("click", () => handleEditNickname()),
+	);
+	editNameDoneBtn.forEach((b) =>
+		b.addEventListener("click", () => handleEditNicknameDone()),
+	);
+	cancelEditNameBtn.forEach((b) =>
+		b.addEventListener("click", () => handleEditNicknameCancel()),
+	);
+	blockContactBtns.forEach((b) =>
+		b.addEventListener("click", () => handleBlockContact()),
+	);
+	unblockActionBtn.forEach((b) =>
+		b.addEventListener("click", () => handleBlockContact()),
+	);
+	deleteContactBtns.forEach((b) =>
+		b.addEventListener("click", () => {
+			handleDeleteContact();
+			// the contact leaves the list when the undo time is over
+			setTimeout(updateContactsEmptyState, 3200);
+		}),
+	);
 
-	if (archiveContactBtns.length > 0)
-		archiveContactBtns.forEach((btn) =>
-			btn.addEventListener("click", () => {
-				const friend = contacts.find(
-					(c) => c.id === state.contactUserId,
-				);
-				if (!friend) return;
-				_onContactAction("archive", friend.id);
-				state.skipShowChatOnProfileClose = true;
-				closeProfile();
-				setTimeout(() => closeChat(), 350);
-			}),
-		);
+	archiveContactBtns.forEach((btn) =>
+		btn.addEventListener("click", () => {
+			const friend = contacts.find((c) => c.id === state.contactUserId);
+			if (!friend) return;
+			if (friend.isArchived) {
+				_unarchiveContact(friend.id).then(() => refreshProfile(friend));
+				return;
+			}
+			_archiveContact(friend.id);
+			state.skipShowChatOnProfileClose = true;
+			closeProfile();
+			setTimeout(() => {
+				if (state.contactUserId !== friend.id) return;
+				if (chatEl) chatEl.textContent = "";
+				closeChat();
+			}, 350);
+		}),
+	);
 
 	//  ─── Emoji Picker ───────────────────────────────────────────────────────
 	if (emojiBtn && emojiPicker && sendMessageBtn) {
@@ -3404,7 +3383,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 	// ─── Empty state click to send message ─────────────────────────────────────
 	if (emptyStateEl) {
 		emptyStateEl.addEventListener("click", () => {
-			if (!state.contactUserId) return;
+			const friend = contacts.find((c) => c.id === state.contactUserId);
+			if (!friend || friend.isBlocked || friend.isDeleted || state.isSelecting) return;
+			// a draft in the box is not replaced
+			if (messageInput.value.trim()) return;
 			messageInput.value = "hi";
 			messageInput.dispatchEvent(new Event("input"));
 			sendMessage();
@@ -3412,7 +3394,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 	}
 
 	// ─── Archived ──────────────────────────────────────────────────
-		async function _archiveContact(userId) {
+	async function _archiveContact(userId) {
 		const friend = contacts.find((c) => c.id === userId);
 		if (!friend) return;
 		const uid = Number(userId);
@@ -3514,42 +3496,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 						async (id) => {
 							archivedDialog.close();
 							closeSettings();
-							const friend = contacts.find((c) => c.id === id);
-							if (!friend) return;
-							state.contactUserId = id;
-							mountAvatar(chatProfilePicture, {
-								name: friend.name,
-								nickname: friend.nickname,
-								profilePics: friend.profilePics,
-								className: "chat-profile-picture",
-								isOnline: friend.isOnline,
-							});
-							try {
-								const chatProfileWrapper = document.querySelector(".chat-profile");
-								if (chatProfileWrapper) chatProfileWrapper.setAttribute("data-user-id", String(friend.id));
-							} catch (e) {
-								/* ignore */
-							}
-							chatName.textContent = friend.nickname || friend.name;
-							try {
-								await openChat(true);
-							} catch (e) {
-								/* ignore */
-							}
-
-							if (friend.isBlocked) {
-								messageContainer.style.display = "none";
-								const _ub = unblockActionBtn[0];
-								if (_ub) _ub.style.display = "flex";
-							} else {
-								messageContainer.style.display = "flex";
-								const _ub = unblockActionBtn[0];
-								if (_ub) _ub.style.display = "none";
-							}
-							if (window.innerWidth <= 700) {
-								chatPart.style.display = "flex";
-								peoplePart.style.display = "none";
-							}
+							await openChatWithContact(id);
 						},
 					),
 				);
@@ -3558,7 +3505,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 
 		archivedDialog.showModal();
 	}
-
 
 	if (archivedDialogClose) {
 		archivedDialogClose.addEventListener("click", () => {
@@ -3579,9 +3525,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 		) {
 			settingsList.classList.remove("open");
 		}
-		if (!searchbar.contains(e.target)) {
-			searchbar.classList.remove("open");
-			searchInput.value = "";
+		// a tap outside the search box and its results ends the search
+		if (
+			searchbar &&
+			!searchbar.contains(e.target) &&
+			!(searchResults && searchResults.contains(e.target))
+		) {
+			_closeSearch();
 		}
 		if (
 			messageMenu.style.display === "block" &&
@@ -3644,17 +3594,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 		},
 		{ passive: false },
 	);
-	let lastTap = 0;
-
-	document.addEventListener(
-		"touchend",
-		function (e) {
-			const now = Date.now();
-			if (now - lastTap < 300) {
-				e.preventDefault();
-			}
-			lastTap = now;
-		},
-		{ passive: false },
-	);
+	// Double-tap zoom is turned off in CSS (touch-action: manipulation): a
+	// touchend blocker here used to swallow quick second taps on buttons.
 });

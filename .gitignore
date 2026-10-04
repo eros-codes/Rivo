@@ -54,5 +54,5 @@ tmp_migs.sql
 .vault/
 secrets.json
 
-# Ignore user profile uploads but keep the folder tracked
-/public/images/user-profiles/*
+# Uploaded profile pictures (the folder is created on the first upload)
+/public/assets/images/user-profiles/*

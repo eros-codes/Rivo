@@ -21,11 +21,18 @@ export function updatePinnedData(contactId, messageId, messageObj, isPinned) {
 			const exists = arr.some((p) => String(p.id) === String(mid));
 			if (!exists) {
 				arr.push({
-					id: mid,
+					// ids are numbers, like the ones from the server
+					id: /^\d+$/.test(mid) ? Number(mid) : mid,
 					text: (messageObj && messageObj.text) || '',
 					senderId: messageObj && messageObj.user ? getCurrentUserId() : (messageObj && messageObj.senderId) || null,
-					createdAt: (messageObj && messageObj.createdAt) || Date.now(),
+					createdAt: (messageObj && messageObj.createdAt) || new Date().toISOString(),
 				});
+				// same order as the server's list: oldest message first
+				const t = (p) => {
+					const v = new Date(p.createdAt).getTime();
+					return Number.isFinite(v) ? v : 0;
+				};
+				arr.sort((a, b) => t(a) - t(b) || Number(a.id) - Number(b.id));
 			}
 		} else {
 			pinnedData[contactId] = arr.filter((p) => String(p.id) !== String(mid));

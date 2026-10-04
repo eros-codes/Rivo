@@ -95,8 +95,13 @@
     box-shadow:
         0 4px 20px rgba(0, 0, 0, 0.3),
         inset 0 1px 0 rgba(255, 255, 255, 0.1);
+	/* .edit-profile-avatar sets display:block for the <img>; the letter needs
+	   flex centring (the old line-height trick left it a little high) */
+	display: flex;
+	align-items: center;
+	justify-content: center;
 	text-align: center;
-	line-height: 3.2;
+	line-height: 1;
 }
 .edit-profile-avatar-btn {
 	position: absolute;
@@ -213,6 +218,10 @@
 }
 .edit-profile-save:hover {
 	background: var(--active-chat-bg-color-hover);
+}
+.edit-profile-save:disabled {
+	opacity: 0.6;
+	cursor: default;
 }
 .edit-profile-save:active {
 	transform: scale(0.98);

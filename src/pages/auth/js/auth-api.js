@@ -28,6 +28,21 @@ export async function registerUser(name, email, username, password) {
 	}
 }
 
+// Whether an email / username is already used by someone (before sign-up)
+export async function checkAvailability(email, username) {
+	try {
+		const data = await safeFetch("/api/auth/check-availability", {
+			credentials: "include",
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ email, username }),
+		});
+		return { ok: true, data: data || {} };
+	} catch (err) {
+		return { ok: false, data: { error: err?.message || 'Unknown error' } };
+	}
+}
+
 export async function requestPasswordReset(identifier) {
 	try {
 		const data = await safeFetch("/api/auth/request-password-reset", {

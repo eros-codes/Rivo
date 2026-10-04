@@ -2,9 +2,40 @@ import { Router } from "express";
 import prisma from "../prisma.js";
 import { requireAuth } from "../middleware/auth.js";
 import { parseIntSafe } from "../utils/validators.js";
-import { userSockets, getSocketById, emitToRoom } from "../socket/index.js";
+import { deliverToConversation } from "../socket/index.js";
+import { applyPrivacy, relationsFor } from "../utils/privacy.js";
+import { loadReplySenders, previewMessage, serializeMessage } from "../utils/messageView.js";
 
 const router = Router();
+
+const MEMBER_USER_SELECT = {
+	id: true,
+	name: true,
+	username: true,
+	profilePics: true,
+	isOnline: true,
+	lastSeen: true,
+	isDeleted: true,
+	privacyOnline: true,
+	privacyProfile: true,
+};
+
+// Member profiles as the viewer may see them
+async function sanitizeMembers(conversations, viewerId) {
+	const ids = [];
+	for (const c of conversations) for (const m of c.members || []) if (m.user) ids.push(m.user.id);
+	const rel = await relationsFor(viewerId, ids);
+	for (const c of conversations) {
+		c.members = (c.members || []).map((m) => ({
+			...m,
+			user: m.user
+				? m.user.id === viewerId
+					? applyPrivacy(m.user, { hasViewer: true, blockedViewer: false })
+					: applyPrivacy(m.user, rel.get(m.user.id))
+				: m.user,
+		}));
+	}
+}
 
 // ─── Get all conversations of current user ────────────────────────────────────
 router.get("/", requireAuth, async (req, res) => {
@@ -17,6 +48,7 @@ router.get("/", requireAuth, async (req, res) => {
 		if (take > MAX_TAKE) take = MAX_TAKE;
 
 		const before = req.query.before ? new Date(req.query.before) : null;
+		if (before && isNaN(before.getTime())) return res.status(400).json({ error: "Invalid before date" });
 		const beforeId = req.query.beforeId ? parseIntSafe(req.query.beforeId) : null;
 
 		const where = {
@@ -45,49 +77,22 @@ router.get("/", requireAuth, async (req, res) => {
 			include: {
 				members: {
 					include: {
-						user: {
-							select: {
-								id: true,
-								name: true,
-								username: true,
-								profilePics: true,
-								isOnline: true,
-								lastSeen: true,
-							},
-						},
+						user: { select: MEMBER_USER_SELECT },
 					},
 				},
 				messages: {
-					where: {
-						isDeleted: false,
-						OR: [
-							{ isTimeCapsule: false },
-							{ openedAt: { not: null } },
-							{ senderId: req.userId },
-						],
-					},
-					orderBy: { createdAt: "desc" },
+					where: { isDeleted: false },
+					orderBy: [{ createdAt: "desc" }, { id: "desc" }],
 					take: 1,
-					select: {
-						id: true,
-						conversationId: true,
-						senderId: true,
-						text: true,
-						isSeen: true,
-						isEdited: true,
-						isPinned: true,
-						isDeleted: true,
-						replyToId: true,
-						replyToName: true,
-						forwardedFrom: true,
-						createdAt: true,
-						sender: {
-							select: { id: true, name: true, username: true, profilePics: true },
-						},
-					},
 				},
 			},
 		});
+
+		await sanitizeMembers(conversations, req.userId);
+		const now = new Date();
+		for (const c of conversations) {
+			c.messages = (c.messages || []).map((m) => previewMessage(m, req.userId, now));
+		}
 
 		return res.json(conversations);
 	} catch (err) {
@@ -119,24 +124,15 @@ router.get("/:id", requireAuth, async (req, res) => {
 		if (limit > MAX_FETCH_LIMIT) limit = MAX_FETCH_LIMIT;
 
 		const before = req.query.before ? new Date(req.query.before) : null;
+		if (before && isNaN(before.getTime())) return res.status(400).json({ error: "Invalid before date" });
 		const beforeId = req.query.beforeId ? parseIntSafe(req.query.beforeId) : null;
 
-		// Fetch conversation without messages, then fetch messages separately
 		const conversation = await prisma.conversation.findUnique({
 			where: { id: conversationId },
 			include: {
 				members: {
 					include: {
-						user: {
-							select: {
-								id: true,
-								name: true,
-								username: true,
-								profilePics: true,
-								isOnline: true,
-								lastSeen: true,
-							},
-						},
+						user: { select: MEMBER_USER_SELECT },
 					},
 				},
 			},
@@ -173,31 +169,20 @@ router.get("/:id", requireAuth, async (req, res) => {
 			take: limit,
 			include: {
 				sender: {
-					select: { id: true, name: true, username: true, profilePics: true },
+					select: { id: true, name: true, username: true },
+				},
+				reactions: {
+					select: { userId: true, emoji: true },
 				},
 			},
 		});
 
+		await sanitizeMembers([conversation], req.userId);
+		// Return ascending order, decrypted for this viewer (never ciphertext or keys)
+		const ascending = msgs.reverse();
+		const replySenders = await loadReplySenders(ascending);
 		const now = new Date();
-		const sanitized = msgs.map((m) => {
-			const locked =
-				m.isTimeCapsule && !m.openedAt && m.scheduledFor && new Date(m.scheduledFor) > now && m.senderId !== req.userId;
-			if (!locked) return m;
-			return {
-				...m,
-				text: null,
-				ciphertext: null,
-				iv: null,
-				auth_tag: null,
-				wrapped_dek: null,
-				replyToText: null,
-				forwardedText: null,
-				isLocked: true,
-			};
-		});
-
-		// Return ascending order to the client
-		conversation.messages = sanitized.reverse();
+		conversation.messages = ascending.map((m) => serializeMessage(m, req.userId, { now, replySenders }));
 
 		return res.json(conversation);
 	} catch (err) {
@@ -206,22 +191,20 @@ router.get("/:id", requireAuth, async (req, res) => {
 	}
 });
 
-// ─── Delete all messages in a conversation ────────────────────────────────────
+// ─── Delete all messages in a conversation (for both people) ──────────────────
 router.delete("/:id/messages", requireAuth, async (req, res) => {
 	const conversationId = parseIntSafe(req.params.id);
 	if (!conversationId) return res.status(400).json({ error: "Invalid conversation id" });
 
-    try {
-        const member = await prisma.conversationMember.findFirst({
-            where: { conversationId, userId: req.userId },
-        });
+	try {
+		const member = await prisma.conversationMember.findFirst({
+			where: { conversationId, userId: req.userId },
+		});
 
-        if (!member) return res.status(403).json({ error: "Forbidden" });
+		if (!member) return res.status(403).json({ error: "Forbidden" });
 
 		// Fetch messages that will be affected so we can emit deletion events
-		// and adjust unread counters for recipients. Only consider messages
-		// that are currently not deleted.
-		const msgs = await prisma.message.findMany({ where: { conversationId, isDeleted: false }, select: { id: true, isSeen: true } });
+		const msgs = await prisma.message.findMany({ where: { conversationId, isDeleted: false }, select: { id: true } });
 		const ids = msgs.map((m) => m.id);
 
 		if (ids.length === 0) {
@@ -229,51 +212,27 @@ router.delete("/:id/messages", requireAuth, async (req, res) => {
 		}
 
 		// Mark those messages deleted
-		await prisma.message.updateMany({ where: { id: { in: ids } }, data: { isDeleted: true } });
+		await prisma.message.updateMany({ where: { id: { in: ids } }, data: { isDeleted: true, isPinned: false } });
 
-		// If any of the deleted messages were unseen, decrement recipients' unread counts
-		const unseenCount = msgs.filter((m) => !m.isSeen).length;
+		// Nothing is left to be unread for anyone in this conversation
 		try {
-			if (unseenCount > 0) {
-				const recipientContacts = await prisma.contact.findMany({ where: { conversationId, ownerId: { not: req.userId } }, select: { id: true, unreadCount: true } });
-				const updates = recipientContacts
-					.map((rc) => ({ id: rc.id, dec: Math.min(rc.unreadCount || 0, unseenCount) }))
-					.filter((u) => u.dec > 0)
-					.map((u) => prisma.contact.update({ where: { id: u.id }, data: { unreadCount: { decrement: u.dec } } }));
-				if (updates.length) await prisma.$transaction(updates);
-			}
+			await prisma.contact.updateMany({ where: { conversationId }, data: { unreadCount: 0 } });
 		} catch (e) {
-			console.error('adjust unread on bulk delete failed', e);
+			console.error('reset unread on bulk delete failed', e);
 		}
 
-		// Broadcast deletion events so connected clients can update their UI
+		// Every device of both people (including this user's other devices)
 		try {
-			emitToRoom(`conversation:${conversationId}`, 'messages:bulk-deleted', { conversationId, messageIds: ids });
-
-			const recipientContacts = await prisma.contact.findMany({ where: { conversationId }, select: { ownerId: true } });
-			const recipientUserIds = Array.from(new Set(recipientContacts.map((c) => c.ownerId).filter((id) => id !== req.userId)));
-			for (const uid of recipientUserIds) {
-				try {
-					const sidSet = (userSockets && userSockets.get(uid)) || new Set();
-					for (const sid of sidSet) {
-						try {
-							const s = getSocketById(sid);
-							if (!s) continue;
-							try { if (s.rooms && s.rooms.has(`conversation:${conversationId}`)) continue; } catch (e) { /* ignore */ }
-							try { s.emit('messages:bulk-deleted', { conversationId, messageIds: ids }); } catch (e) { /* ignore per-socket errors */ }
-						} catch (e) { /* ignore per-socket */ }
-					}
-				} catch (e) { /* ignore per-user failures */ }
-			}
+			await deliverToConversation(conversationId, "messages:bulk-deleted", { conversationId, messageIds: ids });
 		} catch (e) {
 			console.error('broadcast deleted messages failed', e);
 		}
 
 		return res.json({ success: true });
-    } catch (err) {
-        console.error(err);
-        return res.status(500).json({ error: "Server error" });
-    }
+	} catch (err) {
+		console.error(err);
+		return res.status(500).json({ error: "Server error" });
+	}
 });
 
 export default router;

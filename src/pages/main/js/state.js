@@ -7,6 +7,8 @@ export const state = {
 	msgIndex: null,
 	selectedMsg: null,
 	isEditing: false,
+	// id of the message being edited (indexes move when messages come and go)
+	editingMessageId: null,
 	replyTo: null,
 	isForwarding: false,
 	forwardingMsg: null,
@@ -17,6 +19,7 @@ export const state = {
 	pinnedIndexes: [],
 	isProgrammaticScroll: false,
 	isSelecting: false,
+	// ids of the selected messages (indexes move when messages come and go)
 	selectedMessages: [],
 	currentUndoAction: null,
 	isProfileDialogOpen : false,

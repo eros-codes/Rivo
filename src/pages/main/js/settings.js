@@ -3,9 +3,27 @@ import { showToast } from "./ui.js";
 import { applyAccentColor, applyWallpaper } from "../../../utils/theme.js";
 import { updateThemeImages } from "../../../utils/dom.js";
 import { getCurrentUser } from "./currentUser.js";
+import { getSocket } from "./socket.js";
 
 let _dom = {};
 let _currentUser = null;
+// "dialog" (wide screens) or "panel" (phones), remembered so closing works
+// even if the window was resized in between
+let _settingsMode = null;
+let _panelHome = null;
+
+// After being shown in the desktop dialog the panel goes back to its place in
+// the page, so the phone layout can still show it.
+function _returnPanelHome() {
+	const panel = _dom.settingsPanel;
+	if (!panel) return;
+	panel.style.display = "none";
+	panel.classList.remove("slide-in", "slide-out");
+	if (_panelHome && _panelHome.parent && panel.parentNode !== _panelHome.parent) {
+		const next = _panelHome.next && _panelHome.next.parentNode === _panelHome.parent ? _panelHome.next : null;
+		_panelHome.parent.insertBefore(panel, next);
+	}
+}
 
 function _format(v) {
     if (!v) return "Everyone";
@@ -15,6 +33,16 @@ function _format(v) {
 export function initSettings(dom, currentUser) {
 	_dom = dom;
 	_currentUser = currentUser;
+	if (dom.settingsPanel && dom.settingsPanel.parentNode) {
+		_panelHome = { parent: dom.settingsPanel.parentNode, next: dom.settingsPanel.nextSibling };
+	}
+	// Esc closes the dialog natively: put the panel back as well
+	dom.settingsDialog?.addEventListener("close", () => {
+		if (_settingsMode === "dialog") {
+			_settingsMode = null;
+			_returnPanelHome();
+		}
+	});
 
 	if (_dom.settingsPanelClose)
 		_dom.settingsPanelClose.addEventListener("click", closeSettings);
@@ -106,13 +134,19 @@ export function initSettings(dom, currentUser) {
 
 		if (_dom.settingsWallpaperInput) {
 			_dom.settingsWallpaperInput.addEventListener("change", (e) => {
-					const file = e.target.files?.[0];
+				const file = e.target.files?.[0];
+				// the same picture can be chosen again later
+				e.target.value = "";
 				if (!file) return;
-					// Enforce a sane maximum file size to avoid blowing localStorage.
-					if (file.size > 5 * 1024 * 1024) {
-						showToast("Image too large (max 5MB)");
-						return;
-					}
+				if (file.type && !file.type.startsWith("image/")) {
+					showToast("Please choose an image file");
+					return;
+				}
+				// Enforce a sane maximum file size to avoid blowing localStorage.
+				if (file.size > 5 * 1024 * 1024) {
+					showToast("Image too large (max 5MB)");
+					return;
+				}
 				const reader = new FileReader();
 				reader.onload = (ev) => {
 					const base64 = ev.target.result;
@@ -368,19 +402,21 @@ export function initSettings(dom, currentUser) {
 				});
 			});
 
-		const forgotBtn = document.getElementById("settings-forgot-password");
+		const forgotBtn = document.getElementById("settings-send-reset-email");
 		if (forgotBtn) {
 			forgotBtn.addEventListener("click", async () => {
 				const feedback = document.getElementById("settings-change-password-feedback");
 				forgotBtn.disabled = true;
 				try {
-					const me = await getCurrentUser();
-					await fetch("/api/auth/request-password-reset", {
+					// ایمیل عمداً از localStorage حذف شده؛ سرور از روی کوکی
+					// می‌داند کاربر کیست، پس نیازی به فرستادنش نیست
+					const res = await fetch("/api/auth/request-password-reset", {
 						method: "POST",
 						headers: { "Content-Type": "application/json" },
 						credentials: "include",
-						body: JSON.stringify({ identifier: me.email }),
+						body: "{}",
 					});
+					if (!res.ok) throw new Error("Could not send reset link");
 					if (feedback) {
 						feedback.className = "settings-feedback settings-feedback--ok";
 						feedback.textContent = "If that email is registered, a reset link is on its way.";
@@ -428,22 +464,40 @@ export function initSettings(dom, currentUser) {
 				}
 				submitBtn.disabled = true;
 				try {
-					const res = await changePassword(cur, nw);
+					// this tab stays connected; other devices are signed out
+					const res = await changePassword(cur, nw, getSocket()?.id || null);
 					if (res && res.success) {
 						showToast("Password changed. Please log in again.");
 						try {
-							await logout();
+							getSocket()?.disconnect();
+						} catch (e) {
+							/* ignore */
+						}
+						// this device's notifications stop too
+						let endpoint = null;
+						try {
+							endpoint = window.pushEndpoint ? await window.pushEndpoint() : null;
+						} catch (e) {
+							endpoint = null;
+						}
+						try {
+							await logout(endpoint);
 						} catch (e) {
 							// ignore logout errors, continue to clear local state
 						}
 						localStorage.removeItem("user");
-						window.location.href = "/auth/auth.html";
+						window.location.replace("/auth/auth.html");
 					} else {
 						showToast(res?.error || "Failed to change password");
 					}
 				} catch (err) {
 					console.error(err);
-					showToast("Server error");
+					// e.g. "Wrong password": show the server's message for 4xx errors
+					showToast(
+						err?.status && err.status < 500 && err.message
+							? err.message
+							: "Server error",
+					);
 				} finally {
 					submitBtn.disabled = false;
 				}
@@ -521,9 +575,15 @@ export function openSettings(user) {
             document.body.appendChild(d);
             _dom.settingsDialog = d;
         }
+        _settingsMode = "dialog";
+        // an inline display left by the phone layout would hide it here
+        _dom.settingsPanel.style.display = '';
+        _dom.settingsPanel.classList.remove('slide-in', 'slide-out');
         _dom.settingsDialog.appendChild(_dom.settingsPanel);
-        _dom.settingsDialog.showModal();
+        if (!_dom.settingsDialog.open) _dom.settingsDialog.showModal();
     } else {
+        _settingsMode = "panel";
+        if (_panelHome && _dom.settingsPanel.parentNode !== _panelHome.parent) _returnPanelHome();
         _dom.settingsPanel.style.display = 'flex';
         _dom.settingsPanel.classList.remove('slide-out');
         _dom.settingsPanel.classList.add('slide-in');
@@ -534,16 +594,28 @@ export function openSettings(user) {
 }
 
 export function closeSettings() {
-	if (window.innerWidth > 700) {
-		_dom.settingsDialog.close();
-		_dom.settingsDialog.textContent = '';
-	} else {
-        _dom.settingsPanel.classList.remove('slide-in');
-        _dom.settingsPanel.classList.add('slide-out');
-        _dom.settingsPanel.addEventListener('animationend', () => {
-            _dom.settingsPanel.classList.remove('slide-out');
-            _dom.settingsPanel.style.display = 'none';
-        }, { once: true });
-    }
+	const mode = _settingsMode;
+	_settingsMode = null;
+	if (mode === "dialog") {
+		try {
+			if (_dom.settingsDialog?.open) _dom.settingsDialog.close();
+		} catch (e) {
+			/* ignore */
+		}
+		_returnPanelHome();
+	} else if (mode === "panel") {
+		const panel = _dom.settingsPanel;
+		// an invisible panel never fires animationend
+		if (getComputedStyle(panel).display === "none") {
+			panel.style.display = "none";
+			return;
+		}
+		panel.classList.remove('slide-in');
+		panel.classList.add('slide-out');
+		panel.addEventListener('animationend', () => {
+			panel.classList.remove('slide-out');
+			panel.style.display = 'none';
+		}, { once: true });
+	}
 }
 

@@ -1,11 +1,42 @@
 import { Router } from "express";
-import { unwrapDEK, decryptMessage } from "../utils/encryption.js";
 import prisma from "../prisma.js";
 import { requireAuth } from "../middleware/auth.js";
 import { parseIntSafe } from "../utils/validators.js";
-import { userSockets, getSocketById } from "../socket/index.js";
+import { applyPrivacy, relationsFor } from "../utils/privacy.js";
+import { previewMessage } from "../utils/messageView.js";
+import { findUserByUsername } from "../utils/userLookup.js";
+import { emitToUser, invalidateConversationCache } from "../socket/index.js";
 
 const router = Router();
+
+const CONTACT_USER_SELECT = {
+	id: true,
+	name: true,
+	username: true,
+	bio: true,
+	profilePics: true,
+	isOnline: true,
+	lastSeen: true,
+	email: true,
+	isDeleted: true,
+	privacyOnline: true,
+	privacyEmail: true,
+	privacyProfile: true,
+};
+
+// What the owner of a contact row may see about that contact
+async function sanitizeContactRows(rows, viewerId) {
+	const others = rows.map((r) => r.contact && r.contact.id).filter((id) => Number.isInteger(id) && id !== viewerId);
+	const rel = await relationsFor(viewerId, others);
+	return rows.map((r) => {
+		const out = { ...r };
+		if (out.contact) {
+			const isSelf = out.contact.id === viewerId;
+			out.contact = isSelf ? applyPrivacy(out.contact, { hasViewer: true, blockedViewer: false }) : applyPrivacy(out.contact, rel.get(out.contact.id));
+		}
+		return out;
+	});
+}
 
 // ─── Get all contacts ─────────────────────────────────────────────────────────
 router.get("/", requireAuth, async (req, res) => {
@@ -25,194 +56,99 @@ router.get("/", requireAuth, async (req, res) => {
 			take: limit,
 			skip,
 			include: {
-				contact: {
-					select: {
-						id: true,
-						name: true,
-						username: true,
-						profilePics: true,
-						isOnline: true,
-						lastSeen: true,
-						email: true,
-						privacyOnline: true,
-						privacyEmail: true,
-						privacyProfile: true,
-					},
-				},
+				contact: { select: CONTACT_USER_SELECT },
 				conversation: {
 					include: {
 						messages: {
 							where: { isDeleted: false },
-							orderBy: { createdAt: "desc" },
+							orderBy: [{ createdAt: "desc" }, { id: "desc" }],
 							take: 1,
 						},
 					},
 				},
 			},
+			// `id` last: without a unique tie-breaker the order of rows with equal
+			// keys can change between pages, so offset paging could skip or repeat
+			// contacts.
 			orderBy: [
 				{ isSaved: "desc" },
 				{ isPinned: "desc" },
 				{ pinOrder: "asc" },
 				{ conversation: { lastMessageAt: "desc" } },
+				{ id: "desc" },
 			],
 		});
 
-		// Apply simple privacy filters based on the contact's privacy fields
-		const sanitized = contacts.map((c) => {
-			const cc = { ...c };
-			if (cc.contact) {
-				const p = cc.contact;
-				if (p.privacyOnline === "nobody") {
-					cc.contact.isOnline = false;
-					cc.contact.lastSeen = null;
-				}
-				if (p.privacyEmail === "nobody") {
-					cc.contact.email = null;
-				}
-				if (p.privacyProfile === "nobody") {
-					cc.contact.profilePics = [];
-				}
-				// strip privacy fields from response
-				delete cc.contact.privacyOnline;
-				delete cc.contact.privacyEmail;
-				delete cc.contact.privacyProfile;
-			}
-			return cc;
-		});
+		const sanitized = await sanitizeContactRows(contacts, req.userId);
 
-		// Attempt to decrypt the latest message for each contact so the
-		// client can display a readable preview in contact lists.
-		// For time-capsule messages, NEVER reveal plaintext in contact previews
-		// for non-senders. If the current user is the sender, decrypt so they
-		// can see their own message; otherwise show a neutral placeholder even
-		// if the capsule has been opened on the server (openedAt set).
+		// Readable preview of the latest message. Locked time capsules and
+		// one-time messages are never revealed to the recipient here.
+		const now = new Date();
 		for (const cc of sanitized) {
 			try {
 				const conv = cc.conversation;
 				if (!conv || !Array.isArray(conv.messages) || conv.messages.length === 0) continue;
-				const m = conv.messages[0];
-				// prefer plaintext if present
-				if (m.text) continue;
-				// Respect time-capsule privacy: never decrypt previews for non-senders
-				if (m.isTimeCapsule && m.senderId !== req.userId) {
-					// If still scheduled, show unlock time. If already opened, attempt
-					// to decrypt and return the plaintext so contact lists show the
-					// real last message after unlock. If decryption fails, fall back to
-					// a neutral "unlocked" placeholder.
-					try {
-						const now = new Date();
-						const scheduled = m.scheduledFor ? new Date(m.scheduledFor) : null;
-						if (scheduled && !m.openedAt && scheduled > now) {
-							const d = scheduled;
-							m.text = `Time capsule — unlocks ${d.toLocaleDateString([], {month:"short",day:"numeric"})} at ${d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}`;
-						} else {
-							// opened or no schedule: attempt to decrypt to provide plaintext preview
-							if (m.ciphertext && m.wrapped_dek) {
-								try {
-									const dek = unwrapDEK(m.wrapped_dek, m.key_id || "v1");
-									m.text = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
-								} catch (e) {
-									m.text = "Time capsule unlocked";
-								}
-							} else {
-								m.text = "Time capsule unlocked";
-							}
-						}
-					} catch (e) {
-						m.text = "Time capsule";
-					}
-				} else if (m.ciphertext && m.wrapped_dek) {
-					// Non-capsule or sender's own message: attempt decryption
-					try {
-						const keyId = m.key_id || process.env.ACTIVE_KEY_ID || null;
-						if (keyId) {
-							const dek = unwrapDEK(m.wrapped_dek, keyId);
-							m.text = decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek);
-						} else {
-							m.text = "Message unavailable";
-						}
-					} catch (e) {
-						m.text = "Message unavailable";
-					}
-				} else {
-					m.text = m.text || "";
-				}
+				conv.messages = [previewMessage(conv.messages[0], req.userId, now)];
 			} catch (e) {
 				// do not fail the entire request for one contact
-			}
-		}
-
-		// Strip sensitive encrypted fields from message previews and only
-		// return a safe preview object for the client to display.
-		for (const cc of sanitized) {
-			try {
-				const conv = cc.conversation;
-				if (!conv || !Array.isArray(conv.messages) || conv.messages.length === 0) continue;
-				const m = conv.messages[0];
-				const preview = {
-					id: m.id,
-					conversationId: m.conversationId,
-					senderId: m.senderId,
-					text: m.text || null,
-					createdAt: m.createdAt,
-					isDeleted: m.isDeleted,
-					isEdited: m.isEdited,
-					isPinned: m.isPinned,
-					isSeen: m.isSeen,
-				};
-				conv.messages = [preview];
-			} catch (e) {
-				/* ignore preview sanitization errors */
+				if (cc.conversation) cc.conversation.messages = [];
 			}
 		}
 
 		// Auto-create saved messages for existing users, but check the full contact set
 		// rather than only the current page so pagination cannot create duplicates.
-		const savedCount = await prisma.contact.count({ where: { ownerId: req.userId, isSaved: true } });
-		if (savedCount === 0) {
-			await prisma.$transaction(async (tx) => {
-				const savedConv = await tx.conversation.create({
-					data: { members: { create: [{ userId: req.userId }] } },
+		if (skip === 0) {
+			const savedCount = await prisma.contact.count({ where: { ownerId: req.userId, isSaved: true } });
+			if (savedCount === 0) {
+				await prisma.$transaction(async (tx) => {
+					const savedConv = await tx.conversation.create({
+						data: { members: { create: [{ userId: req.userId }] } },
+					});
+					await tx.contact.create({
+						data: {
+							ownerId: req.userId,
+							contactId: req.userId,
+							conversationId: savedConv.id,
+							isSaved: true,
+						},
+					});
 				});
-				await tx.contact.create({
-					data: {
-						ownerId: req.userId,
-						contactId: req.userId,
-						conversationId: savedConv.id,
-						isSaved: true,
-					},
-				});
-			});
-			// re-fetch
-			const refetched = await prisma.contact.findFirst({
-				where: { ownerId: req.userId, isSaved: true },
-				include: {
-					conversation: {
-						select: {
-							id: true,
-							messages: {
-								take: 1,
-								orderBy: { createdAt: "desc" },
+				// re-fetch
+				const refetched = await prisma.contact.findFirst({
+					where: { ownerId: req.userId, isSaved: true },
+					include: {
+						conversation: {
+							select: {
+								id: true,
+								messages: {
+									where: { isDeleted: false },
+									take: 1,
+									orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+								},
 							},
 						},
 					},
-				},
-			});
-			if (refetched) {
-				sanitized.unshift({
-					...refetched,
-					contact: {
-						id: req.userId,
-						name: "Saved Messages",
-						username: "",
-						profilePics: [],
-						bio: "",
-						isOnline: true,
-						lastSeen: null,
-					},
-					conversationId: refetched.conversationId,
-					isSaved: true,
 				});
+				if (refetched) {
+					if (refetched.conversation) {
+						refetched.conversation.messages = (refetched.conversation.messages || []).map((m) => previewMessage(m, req.userId, now));
+					}
+					sanitized.unshift({
+						...refetched,
+						contact: {
+							id: req.userId,
+							name: "Saved Messages",
+							username: "",
+							profilePics: [],
+							bio: "",
+							isOnline: true,
+							lastSeen: null,
+							isDeleted: false,
+						},
+						conversationId: refetched.conversationId,
+						isSaved: true,
+					});
+				}
 			}
 		}
 
@@ -223,24 +159,39 @@ router.get("/", requireAuth, async (req, res) => {
 	}
 });
 
+// One add at a time per pair of people (the server runs as one process)
+const _pairLocks = new Map(); // "smallerId:largerId" => tail of the queue
+async function _lockPair(a, b) {
+	const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+	const prev = _pairLocks.get(key) || Promise.resolve();
+	let release;
+	const mine = new Promise((resolve) => (release = resolve));
+	const tail = prev.then(() => mine);
+	_pairLocks.set(key, tail);
+	await prev;
+	return () => {
+		release();
+		if (_pairLocks.get(key) === tail) _pairLocks.delete(key);
+	};
+}
+
 // ─── Add contact ──────────────────────────────────────────────────────────────
 router.post("/", requireAuth, async (req, res) => {
-	const { username, name } = req.body;
+	const { username, name } = req.body || {};
 
-	if (!username) {
+	if (!username || typeof username !== "string" || !username.trim()) {
 		return res.status(400).json({ error: "Username is required" });
 	}
 
-	if (name !== undefined && typeof name !== "string") {
+	if (name !== undefined && name !== null && typeof name !== "string") {
 		return res.status(400).json({ error: "Name must be a string" });
 	}
+	const nickname = typeof name === "string" && name.trim() ? name.trim().slice(0, 100) : null;
 
 	try {
-		const targetUser = await prisma.user.findUnique({
-			where: { username },
-		});
+		const targetUser = await findUserByUsername(username);
 
-		if (!targetUser) {
+		if (!targetUser || targetUser.isDeleted) {
 			return res.status(404).json({ error: "User not found" });
 		}
 
@@ -248,109 +199,104 @@ router.post("/", requireAuth, async (req, res) => {
 			return res.status(400).json({ error: "You cannot add yourself" });
 		}
 
-		if (targetUser.isDeleted) {
-			return res.status(404).json({ error: "User not found" });
-		}
-
-		const existing = await prisma.contact.findFirst({
-			where: {
-				ownerId: req.userId,
-				contactId: targetUser.id,
-			},
-		});
-
-		if (existing) {
-			return res.status(409).json({ error: "Contact already exists" });
-		}
-
-		// If the target user already has us as a contact, reuse their
-		// conversation and only create our side. This prevents creating
-		// duplicate contact rows for the target user when re-adding.
-		const reciprocal = await prisma.contact.findFirst({
-			where: {
-				ownerId: targetUser.id,
-				contactId: req.userId,
-			},
-		});
-
-		if (reciprocal) {
-			const contact = await prisma.contact.create({
-				data: {
+		// Two adds between the same two people at the same moment (a double
+		// tap, or both adding each other) must not create duplicate contacts
+		const release = await _lockPair(req.userId, targetUser.id);
+		try {
+			const existing = await prisma.contact.findFirst({
+				where: {
 					ownerId: req.userId,
 					contactId: targetUser.id,
-					conversationId: reciprocal.conversationId,
-					nickname: name || null,
-				},
-				include: {
-					contact: {
-						select: {
-							id: true,
-							name: true,
-							username: true,
-							profilePics: true,
-							bio: true,
-							isOnline: true,
-							lastSeen: true,
-							privacyOnline: true,
-							privacyEmail: true,
-							privacyProfile: true,
-						},
-					},
+					isSaved: false,
 				},
 			});
 
-			return res.status(201).json(contact);
-		}
+			if (existing) {
+				return res.status(409).json({ error: "Contact already exists" });
+			}
 
-		// Create conversation and contacts inside a single transaction so
-		// we don't leave an orphaned conversation if one of the contact
-		// creations fails.
-		const [contact] = await prisma.$transaction(async (tx) => {
-			const conversation = await tx.conversation.create({
-				data: {
-					members: {
-						create: [{ userId: req.userId }, { userId: targetUser.id }],
-					},
-				},
-			});
+			const include = { contact: { select: CONTACT_USER_SELECT } };
 
-			const c1 = await tx.contact.create({
-				data: {
-					ownerId: req.userId,
-					contactId: targetUser.id,
-					conversationId: conversation.id,
-					nickname: name || null,
-				},
-				include: {
-					contact: {
-						select: {
-							id: true,
-							name: true,
-							username: true,
-							profilePics: true,
-							bio: true,
-							isOnline: true,
-							lastSeen: true,
-							privacyOnline: true,
-							privacyEmail: true,
-							privacyProfile: true,
-						},
-					},
-				},
-			});
-
-			await tx.contact.create({
-				data: {
+			// If the target user already has us as a contact, reuse their
+			// conversation and only create our side.
+			const reciprocal = await prisma.contact.findFirst({
+				where: {
 					ownerId: targetUser.id,
 					contactId: req.userId,
-					conversationId: conversation.id,
+					isSaved: false,
 				},
 			});
 
-			return [c1];
-		});
+			let contact;
+			if (reciprocal) {
+				contact = await prisma.contact.create({
+					data: {
+						ownerId: req.userId,
+						contactId: targetUser.id,
+						conversationId: reciprocal.conversationId,
+						nickname,
+					},
+					include,
+				});
+			} else {
+				// Both people may have removed each other earlier; reuse their
+				// conversation so the history comes back instead of starting over.
+				const shared = await prisma.conversation.findFirst({
+					where: {
+						AND: [
+							{ members: { some: { userId: req.userId } } },
+							{ members: { some: { userId: targetUser.id } } },
+							{ members: { every: { userId: { in: [req.userId, targetUser.id] } } } },
+						],
+					},
+					orderBy: { id: "desc" },
+					select: { id: true },
+				});
 
-		return res.status(201).json(contact);
+				// Create conversation and contacts inside a single transaction so
+				// we don't leave an orphaned conversation if one of the contact
+				// creations fails.
+				contact = await prisma.$transaction(async (tx) => {
+					const conversationId = shared
+						? shared.id
+						: (
+								await tx.conversation.create({
+									data: {
+										members: {
+											create: [{ userId: req.userId }, { userId: targetUser.id }],
+										},
+									},
+								})
+							).id;
+
+					const c1 = await tx.contact.create({
+						data: {
+							ownerId: req.userId,
+							contactId: targetUser.id,
+							conversationId,
+							nickname,
+						},
+						include,
+					});
+
+					await tx.contact.create({
+						data: {
+							ownerId: targetUser.id,
+							contactId: req.userId,
+							conversationId,
+						},
+					});
+
+					return c1;
+				});
+			}
+
+			invalidateConversationCache(contact.conversationId);
+			const [safe] = await sanitizeContactRows([contact], req.userId);
+			return res.status(201).json(safe);
+		} finally {
+			release();
+		}
 	} catch (err) {
 		console.error(err);
 		return res.status(500).json({ error: "Server error" });
@@ -362,10 +308,13 @@ router.patch("/:id", requireAuth, async (req, res) => {
 	const contactId = parseIntSafe(req.params.id);
 	if (!contactId) return res.status(400).json({ error: "Invalid contact id" });
 	// Prevent clients from setting server-controlled fields
-	const { isPinned, pinOrder, isMuted, isBlocked, nickname, isArchived } = req.body;
+	const { isPinned, pinOrder, isMuted, isBlocked, nickname, isArchived } = req.body || {};
 
-	// Sanitize nickname to avoid stored-DoS via large nicknames
-	const safeNickname = typeof nickname === 'string' ? nickname.trim().slice(0, 100) : undefined;
+	if (nickname !== undefined && nickname !== null && typeof nickname !== "string") {
+		return res.status(400).json({ error: "nickname must be a string" });
+	}
+	// Sanitize nickname to avoid stored-DoS via large nicknames ("" clears it)
+	const safeNickname = typeof nickname === 'string' && nickname.trim() ? nickname.trim().slice(0, 100) : null;
 
 	for (const [key, value] of [
 		['isPinned', isPinned],
@@ -377,7 +326,7 @@ router.patch("/:id", requireAuth, async (req, res) => {
 			return res.status(400).json({ error: `${key} must be a boolean` });
 		}
 	}
-	if (pinOrder !== undefined && (!Number.isInteger(pinOrder) || pinOrder < 0 || pinOrder > 9999)) {
+	if (pinOrder !== undefined && pinOrder !== null && (!Number.isInteger(pinOrder) || pinOrder < 0 || pinOrder > 9999)) {
 		return res.status(400).json({ error: 'pinOrder must be an integer between 0 and 9999' });
 	}
 
@@ -405,6 +354,9 @@ router.patch("/:id", requireAuth, async (req, res) => {
 			},
 		});
 
+		// mute/block decide who gets messages and notifications
+		invalidateConversationCache(contact.conversationId);
+
 		return res.json(updated);
 	} catch (err) {
 		console.error(err);
@@ -428,55 +380,38 @@ router.delete("/:id", requireAuth, async (req, res) => {
 		if (!contact) {
 			return res.status(404).json({ error: "Contact not found" });
 		}
+		if (contact.isSaved) {
+			return res.status(400).json({ error: "Saved Messages cannot be deleted" });
+		}
 
 		// Only remove this user's own contact record. The reciprocal record
 		// belongs to the other user and should not be deleted unilaterally.
 		await prisma.$transaction(async (tx) => {
 			await tx.contact.delete({ where: { id: contactId } });
 
-			// If the conversation no longer has contacts, remove it inside the
-			// same transaction to avoid races where concurrent deletes both
-			// attempt to remove the conversation.
+			// If the conversation no longer has contacts and never had a
+			// message, remove it inside the same transaction.
 			const remaining = await tx.contact.findFirst({ where: { conversationId: contact.conversationId } });
 			if (!remaining && contact.conversationId) {
-				// Only delete the conversation if there are no messages.
-				// Conversations may have messages even after contacts are removed
-				// (e.g., message history). Attempting to delete a conversation
-				// with existing messages can violate FK constraints and cause
-				// a transaction failure. Safely check message count first.
 				const msgCount = await tx.message.count({ where: { conversationId: contact.conversationId } });
 				if (msgCount === 0) {
+					// members reference the conversation (ON DELETE RESTRICT), so
+					// they have to go first
+					await tx.conversationMember.deleteMany({ where: { conversationId: contact.conversationId } });
 					await tx.conversation.delete({ where: { id: contact.conversationId } });
-				} else {
-					// Keep the conversation to preserve message history.
 				}
 			}
 		});
 
-		// Notify affected connected clients via socket.io so UIs update in real-time.
-		try {
-			// Emit to sockets belonging to the removed contact (the other user)
-			const otherSet = (userSockets && userSockets.get(contact.contactId)) || new Set();
-			for (const sid of otherSet) {
-				try {
-					const s = getSocketById(sid);
-					if (!s) continue;
-					try { s.emit("contact:removed", { contactUserId: req.userId, conversationId: contact.conversationId }); } catch (e) { /* ignore */ }
-				} catch (e) { /* ignore per-socket */ }
-			}
+		invalidateConversationCache(contact.conversationId);
 
-			// Also inform the requester's other sockets so multiple tabs stay in sync
-			const mine = (userSockets && userSockets.get(req.userId)) || new Set();
-			for (const sid of mine) {
-				try {
-					const s = getSocketById(sid);
-					if (!s) continue;
-					try { s.emit("contact:removed", { contactUserId: contact.contactId, conversationId: contact.conversationId }); } catch (e) { /* ignore */ }
-				} catch (e) { /* ignore per-socket */ }
-			}
-		} catch (e) {
-			console.error("emit contact removed failed", e);
-		}
+		// Keep this user's other devices in sync. The other person keeps their
+		// own contact (and the chat) unchanged, so they are not notified.
+		emitToUser(req.userId, "contact:removed", {
+			contactUserId: contact.contactId,
+			contactRowId: contact.id,
+			conversationId: contact.conversationId,
+		});
 
 		return res.json({ success: true });
 	} catch (err) {

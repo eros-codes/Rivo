@@ -4,6 +4,16 @@ let socket = null;
 let _onOnetimeDeleted = null;
 let _capsuleOpenedHandler = null;
 let _activeConversationId = null;
+let _onReconnect = null;
+let _authFailureHandled = false;
+
+function _isVisible() {
+	try {
+		return typeof document === "undefined" || document.visibilityState !== "hidden";
+	} catch (e) {
+		return true;
+	}
+}
 
 // Without a timeout, an unanswered socket acknowledgement can leave the UI
 // stuck forever in a sending or saving state.
@@ -41,6 +51,19 @@ function _hideStatus() {
 	el.classList.remove("visible");
 }
 
+// The session ended (logged out elsewhere, password changed, account
+// deleted): go to the sign-in page instead of retrying forever.
+function _endSession() {
+	if (_authFailureHandled) return;
+	_authFailureHandled = true;
+	try {
+		localStorage.removeItem("user");
+	} catch (e) {
+		/* ignore */
+	}
+	window.location.replace("/auth/auth.html");
+}
+
 // Named callbacks avoid silent breakage when a handler is added or reordered.
 export function initSocket({
 	onMessage,
@@ -56,21 +79,26 @@ export function initSocket({
 	onUserUpdated,
 	onContactRemoved,
 	onReactionUpdated,
+	onReconnect,
 } = {}) {
+	_onReconnect = onReconnect || null;
 	socket = io({
 		withCredentials: true,
+		// sent on every (re)connection: hidden tabs / backgrounded phones still
+		// get push notifications and do not mark messages as seen
+		auth: (cb) => cb({ visible: _isVisible() }),
 	});
 
 	socket.on("message:new", (message) => {
-		onMessage(message);
+		onMessage?.(message);
 	});
 
 	socket.on("message:edited", (data) => {
-		onMessageEdited(data);
+		onMessageEdited?.(data);
 	});
 
 	socket.on("message:deleted", (data) => {
-		onMessageDeleted(data);
+		onMessageDeleted?.(data);
 	});
 
 	socket.on("messages:bulk-deleted", (data) => {
@@ -79,15 +107,15 @@ export function initSocket({
 	});
 
 	socket.on("user:online", ({ userId }) => {
-		onUserOnline(userId);
+		onUserOnline?.(userId);
 	});
 
 	socket.on("user:offline", ({ userId, lastSeen }) => {
-		onUserOffline(userId, lastSeen);
+		onUserOffline?.(userId, lastSeen);
 	});
 
 	socket.on("message:seen", (data) => {
-		onMessageSeen(data);
+		onMessageSeen?.(data);
 	});
 
 	socket.on("message:pinned", (data) => {
@@ -126,6 +154,9 @@ export function initSocket({
 
 	socket.on("typing:stop", ({ userId }) => onTypingStop?.(userId));
 
+	socket.on("session:ended", () => _endSession());
+
+	let everConnected = false;
 	socket.on("connect", () => {
 		_hideStatus();
 		if (_activeConversationId) {
@@ -135,30 +166,78 @@ export function initSocket({
 				/* ignore reconnect join failures */
 			}
 		}
+		// Events sent while we were offline were missed: catch up.
+		if (everConnected) {
+			try {
+				_onReconnect?.();
+			} catch (e) {
+				/* ignore */
+			}
+		}
+		everConnected = true;
 	});
 
-	socket.on("disconnect", () => {
+	socket.on("disconnect", (reason) => {
+		// "io server disconnect": the server ended this session on purpose
+		if (reason === "io server disconnect") {
+			_showStatus("Connecting...");
+			// check whether we are still signed in; if not, leave
+			fetch("/api/users/me", { credentials: "include" })
+				.then((res) => {
+					if (res.status === 401) _endSession();
+					else socket.connect();
+				})
+				.catch(() => socket.connect());
+			return;
+		}
 		_showStatus("Connecting...");
 	});
 
-	socket.on("reconnect_attempt", () => {
+	// The server refused the connection: an expired or revoked session is not
+	// going to fix itself by retrying.
+	socket.on("connect_error", (err) => {
+		const msg = String(err && err.message || "");
+		if (msg === "Unauthorized" || msg === "Invalid token" || msg === "TokenExpired") {
+			fetch("/api/users/me", { credentials: "include" })
+				.then((res) => {
+					if (res.status === 401) _endSession();
+					else setTimeout(() => socket.connect(), 2000);
+				})
+				.catch(() => setTimeout(() => socket.connect(), 3000));
+			return;
+		}
+		// rate limited / server busy: the manager does not retry these itself
+		if (!socket.active) setTimeout(() => socket.connect(), 3000);
+	});
+
+	socket.io?.on?.("reconnect_attempt", () => {
 		_showStatus("Connecting...");
 	});
 
-	// Proactively disconnect when the page is being unloaded or hidden
-	// so the server receives the disconnect event faster (helps presence).
+	if (typeof document !== "undefined") {
+		document.addEventListener("visibilitychange", () => {
+			try {
+				if (socket?.connected) socket.emit("presence:visibility", { visible: _isVisible() });
+			} catch (e) {
+				/* ignore */
+			}
+		});
+	}
+
+	// Proactively disconnect when the page is being unloaded so the server
+	// receives the disconnect event faster (helps presence). A page that is
+	// only frozen in the back/forward cache comes back through "pageshow".
 	if (typeof window !== "undefined") {
-		window.addEventListener("beforeunload", () => {
+		window.addEventListener("pagehide", () => {
 			try {
 				socket?.disconnect();
 			} catch (e) {
 				/* ignore */
 			}
 		});
-
-		window.addEventListener("pagehide", () => {
+		window.addEventListener("pageshow", (ev) => {
 			try {
-				socket?.disconnect();
+				if (ev.persisted && socket && !socket.connected) socket.connect();
 			} catch (e) {
 				/* ignore */
 			}
@@ -176,10 +255,11 @@ export function setActiveConversation(conversationId) {
 	_activeConversationId = conversationId || null;
 }
 
-export function emitMessage({ conversationId, text, replyToId, replyToName, replyToText, forwardedFrom, forwardedText, isOneTime = false, isTimeCapsule = false, scheduledFor = null }) {
+export function emitMessage({ conversationId, text, replyToId, replyToName, replyToText, forwardedFrom, forwardedText, isOneTime = false, isTimeCapsule = false, scheduledFor = null, clientMessageId = null }) {
 	return emitWithAck("message:send", {
 		conversationId, text, replyToId, replyToName, replyToText,
 		forwardedFrom, forwardedText, isOneTime, isTimeCapsule, scheduledFor,
+		...(clientMessageId ? { clientMessageId } : {}),
 	}, { transform: (res) => res?.message || res });
 }
 
@@ -214,7 +294,7 @@ export function emitReaction(messageId, emoji) {
 }
 
 export function setOnetimeDeletedHandler(fn) {
- 	_onOnetimeDeleted = fn;
+	_onOnetimeDeleted = fn;
 }
 
 export function setCapsuleOpenedHandler(fn) { _capsuleOpenedHandler = fn; }

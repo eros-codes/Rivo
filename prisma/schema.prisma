@@ -131,6 +131,10 @@ model Message {
   createdAt      DateTime     @default(now())
   reactions      MessageReaction[]
   @@index([conversationId])
+  // pages of a chat (newest first, by time then id)
+  @@index([conversationId, createdAt, id])
+  // the time-capsule job looks for due capsules every 30 seconds
+  @@index([isTimeCapsule, scheduledFor])
 }
 
 model PushSubscription {

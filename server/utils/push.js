@@ -39,6 +39,10 @@ export function getPublicKey() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Chat notifications are only useful for a while, and they should wake a
+// sleeping phone, so ask the push service for prompt delivery.
+const PUSH_TTL_SECONDS = parseInt(process.env.PUSH_TTL_SECONDS || "86400", 10) || 86400;
+
 export async function addSubscription(userId, sub) {
 	if (!pushEnabled) return false;
 	if (!userId || !sub || !sub.endpoint || typeof sub.endpoint !== "string") return false;
@@ -83,7 +87,7 @@ async function sendOneWithRetries(subRow, payload) {
 	const maxAttempts = 3;
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 		try {
-			await webpush.sendNotification(sub, JSON.stringify(payload));
+			await webpush.sendNotification(sub, JSON.stringify(payload), { TTL: PUSH_TTL_SECONDS, urgency: "high" });
 			// update lastUsed (best-effort)
 			prisma.pushSubscription
 				.update({ where: { endpoint: subRow.endpoint }, data: { lastUsed: new Date() } })
@@ -91,8 +95,10 @@ async function sendOneWithRetries(subRow, payload) {
 			return true;
 		} catch (err) {
 			const status = err && err.statusCode;
-			if (status === 404 || status === 410) {
-				// expired or gone; remove from DB
+			// 404/410: the subscription expired. 400/401/403: it was created with
+			// another VAPID key (e.g. dev keys regenerated on restart) or is
+			// otherwise invalid; the browser subscribes again on its next visit.
+			if (status === 400 || status === 401 || status === 403 || status === 404 || status === 410) {
 				try {
 					await prisma.pushSubscription.deleteMany({ where: { endpoint: subRow.endpoint } });
 				} catch (e) {

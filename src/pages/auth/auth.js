@@ -6,7 +6,7 @@ import {
 	clearResendTimer,
 	clearCodeInputs,
 } from "./js/auth-timer.js";
-import { loginUser, registerUser, requestPasswordReset, resetPassword } from "./js/auth-api.js";
+import { loginUser, registerUser, requestPasswordReset, checkAvailability } from "./js/auth-api.js";
 
 const theme = localStorage.getItem("rivo-theme") || "light";
 if (theme === "dark") document.body.classList.add("dark-mode");
@@ -67,6 +67,35 @@ document.addEventListener("DOMContentLoaded", function () {
 	let forgotPass = false;
 	let _verificationEmail = null;
 
+	// A friendly note above the login fields (not an error)
+	function showLoginNotice(text) {
+		if (!loginForm) return;
+		let note = loginForm.querySelector(".auth-notice");
+		if (!note) {
+			note = document.createElement("p");
+			note.className = "auth-notice";
+			note.setAttribute("role", "status");
+			note.style.cssText =
+				"margin:-0.25rem 0 0.75rem;font-size:0.8rem;line-height:1.5;color:#2f9e63;";
+			const title = loginForm.querySelector(".form-title");
+			if (title) title.insertAdjacentElement("afterend", note);
+			else loginForm.prepend(note);
+		}
+		note.textContent = text || "";
+		note.hidden = !text;
+	}
+
+	// Back from the reset-password page
+	try {
+		const params = new URLSearchParams(window.location.search);
+		if (params.get("reset") === "1") {
+			showLoginNotice("Your password was changed. Sign in with your new password.");
+			history.replaceState(history.state, "", window.location.pathname);
+		}
+	} catch (e) {
+		/* ignore */
+	}
+
 	// ─── Auto-fill remembered user ────────────────────────────────────────────
 	const remembered = localStorage.getItem("rememberedUser");
 	if (remembered && loginUsername) {
@@ -101,12 +130,14 @@ document.addEventListener("DOMContentLoaded", function () {
 
 	// ─── Login form ───────────────────────────────────────────────────────────
 	if (loginForm) {
+		let loggingIn = false;
 		loginForm.addEventListener("submit", async function (e) {
 			e.preventDefault();
+			if (loggingIn) return;
 			let valid = true;
 
 			if (!loginUsername.value.trim()) {
-				showError(loginUsername, "Please enter your username.");
+				showError(loginUsername, "Please enter your email or username.");
 				valid = false;
 			} else {
 				clearError(loginUsername);
@@ -124,6 +155,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
 			if (!valid) return;
 
+			showLoginNotice("");
+			loggingIn = true;
+			setFormControlsDisabled(loginForm, true);
 			try {
 				const { ok, data } = await loginUser(
 					loginUsername.value.trim(),
@@ -131,6 +165,8 @@ document.addEventListener("DOMContentLoaded", function () {
 				);
 
 				if (!ok) {
+					loggingIn = false;
+					setFormControlsDisabled(loginForm, false);
 					showError(
 						loginUsername,
 						data.error || "Invalid credentials",
@@ -151,23 +187,28 @@ document.addEventListener("DOMContentLoaded", function () {
 					id: data.user?.id,
 					name: data.user?.name || "",
 					username: data.user?.username || "",
-					nickname: data.user?.nickname || data.user?.username || "",
+					nickname: data.user?.username || "",
 					profilePics: data.user?.profilePics || [],
-					isSaved: data.user?.isSaved || false,
-					isOnline: data.user?.isOnline || false,
-					conversationId: data.user?.conversationId || null,
+					bio: data.user?.bio || "",
+					email: data.user?.email || "",
 				};
 				localStorage.setItem("user", JSON.stringify(safeUser));
-				// Redirect to chat app root
-				window.location.href = "/chat";
+				// replace(): "back" from the chat must not return to this form
+				window.location.replace("/chat/");
 			} catch {
+				loggingIn = false;
+				setFormControlsDisabled(loginForm, false);
 				showError(loginUsername, "Connection error");
 			}
 		});
 
 		if (forgetPasswordBtn) {
-			forgetPasswordBtn.addEventListener("click", () => {
+			forgetPasswordBtn.addEventListener("click", (e) => {
+				e.preventDefault();
 				showForm(allForms, forgotForm);
+				setFormControlsDisabled(forgotForm, false);
+				if (forgotInput && !forgotInput.value && loginUsername?.value)
+					forgotInput.value = loginUsername.value.trim();
 			});
 		}
 
@@ -218,6 +259,22 @@ document.addEventListener("DOMContentLoaded", function () {
 			if (!valid) {
 				setFormControlsDisabled(signupForm, false);
 				return;
+			}
+
+			// A taken email or username is reported now, not after the code
+			try {
+				const { ok, data } = await checkAvailability(
+					signupEmail.value.trim(),
+					signupUsername.value.trim(),
+				);
+				if (ok && (data.emailTaken || data.usernameTaken)) {
+					if (data.emailTaken) showError(signupEmail, "This email is already taken.");
+					if (data.usernameTaken) showError(signupUsername, "This username is already taken.");
+					setFormControlsDisabled(signupForm, false);
+					return;
+				}
+			} catch (err) {
+				/* the server checks again when the account is created */
 			}
 
 			forgotPass = false;
@@ -400,46 +457,41 @@ document.addEventListener("DOMContentLoaded", function () {
 
 			if (!valid) return;
 
-			if (forgotPass) {
-				try {
-					const { ok } = await resetPassword(
-						forgotInput.value.trim(),
-						passwordInput.value,
-					);
-					if (!ok) {
-						showError(
-							passwordInput,
-							"Password reset is currently unavailable. Please contact support.",
-						);
-						return;
-					}
-					showForm(allForms, loginForm);
-					alert("Password reset successfully. Please log in.");
-				} catch {
-					showError(passwordInput, "Connection error");
-				}
-			} else {
-				try {
-					const { ok, data } = await registerUser(
-						signupName.value.trim(),
-						signupEmail.value.trim(),
-						signupUsername.value.trim(),
-						passwordInput.value,
-					);
+			// (forgotten passwords are reset from the emailed link, so this
+			// form only finishes signing up)
+			setFormControlsDisabled(passwordForm, true);
+			try {
+				const { ok, data } = await registerUser(
+					signupName.value.trim(),
+					signupEmail.value.trim(),
+					signupUsername.value.trim(),
+					passwordInput.value,
+				);
 
-					if (!ok) {
-						showError(
-							passwordInput,
-							data.error || "Registration failed",
-						);
-						return;
-					}
-
-					showForm(allForms, loginForm);
-					alert("Account created! Please log in.");
-				} catch {
-					showError(passwordInput, "Connection error");
+				if (!ok) {
+					showError(
+						passwordInput,
+						data.error || "Registration failed",
+					);
+					return;
 				}
+
+				const newUsername = signupUsername.value.trim();
+				passwordInput.value = "";
+				confirmPasswordInput.value = "";
+				signupForm.reset();
+				setFormControlsDisabled(signupForm, false);
+				showForm(allForms, loginForm);
+				if (loginUsername) loginUsername.value = newUsername;
+				if (loginPassword) {
+					loginPassword.value = "";
+					loginPassword.focus();
+				}
+				showLoginNotice("Your account is ready. Sign in with your new password.");
+			} catch {
+				showError(passwordInput, "Connection error");
+			} finally {
+				setFormControlsDisabled(passwordForm, false);
 			}
 		});
 
@@ -474,8 +526,11 @@ document.addEventListener("DOMContentLoaded", function () {
 					setFormControlsDisabled(forgotForm, false);
 					return;
 				}
+				// ready for another request later
+				setFormControlsDisabled(forgotForm, false);
 				showForm(allForms, loginForm);
-				showError(loginUsername, 'If the account exists, check your email for a password reset link.');
+				clearError(loginUsername);
+				showLoginNotice('If the account exists, a password reset link is on its way to its email.');
 			} catch (err) {
 				showError(forgotInput, err.message || 'Failed to request password reset');
 				setFormControlsDisabled(forgotForm, false);
@@ -520,17 +575,6 @@ document.addEventListener("DOMContentLoaded", function () {
 		},
 		{ passive: false },
 	);
-	let lastTap = 0;
-
-	document.addEventListener(
-		"touchend",
-		function (e) {
-			const now = Date.now();
-			if (now - lastTap < 300) {
-				e.preventDefault();
-			}
-			lastTap = now;
-		},
-		{ passive: false },
-	);
+	// Double-tap zoom is turned off in CSS (touch-action: manipulation): a
+	// touchend blocker here used to swallow quick second taps on buttons.
 });

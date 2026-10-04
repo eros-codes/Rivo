@@ -9,6 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { getCurrentUser } from "./currentUser.js";
+import { formatClock, localDateKey } from "../../../utils/date.js";
 
 // ─── DOM refs ────────────────────────────────────────────────────────────────
 // تنها نویسنده initChat است (در همین فایل)، بقیه فقط می‌خوانند.
@@ -139,28 +140,72 @@ export function _currentUserId() {
 	return u && u.id;
 }
 
-// Returns a safe preview string for contact cards. For locked time-capsule
-// messages destined for the recipient, return an empty string so nothing
-// is leaked in contact lists or previews.
+// Preview text for chat cards and notifications. A locked time capsule and
+// someone else's one-time message are never revealed there.
+export const LOCKED_CAPSULE_PREVIEW = "Time capsule 🔒";
+export const ONE_TIME_PREVIEW = "One-time message";
+
 export function getContactPreviewText(msg) {
 	try {
 		if (!msg) return "";
 		const isSenderLocal = !!msg.user;
-		// If message is a time-capsule and still locked for the recipient,
-		// don't reveal anything in previews. If it has been opened and the
-		// server provided plaintext, show that; otherwise show a neutral
-		// placeholder.
-		if (msg.isTimeCapsule) {
-			if (msg.isLocked && !isSenderLocal) return "";
-			if (msg.openedAt && !isSenderLocal) {
-				if (msg.text) return msg.text;
-				return "Time capsule unlocked";
-			}
+		if (msg.isTimeCapsule && !isSenderLocal) {
+			if (msg.isLocked) return LOCKED_CAPSULE_PREVIEW;
+			if (msg.openedAt && !msg.text) return "Time capsule unlocked";
 		}
+		if (msg.isOneTime && !isSenderLocal) return ONE_TIME_PREVIEW;
 		return msg.text || "";
 	} catch (e) {
 		return "";
 	}
+}
+
+/** How a contact is shown (their nickname for them, or their name). */
+export function displayName(contact) {
+	return (contact && (contact.nickname || contact.name)) || "";
+}
+
+/** A server message in the shape the chat UI uses. */
+export function normalizeServerMessage(m) {
+	const created = m && m.createdAt ? new Date(m.createdAt) : new Date();
+	return {
+		id: m.id,
+		user: m.senderId === _currentUserId(),
+		senderId: m.senderId,
+		text: m.text,
+		time: formatClock(created),
+		date: localDateKey(created),
+		createdAt: m.createdAt,
+		isEdited: m.isEdited === true,
+		isPinned: m.isPinned === true,
+		isSeen: m.isSeen === true,
+		replyTo: m.replyToId
+			? {
+					id: m.replyToId,
+					sender: m.replyToName || "",
+					senderId: m.replyToSenderId ?? null,
+					text: m.replyToText,
+				}
+			: null,
+		forwardedFrom: m.forwardedFrom || null,
+		forwardedText: m.forwardedText || null,
+		reactions: Array.isArray(m.reactions) ? m.reactions : [],
+		isOneTime: m.isOneTime === true,
+		isTimeCapsule: m.isTimeCapsule === true,
+		scheduledFor: m.scheduledFor || null,
+		openedAt: m.openedAt || null,
+		isLocked: m.isLocked === true,
+	};
+}
+
+/** Id sent with a message so a retry can never store it twice. */
+export function newClientMessageId() {
+	try {
+		if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, "");
+	} catch (e) {
+		/* fall back below */
+	}
+	return `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
 }
 
 // ─── Init ────────────────────────────────────────────────────────────────────

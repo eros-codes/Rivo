@@ -1,6 +1,29 @@
 import jwt from "jsonwebtoken";
 import prisma from "../prisma.js";
 
+const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+// Sessions slide: after a day, any request renews the 7-day cookie, so people
+// who use the app are not signed out every week.
+const RENEW_AFTER_SECONDS = 24 * 60 * 60;
+
+function renewSession(req, res, userId, payload) {
+	try {
+		const nowSec = Math.floor(Date.now() / 1000);
+		if (!payload.iat || nowSec - payload.iat < RENEW_AFTER_SECONDS) return;
+		const opts = {
+			secure: process.env.NODE_ENV === "production",
+			sameSite: "lax",
+			maxAge: SESSION_MAX_AGE_MS,
+		};
+		const fresh = jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: "7d" });
+		res.cookie("token", fresh, { ...opts, httpOnly: true });
+		// the CSRF cookie must live as long as the session
+		if (req.cookies?.csrfToken) res.cookie("csrfToken", req.cookies.csrfToken, { ...opts, httpOnly: false });
+	} catch (e) {
+		/* renewal is best-effort */
+	}
+}
+
 export async function requireAuth(req, res, next) {
 	// Enforce cookie-only JWT for authentication. Cookie-parser populates `req.cookies`.
 	const token = req.cookies?.token;
@@ -41,6 +64,7 @@ export async function requireAuth(req, res, next) {
 		}
 
 		req.userId = userId;
+		renewSession(req, res, userId, payload);
 		next();
 	} catch (err) {
 		if (err && err.name === "TokenExpiredError") {

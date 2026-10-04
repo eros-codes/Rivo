@@ -93,7 +93,8 @@ export async function safeFetch(url, opts = {}) {
         // leaving them stuck in the chat UI with a vague error.
         if (res.status === 401 && typeof window !== 'undefined' && !window.location.pathname.startsWith('/auth')) {
             try { localStorage.removeItem('user'); } catch (e) { /* ignore */ }
-            window.location.href = '/auth';
+            // '/auth' has no index page (it fell through to the landing page)
+            window.location.href = '/auth/auth.html';
         }
         throw Object.assign(new Error(err.error ?? res.statusText), { status: res.status });
     }

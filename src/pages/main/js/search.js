@@ -1,12 +1,15 @@
-import { contacts, messages } from "./state.js";
+import { contacts } from "./state.js";
 import { createContactCard } from "../../../components/contact-cards/contact-card.js";
 import { createMessage } from "../../../components/messages/messages.js";
 import { safeFetch } from "../../../utils/fetch.js";
 import { getCurrentUserId } from "../../../utils/user.js";
+import { formatClock } from "../../../utils/date.js";
 
 let _dom = {};
 let _onContactAction = null;
 let _onMessageClick = null;
+// Answers can arrive out of order: only the latest search may draw results
+let _searchSeq = 0;
 
 /**
  * @param {{
@@ -22,6 +25,7 @@ export function initSearch(dom) {
 }
 
 export async function runSearch(query) {
+	const seq = ++_searchSeq;
 	const q = String(query || "")
 		.trim()
 		.toLowerCase();
@@ -35,7 +39,7 @@ export async function runSearch(query) {
 	_dom.searchResults.style.display = "flex";
 
 	_renderContactResults(q);
-	await _renderMessageResults(q);
+	await _renderMessageResults(q, seq);
 }
 
 // ─── Contacts ─────────────────────────────────────────────────────────────────
@@ -45,7 +49,7 @@ function _renderContactResults(query) {
 
 	const MAX_CONTACT_RESULTS = 50;
 	const matched = contacts
-		.filter((c) => !c.isBlocked && (c.nickname || c.name).toLowerCase().includes(query))
+		.filter((c) => c && !c.isBlocked && String(c.nickname || c.name || "").toLowerCase().includes(query))
 		.slice(0, MAX_CONTACT_RESULTS);
 
 	if (matched.length === 0) {
@@ -76,7 +80,7 @@ function _renderContactResults(query) {
 }
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
-async function _renderMessageResults(query) {
+async function _renderMessageResults(query, seq) {
 	const list = _dom.searchMessagesList;
 	list.textContent = "";
 
@@ -89,6 +93,7 @@ async function _renderMessageResults(query) {
 		const data = await safeFetch(
 			`/api/messages/search?q=${encodeURIComponent(query)}`,
 		);
+		if (seq !== _searchSeq) return;
 
 		list.textContent = "";
 
@@ -115,43 +120,37 @@ async function _renderMessageResults(query) {
 			sender.className = "search-message-sender";
 			sender.textContent = contact.nickname || contact.name;
 
-			// Try to resolve the message index within the local conversation
-			const msgIndex = (messages[contact.id] || []).findIndex(
-				(m) => String(m.id) === String(result.id),
-			);
-			const indexForCreate = msgIndex === -1 ? undefined : msgIndex;
-
+			const messageId = result.messageId ?? result.id;
 			const msgEl = createMessage({
-				user: result.senderId === myId,
+				user: Number(result.senderId) === Number(myId),
 				text: result.text,
-				time: new Date(result.createdAt).toLocaleTimeString([], {
-					hour: "2-digit",
-					minute: "2-digit",
-					hour12: false,
-				}),
-				index: indexForCreate,
+				time: formatClock(new Date(result.createdAt)),
 				isEdited: result.isEdited,
 				isPinned: result.isPinned,
 				isSeen: result.isSeen,
 				isTimeCapsule: !!result.isTimeCapsule,
 				isLocked: !!result.isLocked,
 				scheduledFor: result.scheduledFor || null,
+				openedAt: result.openedAt || null,
+				isOneTime: !!result.isOneTime,
 			});
 
 			wrapper.appendChild(sender);
 			wrapper.appendChild(msgEl);
 
+			// opens the chat at this message (older pages load as needed)
 			wrapper.addEventListener("click", () => {
-				_onMessageClick(contact, msgIndex === -1 ? null : msgIndex);
+				_onMessageClick(contact, messageId);
 			});
 
 			list.appendChild(wrapper);
 		});
-	} catch {
+	} catch (err) {
+		if (seq !== _searchSeq) return;
 		list.textContent = "";
 		const p = document.createElement("p");
 		p.className = "search-no-results";
-		p.textContent = "Search failed";
+		p.textContent = err && err.status === 429 ? "Too many searches. Please wait a moment." : "Search failed";
 		list.appendChild(p);
 	}
 }

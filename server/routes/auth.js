@@ -7,6 +7,8 @@ import nodemailer from "nodemailer";
 import push from "../utils/push.js";
 import { verificationEmail } from "../utils/verificationEmail.js";
 import resetPasswordEmail from "../utils/resetPasswordEmail.js";
+import { findUserByIdentifier, findUserByUsername, isEmailTaken, isUsernameTaken } from "../utils/userLookup.js";
+import { disconnectUserSockets } from "../socket/index.js";
 
 const router = Router();
 // bcrypt rounds: default to 12 in production, 10 in development
@@ -14,6 +16,9 @@ const DEFAULT_BCRYPT_ROUNDS = process.env.NODE_ENV === 'production' ? 12 : 10;
 const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS || DEFAULT_BCRYPT_ROUNDS);
 // Basic server-side email format check to avoid passing invalid addresses to SMTP
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,30}$/;
+// bcrypt only looks at the first 72 bytes; refuse absurdly long passwords
+const MAX_PASSWORD_LENGTH = 128;
 
 // Simple verification TTL (configurable via VERIFICATION_TTL_MINUTES)
 const VERIFICATION_TTL_MS = (Number(process.env.VERIFICATION_TTL_MINUTES) || 10) * 60 * 1000; // minutes -> ms
@@ -165,14 +170,15 @@ router.post('/send-code', async (req, res) => {
     if (email && typeof email === 'string' && !EMAIL_RE.test(String(email).trim())) {
         return res.json({ success: true });
     }
-    let target = (email || identifier || username || '').trim();
-    if (!target || typeof target !== 'string') return res.status(400).json({ error: 'Email or username required' });
+    const rawTarget = email || identifier || username || '';
+    if (typeof rawTarget !== 'string' || !rawTarget.trim()) return res.status(400).json({ error: 'Email or username required' });
+    let target = rawTarget.trim();
     try {
         // If a username was provided, resolve to the user's email
         let sendTo = target;
         if (!/@/.test(sendTo)) {
             try {
-                const user = await prisma.user.findFirst({ where: { username: sendTo } });
+                const user = await findUserByUsername(sendTo, { isDeleted: false });
                 if (!user || !user.email) {
                     // Don't reveal whether the username exists; return success
                     return res.json({ success: true });
@@ -271,12 +277,43 @@ router.post('/verify-code', async (req, res) => {
     }
 });
 
+// POST /check-availability -> lets the sign-up form say "username taken"
+// before a verification code is sent, instead of after the whole flow.
+router.post('/check-availability', async (req, res) => {
+    const { email, username } = req.body || {};
+    try {
+        const count = await _incrementSendCount(`avail:${req.ip}`);
+        if (count > 60) return res.status(429).json({ error: 'Too many attempts. Try later.' });
+        const result = { emailTaken: false, usernameTaken: false };
+        if (typeof email === 'string' && EMAIL_RE.test(email.trim())) result.emailTaken = await isEmailTaken(email);
+        if (typeof username === 'string' && USERNAME_RE.test(username.trim())) result.usernameTaken = await isUsernameTaken(username);
+        return res.json(result);
+    } catch (e) {
+        console.error('check-availability failed', e && e.message ? e.message : e);
+        return res.status(500).json({ error: 'Server error' });
+    }
+});
+
 // ─── Register ─────────────────────────────────────────────────────────────────
 router.post("/register", async (req, res) => {
-    const { name, email, username, password } = req.body;
+    const { name, email, username, password } = req.body || {};
 
     if (!name || !email || !username || !password) {
         return res.status(400).json({ error: "All fields are required" });
+    }
+    if (typeof name !== "string" || typeof email !== "string" || typeof username !== "string" || typeof password !== "string") {
+        return res.status(400).json({ error: "Invalid fields" });
+    }
+    const cleanName = name.trim();
+    const cleanUsername = username.trim();
+    if (cleanName.length < 2 || cleanName.length > 100) {
+        return res.status(400).json({ error: "Name must be between 2 and 100 characters" });
+    }
+    if (!EMAIL_RE.test(email.trim())) {
+        return res.status(400).json({ error: "Please enter a valid email address" });
+    }
+    if (password.length > MAX_PASSWORD_LENGTH) {
+        return res.status(400).json({ error: "Password is too long" });
     }
 
     try {
@@ -291,20 +328,15 @@ router.post("/register", async (req, res) => {
 
         // Basic server-side username format validation to prevent invalid or
         // potentially dangerous usernames (spaces, XSS payloads, etc.).
-        if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
+        if (!USERNAME_RE.test(cleanUsername)) {
             return res.status(400).json({ error: 'Username must be 3-30 alphanumeric characters or underscore' });
         }
-		const existing = await prisma.user.findFirst({
-			where: {
-				OR: [{ email: normEmail }, { username }],
-			},
-		});
-
-		if (existing) {
-			const field = existing.email === normEmail ? "email" : "username";
-			return res
-				.status(409)
-				.json({ error: `This ${field} is already taken` });
+		// Usernames and emails are unique regardless of letter case
+		if (await isEmailTaken(normEmail)) {
+			return res.status(409).json({ error: "This email is already taken" });
+		}
+		if (await isUsernameTaken(cleanUsername)) {
+			return res.status(409).json({ error: "This username is already taken" });
 		}
 
         // Enforce minimum password length for registration to match change-password rules
@@ -315,25 +347,32 @@ router.post("/register", async (req, res) => {
         const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
 		// All steps must succeed together: otherwise a user can be left without saved messages.
-		const user = await prisma.$transaction(async (tx) => {
-			const created = await tx.user.create({
-				data: { name, email: normEmail, username, passwordHash },
+		let user;
+		try {
+			user = await prisma.$transaction(async (tx) => {
+				const created = await tx.user.create({
+					data: { name: cleanName, email: normEmail, username: cleanUsername, passwordHash },
+				});
+				const savedConv = await tx.conversation.create({
+					data: {
+						members: { create: [{ userId: created.id }] },
+					},
+				});
+				await tx.contact.create({
+					data: {
+						ownerId: created.id,
+						contactId: created.id,
+						conversationId: savedConv.id,
+						isSaved: true,
+					},
+				});
+				return created;
 			});
-			const savedConv = await tx.conversation.create({
-				data: {
-					members: { create: [{ userId: created.id }] },
-				},
-			});
-			await tx.contact.create({
-				data: {
-					ownerId: created.id,
-					contactId: created.id,
-					conversationId: savedConv.id,
-					isSaved: true,
-				},
-			});
-			return created;
-		});
+		} catch (e) {
+			// someone took the same email/username at the same moment
+			if (e && e.code === "P2002") return res.status(409).json({ error: "This email or username is already taken" });
+			throw e;
+		}
 
         // consume verified marker so it can't be reused
         await prisma.emailVerification
@@ -349,19 +388,15 @@ router.post("/register", async (req, res) => {
 
 // ─── Login ────────────────────────────────────────────────────────────────────
 router.post("/login", async (req, res) => {
-    const { identifier, password } = req.body;
+    const { identifier, password } = req.body || {};
 
-    if (!identifier || !password) {
+    if (!identifier || !password || typeof identifier !== "string" || typeof password !== "string") {
         return res.status(400).json({ error: "All fields are required" });
     }
 
-
     try {
-        const user = await prisma.user.findFirst({
-            where: {
-                OR: [{ email: _normEmail(identifier) }, { username: identifier }],
-            },
-        });
+        // Email or username, letter case does not matter
+        const user = await findUserByIdentifier(identifier, { isDeleted: false });
 
         if (!user) {
             // Mitigate timing attacks by performing a bcrypt work factor
@@ -430,17 +465,16 @@ router.post("/login", async (req, res) => {
 });
 
 // ─── Logout ───────────────────────────────────────────────────────────────────
-router.post("/logout", (req, res) => {
-    // Try to determine user from token and remove server-side subscriptions
+router.post("/logout", async (req, res) => {
+    // Stop notifications on THIS device only (the browser sends its own push
+    // endpoint); the user's other devices stay signed in and keep theirs.
     try {
         const token = req.cookies?.token;
-        if (token) {
+        const endpoint = req.body && typeof req.body.endpoint === "string" ? req.body.endpoint : null;
+        if (token && endpoint) {
             try {
                 const payload = jwt.verify(token, process.env.JWT_SECRET);
-                const userId = payload.userId;
-                if (userId) {
-                    try { push.removeAllSubscriptions(userId); } catch (e) { /* ignore */ }
-                }
+                if (payload?.userId) await push.removeSubscriptionByEndpoint(payload.userId, endpoint);
             } catch (e) { /* invalid token */ }
         }
     } catch (e) { /* ignore */ }
@@ -453,24 +487,43 @@ router.post("/logout", (req, res) => {
 
 router.post("/request-password-reset", async (req, res) => {
     const { identifier } = req.body || {};
-    if (!identifier || typeof identifier !== "string") {
-        return res.status(400).json({ error: "Missing identifier" });
-    }
-
-    const rawIdentifier = String(identifier).trim();
-    if (!rawIdentifier) {
-        return res.status(400).json({ error: "Missing identifier" });
-    }
 
     try {
         let user = null;
-        if (/@/.test(rawIdentifier)) {
-            user = await prisma.user.findFirst({ where: { email: rawIdentifier } });
-        } else {
-            user = await prisma.user.findFirst({ where: { username: rawIdentifier } });
+
+        // اگر کاربر وارد سیستم است، هویتش از کوکی گرفته می‌شود و نیازی
+        // به فرستادن ایمیل نیست (که در localStorage هم ذخیره نمی‌شود)
+        const token = req.cookies?.token;
+        if (token) {
+            try {
+                const payload = jwt.verify(token, process.env.JWT_SECRET);
+                if (payload?.userId) {
+                    user = await prisma.user.findUnique({ where: { id: payload.userId } });
+                }
+            } catch (e) {
+                /* توکن نامعتبر: ادامه با identifier */
+            }
         }
 
         if (!user) {
+            const rawIdentifier = typeof identifier === "string" ? identifier.trim() : "";
+            if (!rawIdentifier) {
+                return res.status(400).json({ error: "Missing identifier" });
+            }
+            // email or username, letter case does not matter
+            user = await findUserByIdentifier(rawIdentifier);
+        }
+
+        if (!user || user.isDeleted) {
+            return res.json({ success: true });
+        }
+
+        // Do not let anyone flood an inbox with reset emails (the answer stays
+        // the same so it does not reveal whether the account exists)
+        const resetCount = await _incrementSendCount(`reset:${user.id}`);
+        const resetIpCount = await _incrementSendCount(`reset-ip:${req.ip}`);
+        if (resetCount > VERIFICATION_SEND_LIMIT || resetIpCount > VERIFICATION_SEND_LIMIT * 3) {
+            console.warn(`password reset rate limited: user=${user.id} ip=${req.ip}`);
             return res.json({ success: true });
         }
 
@@ -513,6 +566,9 @@ router.post("/reset-password-with-token", async (req, res) => {
     if (!token || typeof token !== "string" || !newPassword || typeof newPassword !== "string" || newPassword.length < 8) {
         return res.status(400).json({ error: "Missing or invalid fields" });
     }
+    if (newPassword.length > MAX_PASSWORD_LENGTH) {
+        return res.status(400).json({ error: "Password is too long" });
+    }
 
     try {
         const rawToken = String(token).trim();
@@ -526,7 +582,7 @@ router.post("/reset-password-with-token", async (req, res) => {
             include: { user: true },
         });
 
-        if (!resetToken || !resetToken.user) {
+        if (!resetToken || !resetToken.user || resetToken.user.isDeleted) {
             return res.status(400).json({ error: "Invalid or expired reset token" });
         }
 
@@ -541,6 +597,11 @@ router.post("/reset-password-with-token", async (req, res) => {
                 },
             }),
         ]);
+
+        // Every old session ends: sign in again with the new password. Their
+        // notifications stop as well (browsers subscribe again on sign-in).
+        disconnectUserSockets(resetToken.user.id);
+        await push.removeAllSubscriptions(resetToken.user.id);
 
         try {
             res.clearCookie("token");

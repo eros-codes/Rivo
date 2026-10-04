@@ -1,181 +1,61 @@
-import { createActiveChatCard } from "../../../components/active-chats/active-chats.js";
-import { createContactCard } from "../../../components/contact-cards/contact-card.js";
 import { applyReactionsToMessage, createMessage, markMessagesAsSeen } from "../../../components/messages/messages.js";
-import { getContacts } from "./api.js";
 import { moveToActiveChats, moveToContacts, refreshCard, sortActiveChats, sortContacts, updateTotalUnreadCount } from "./chat-logic.js";
-import { loadOlderMessages } from "./chat-paging.js";
+import { markOpenChatSeen } from "./chat-open.js";
 import { updatePinnedData, updatePinnedMessage } from "./chat-pinned.js";
-import { createDateSeparator } from "./chat-render.js";
+import { createDateSeparator, createUnreadSeparator, messageForDisplay } from "./chat-render.js";
 import { nearBottom, scrollChatToBottom, scrollChatToBottomAfterPadding } from "./chat-scroll.js";
-import { _currentUserId, _dom, _localNotifQueue, basePadding, getContactPreviewText, lineHeight, maxLines } from "./chat-state.js";
+import { _currentUserId, _dom, _localNotifQueue, basePadding, getContactPreviewText, lineHeight, maxLines, normalizeServerMessage } from "./chat-state.js";
 import { getCurrentUser } from "./currentUser.js";
 import { showNotification } from "./in-app-notification.js";
-import { emitMessageSeen } from "./socket.js";
 import { contacts, messages, state } from "./state.js";
 import { hideEmptyState } from "./ui.js";
 
+// Set by main.js: refreshes the contact list from the server and redraws it
+let _syncContacts = null;
+export function setContactsSync(fn) {
+	_syncContacts = fn;
+}
+
+function _pageVisible() {
+	try {
+		return document.visibilityState !== "hidden";
+	} catch (e) {
+		return true;
+	}
+}
+
 export async function receiveMessage(message) {
-	try { console.log('[chat] receiveMessage START', { messageId: message.id, conversationId: message.conversationId, senderId: message.senderId }); } catch (e) {}
+	if (!message || message.id == null) return;
 	let contact = contacts.find(
 		(c) => c.conversationId === message.conversationId,
 	);
-	try { console.log('[chat] receiveMessage contact resolved', contact ? { id: contact.id, conversationId: contact.conversationId } : null); } catch (e) {}
 
-	// If we don't know about this conversation yet, try to refresh contacts
-	// from the server (handles case where someone added the current user).
+	// A conversation we do not know yet: someone added us, or wrote to us
+	// after we had removed them. Refresh the list from the server.
 	if (!contact) {
 		try {
-			const serverContacts = await getContacts();
-			if (Array.isArray(serverContacts)) {
-				const raw = serverContacts.find(
-					(c) => c.conversationId === message.conversationId,
-				);
-				if (raw) {
-					const resolvedName =
-						raw.nickname || raw.contact?.name || "";
-					const anonUsernameRaw = raw.contact?.username || "";
-					const anonEmailRaw = raw.contact?.email || "";
-					const isDeletedAccount =
-						resolvedName &&
-						String(resolvedName).toLowerCase() ===
-							"deleted account";
-					const isAnonPlaceholder =
-						(anonUsernameRaw &&
-							String(anonUsernameRaw).startsWith(
-								"deleted_user_",
-							)) ||
-						(anonEmailRaw &&
-							String(anonEmailRaw).endsWith("@deleted.rivo"));
-					const newContact = {
-						...raw,
-						name: resolvedName,
-						username:
-							isDeletedAccount || isAnonPlaceholder
-								? ""
-								: anonUsernameRaw,
-						profilePics: raw.contact?.profilePics || [],
-						isOnline: raw.contact?.isOnline || false,
-						lastSeen: raw.contact?.lastSeen || null,
-						bio: raw.contact?.bio || "",
-						email:
-							isDeletedAccount || isAnonPlaceholder
-								? ""
-								: anonEmailRaw,
-						lastMessage:
-							raw.conversation?.messages?.[0]?.text || "",
-						lastMessageTime: raw.conversation?.messages?.[0]
-							? new Date(
-									raw.conversation.messages[0].createdAt,
-								).toLocaleTimeString([], {
-									hour: "2-digit",
-									minute: "2-digit",
-									hour12: false,
-								})
-							: null,
-						lastMessageDate: raw.conversation?.messages?.[0]
-							? new Date(raw.conversation.messages[0].createdAt)
-									.toISOString()
-									.slice(0, 10)
-							: null,
-						unreadCount: raw.unreadCount ?? 0,
-						lastMessageSeen: (() => {
-							const lastMsg = raw.conversation?.messages?.[0];
-							if (!lastMsg) return true;
-							// Treat missing/undefined isSeen as seen. Only explicit false
-							// means the last message is unseen.
-							return lastMsg.isSeen !== false;
-						})(),
-					};
-
-					// Avoid duplicates
-					if (!contacts.find((c) => c.id === newContact.id)) {
-						contacts.push(newContact);
-
-						// append DOM card to the appropriate container (use injected DOM refs)
-						const contactsContainer = _dom.contactsContainer;
-						const activeChatsContainer = _dom.activeChatsContainer;
-						if (contactsContainer && activeChatsContainer) {
-							if (
-								newContact.isPinned ||
-								newContact.unreadCount > 0 ||
-								newContact.lastMessageSeen === false
-							) {
-								activeChatsContainer.appendChild(
-									createActiveChatCard(newContact),
-								);
-							} else {
-								contactsContainer.appendChild(
-									createContactCard(
-										{
-											...newContact,
-											hasMessages:
-												!!newContact.lastMessage,
-										},
-										_dom.onContactAction,
-									),
-								);
-							}
-							updateTotalUnreadCount();
-							sortActiveChats();
-							sortContacts();
-							// Hide the "No contacts yet" placeholder immediately
-							const emptyEl =
-								document.getElementById("contacts-empty");
-							if (emptyEl) emptyEl.style.display = "none";
-						}
-					}
-
-					contact = contacts.find(
-						(c) => c.conversationId === message.conversationId,
-					);
-				}
-			}
+			await _syncContacts?.();
 		} catch (e) {
 			console.error("receiveMessage: failed to sync contacts", e);
 		}
+		contact = contacts.find((c) => c.conversationId === message.conversationId);
 		if (!contact) return;
 	}
 
-	const normalized = {
-		id: message.id,
-		user: message.senderId === _currentUserId(),
-		text: message.text,
-		time: new Date(message.createdAt).toLocaleTimeString([], {
-			hour: "2-digit",
-			minute: "2-digit",
-			hour12: false,
-		}),
-		date: new Date(message.createdAt).toISOString().slice(0, 10),
-		isEdited: false,
-		isPinned: false,
-		isSeen: message.isSeen || false,
-		isOneTime: message.isOneTime || false,
-		isTimeCapsule: message.isTimeCapsule || false,
-		scheduledFor: message.scheduledFor || null,
-		openedAt: message.openedAt || null,
-		isLocked: message.isLocked || false,
-		replyTo: message.replyToId
-			? {
-					id: message.replyToId,
-					sender: message.replyToName,
-					text: message.replyToText,
-				}
-			: null,
-		forwardedFrom: message.forwardedFrom || null,
-		forwardedText: message.forwardedText || null,
-		reactions: message.reactions || [],
-	};
+	// The same message can arrive twice (live event + catch-up after a
+	// reconnect); never show it twice.
+	const known = messages[contact.id];
+	if (Array.isArray(known) && known.some((m) => String(m.id) === String(message.id))) return;
+
+	const normalized = normalizeServerMessage(message);
+	const isOpen = state.contactUserId === contact.id;
+	const visible = _pageVisible();
 
 	if (!messages[contact.id]) messages[contact.id] = [];
 	messages[contact.id].push(normalized);
 
-	// Do not trim messages immediately on receive to avoid jarring the user
-	// (e.g., when they're reading older history). Trimming is performed
-	// when loading older messages (see `loadOlderMessages`) so that
-	// history-reading is not interrupted.
-
 	// اگه همین چت بازه نشون بده
-	if (state.contactUserId === contact.id) {
+	if (isOpen && _dom.chatEl) {
 		hideEmptyState(_dom.chatEl, _dom.emptyStateEl);
 		normalized.index = messages[contact.id].length - 1;
 		// If this incoming message falls on a different day than the previous
@@ -185,65 +65,59 @@ export async function receiveMessage(message) {
 		if (!prevMsg || prevMsg.date !== normalized.date) {
 			_dom.chatEl.appendChild(createDateSeparator(normalized.date));
 		}
-		const newEl = createMessage(normalized);
+		// Arrived while the app was in the background: mark where unread starts
+		if (!normalized.user && !visible && !_dom.chatEl.querySelector(".unread-separator")) {
+			_dom.chatEl.appendChild(createUnreadSeparator());
+		}
+		const newEl = createMessage(messageForDisplay(normalized, contact.id));
 		try {
 			if (normalized.reactions && normalized.reactions.length > 0) {
 				const _cu = getCurrentUser();
-				applyReactionsToMessage(
-					newEl,
-					normalized.reactions,
-					_cu?.id || null,
-				);
+				applyReactionsToMessage(newEl, normalized.reactions, _cu?.id || null);
 			}
 		} catch (e) {
 			/* ignore */
 		}
-		// If the user is currently scrolled to the bottom, append and mark seen.
-		// Otherwise, append but do not auto-scroll; show a "scroll to bottom"
-		// affordance so the user can jump to the newest messages.
-					try {
-					const wasAtBottom = nearBottom(_dom.chatEl);
-					_dom.chatEl.appendChild(newEl);
-					if (wasAtBottom) {
-					scrollChatToBottom();
-					emitMessageSeen(contact.conversationId);
-				} else {
-					try {
-						const btn = _dom.scrollToBottomBtn;
-						if (btn) btn.classList.add('visible');
-					} catch (e) {}
-				}
-		} catch (e) {
-			// fallback: append + scroll
-			_dom.chatEl.appendChild(newEl);
+		// If the user is at the bottom, follow the new message and mark it
+		// seen; otherwise show the "scroll to bottom" button.
+		const wasAtBottom = nearBottom(_dom.chatEl);
+		_dom.chatEl.appendChild(newEl);
+		if (wasAtBottom) {
 			scrollChatToBottom();
-			emitMessageSeen(contact.conversationId);
+			if (!normalized.user && visible) markOpenChatSeen();
+		} else {
+			try {
+				_dom.scrollToBottomBtn?.classList.add("visible");
+			} catch (e) {}
 		}
 	}
 
 	// کارت رو آپدیت کن
 	// Use centralized preview helper so locked time-capsule content is never exposed
 	contact.lastMessage = getContactPreviewText(normalized);
+	contact.lastMessageId = normalized.id;
 	contact.lastMessageTime = normalized.time;
 	contact.lastMessageDate = normalized.date;
-	// If the chat is currently open, consider the last message seen locally
-	contact.lastMessageSeen = state.contactUserId === contact.id ? true : false;
-	if (state.contactUserId !== contact.id) {
+	// used to order the Contacts section (most recent first)
+	const _receivedTs = new Date(message.createdAt).getTime();
+	contact.lastMessageTs = Number.isFinite(_receivedTs) ? _receivedTs : Date.now();
+
+	if (normalized.user) {
+		// sent by this user from another device: not seen by the other side yet
+		contact.lastMessageSeen = normalized.isSeen === true;
+	} else if (isOpen && visible) {
+		contact.lastMessageSeen = true;
+	} else {
+		contact.lastMessageSeen = false;
 		contact.unreadCount = (contact.unreadCount || 0) + 1;
+		// While the app is hidden the server sends a push notification instead
 		try {
-			if (!normalized.user && !contact.isSaved && !contact.isMuted) {
+			if (visible && !contact.isSaved && !contact.isMuted) {
 				const notifQueue = _localNotifQueue;
-				if (normalized.id) {
-					if (!notifQueue.has(normalized.id)) {
-						notifQueue.add(normalized.id);
-						setTimeout(
-							() => notifQueue.delete(normalized.id),
-							5000,
-						);
-						showNotification(contact, normalized);
-					}
-				} else {
-					showNotification(contact, normalized);
+				if (!notifQueue.has(normalized.id)) {
+					notifQueue.add(normalized.id);
+					setTimeout(() => notifQueue.delete(normalized.id), 5000);
+					showNotification(contact, { id: normalized.id, text: getContactPreviewText(normalized) });
 				}
 			}
 		} catch (e) {
@@ -258,6 +132,7 @@ export async function receiveMessage(message) {
 	}
 	refreshCard(contact);
 	sortActiveChats();
+	updateTotalUnreadCount();
 }
 
 export function handleOnetimeDeleted({ messageIds }) {
@@ -300,115 +175,65 @@ export function handleOnetimeDeleted({ messageIds }) {
 			}
 		}
 
-					// Remove any pinned cache entries for the deleted messages so the
-					// pinned banner doesn't show stale content.
-					try {
-						for (const uid of affectedUids) {
-							for (const mid of idSet) {
-								try { updatePinnedData(Number(uid), mid, null, false); } catch (e) {}
-							}
-						}
-					} catch (e) {}
+		// Remove any pinned cache entries for the deleted messages so the
+		// pinned banner doesn't show stale content.
+		try {
+			for (const uid of affectedUids) {
+				for (const mid of idSet) {
+					try { updatePinnedData(Number(uid), mid, null, false); } catch (e) {}
+				}
+			}
+		} catch (e) {}
 
-		// Remove DOM nodes if still present (safety) and re-render open conversation
+		// Remove DOM nodes if still present and fix the indices of the rest
 		try {
 			if (_dom && _dom.chatEl) {
 				messageIds.forEach((id) => {
-					const el = _dom.chatEl.querySelector(
-						`.chat-message[data-message-id="${id}"]`,
-					);
-					if (el && el.parentNode) el.parentNode.removeChild(el);
+					_dom.chatEl.querySelector(`.chat-message[data-message-id="${id}"]`)?.remove();
 				});
-			}
-		} catch (e) {
-			/* ignore DOM cleanup errors */
-		}
-
-		// If the currently open conversation was affected, re-render and update pinned
-		try {
-			if (
-				state.contactUserId &&
-				affectedUids.has(Number(state.contactUserId))
-			) {
-				// Update DOM indices incrementally instead of full re-render.
-				try {
-					const uid = Number(state.contactUserId);
-					if (_dom && _dom.chatEl) {
-						const nodes = Array.from(_dom.chatEl.querySelectorAll('.chat-message'));
-						nodes.forEach((node) => {
-							const mid = node.dataset?.messageId;
-							if (!mid) return;
-							const newIndex = (messages[uid] || []).findIndex((m) => String(m.id) === String(mid));
-							if (newIndex === -1) {
-								// message was removed; drop node if still present
-								if (node.parentNode) node.parentNode.removeChild(node);
-							} else {
-								node.dataset.index = newIndex;
-							}
-						});
-						// refresh pinned banner
-						updatePinnedMessage();
-					}
-				} catch (e) {
-					/* ignore */
+				_removeEmptyDateSeparators(_dom.chatEl);
+				if (state.contactUserId && affectedUids.has(Number(state.contactUserId))) {
+					_reindexDom(Number(state.contactUserId));
+					updatePinnedMessage();
 				}
 			}
 		} catch (e) {
 			/* ignore */
 		}
 
-		// Update contact previews (lastMessage, unreadCount) for affected conversations
+		// Update contact previews for affected conversations. One-time
+		// messages are removed only after they were seen, so unread counters
+		// do not change here.
 		try {
 			for (const uid of affectedUids) {
 				const friend = contacts.find((c) => c.id === Number(uid));
+				if (!friend) continue;
+				// only the latest message decides the preview
+				if (friend.lastMessageId != null && !idSet.has(String(friend.lastMessageId))) continue;
 				const arr = messages[uid] || [];
-				if (friend) {
-					if (arr.length > 0) {
-						const lastMsg = arr[arr.length - 1];
-						friend.lastMessage = getContactPreviewText(lastMsg);
-						friend.lastMessageTime = lastMsg.time || "";
-						friend.lastMessageDate = lastMsg.date || "";
-						friend.lastMessageTs = lastMsg.createdAt || 0;
-						friend.lastMessageSeen = lastMsg.user
-							? lastMsg.isSeen !== false
-							: true;
-						try {
-							friend.unreadCount = arr.filter(
-								(m) => !m.user && m.isSeen !== true,
-							).length;
-						} catch (e) {
-							/* ignore */
-						}
-					} else {
-						friend.lastMessage = "";
-						friend.lastMessageTime = "";
-						friend.lastMessageDate = "";
-						friend.lastMessageTs = 0;
-						friend.lastMessageSeen = true;
-						friend.unreadCount = 0;
-					}
-					try {
-						refreshCard(friend);
-					} catch (e) {
-						/* ignore */
-					}
+				if (arr.length > 0) {
+					const lastMsg = arr[arr.length - 1];
+					friend.lastMessage = getContactPreviewText(lastMsg);
+					friend.lastMessageId = lastMsg.id ?? null;
+					friend.lastMessageTime = lastMsg.time || "";
+					friend.lastMessageDate = lastMsg.date || "";
+					friend.lastMessageTs = lastMsg.createdAt || 0;
+					friend.lastMessageSeen = lastMsg.user
+						? lastMsg.isSeen !== false
+						: true;
+				} else {
+					friend.lastMessage = "";
+					friend.lastMessageId = null;
+					friend.lastMessageTime = "";
+					friend.lastMessageDate = "";
+					friend.lastMessageTs = 0;
+					friend.lastMessageSeen = true;
 				}
+				refreshCard(friend);
 			}
-			try {
-				sortActiveChats();
-			} catch (e) {
-				/* ignore */
-			}
-			try {
-				sortContacts();
-			} catch (e) {
-				/* ignore */
-			}
-			try {
-				updateTotalUnreadCount();
-			} catch (e) {
-				/* ignore */
-			}
+			sortActiveChats();
+			sortContacts();
+			updateTotalUnreadCount();
 		} catch (e) {
 			/* ignore */
 		}
@@ -439,12 +264,35 @@ export function handleOnetimeDeleted({ messageIds }) {
 						basePadding + state.actionPreviewHeight + "rem";
 				}
 				// If conversation open, ensure scroll stays correct
-				if (state.contactUserId) scrollChatToBottomAfterPadding();
+				if (state.contactUserId && nearBottom(_dom.chatEl)) scrollChatToBottomAfterPadding();
 			}
 		} catch (e) {
 			/* ignore */
 		}
 	}, 300);
+}
+
+// data-index of every rendered message must match its place in messages[]
+function _reindexDom(uid) {
+	const arr = messages[uid] || [];
+	const pos = new Map(arr.map((m, i) => [String(m.id), i]));
+	_dom.chatEl.querySelectorAll(".chat-message[data-message-id]").forEach((node) => {
+		const mid = node.dataset.messageId;
+		if (!mid) return;
+		const i = pos.get(String(mid));
+		if (i !== undefined) node.dataset.index = String(i);
+	});
+	state.pinnedIndexes = arr.map((m, i) => (m.isPinned ? i : -1)).filter((i) => i !== -1);
+}
+
+// A day line with no message after it (its messages were all removed)
+export function _removeEmptyDateSeparators(chatEl) {
+	if (!chatEl) return;
+	chatEl.querySelectorAll(".date-separator").forEach((sep) => {
+		let next = sep.nextElementSibling;
+		while (next && next.classList.contains("unread-separator")) next = next.nextElementSibling;
+		if (!next || next.classList.contains("date-separator")) sep.remove();
+	});
 }
 
 // ─── Send message ─────────────────────────────────────────────────────────────
@@ -455,9 +303,13 @@ export function _updateContactCard() {
 	const friend = contacts.find((c) => c.id === state.contactUserId);
 	if (friend && lastMsg) {
 		friend.lastMessage = getContactPreviewText(lastMsg);
+		friend.lastMessageId = lastMsg.id ?? null;
 		friend.lastMessageTime = lastMsg.time;
 		friend.lastMessageDate = lastMsg.date;
+		const ts = new Date(lastMsg.createdAt).getTime();
+		friend.lastMessageTs = Number.isFinite(ts) ? ts : Date.now();
 		friend.lastMessageSeen = false; //new outgoing message which 2nd person has not seen
+		moveToActiveChats(friend);
 		refreshCard(friend);
 		sortActiveChats();
 	}
@@ -471,59 +323,69 @@ export function handleMessagesSeen(
 	const contact = contacts.find((c) => c.conversationId === conversationId);
 	if (!contact) return;
 
+	const me = _currentUserId();
+	const ids = Array.isArray(messageIds) ? messageIds : [];
+	const anyMarked = ids.length > 0;
 	const userMsgs = messages[contact.id];
-	const seenIndices = [];
+	const isOpen = state.contactUserId === contact.id;
 
-	if (
-		Array.isArray(messageIds) &&
-		messageIds.length > 0 &&
-		Array.isArray(userMsgs)
-	) {
-		messageIds.forEach((mid) => {
-			const idx = userMsgs.findIndex((msg) => msg.id === mid);
-			if (idx !== -1) {
-				const msg = userMsgs[idx];
-				if (msg.user && !msg.isSeen) {
-					msg.isSeen = true;
-					seenIndices.push(idx);
-				}
+	// Read on another device of this user: their incoming messages are read
+	if (seenBy !== null && Number(seenBy) === Number(me)) {
+		if (Array.isArray(userMsgs)) {
+			const idSet = new Set(ids.map(String));
+			userMsgs.forEach((m) => {
+				if (!m.user && idSet.has(String(m.id))) m.isSeen = true;
+			});
+		}
+		if (anyMarked) {
+			contact.unreadCount = 0;
+			if (isOpen) _dom.chatEl?.querySelector(".unread-separator")?.remove();
+			refreshCard(contact);
+			updateTotalUnreadCount();
+			if (
+				!isOpen &&
+				!contact.isPinned &&
+				!contact.isSaved &&
+				contact.lastMessageSeen !== false
+			) {
+				moveToContacts(contact);
+				sortContacts();
+			}
+			sortActiveChats();
+		}
+		return;
+	}
+
+	// The other person read this user's messages
+	const seenIndices = [];
+	if (anyMarked && Array.isArray(userMsgs)) {
+		const idSet = new Set(ids.map(String));
+		userMsgs.forEach((msg, idx) => {
+			if (msg.user && !msg.isSeen && idSet.has(String(msg.id))) {
+				msg.isSeen = true;
+				seenIndices.push(idx);
 			}
 		});
 	}
 
 	// Update DOM only if this conversation is currently open and there are indices
-	if (state.contactUserId === contact.id && seenIndices.length > 0) {
+	if (isOpen && seenIndices.length > 0) {
 		markMessagesAsSeen(_dom.chatEl, seenIndices);
 	}
 
-	const currentUserId = _currentUserId();
-	const anyMarked = Array.isArray(messageIds) && messageIds.length > 0;
-
-	// Only reset unreadCount for this contact when the current user is the one who saw the messages
-	if (seenBy === currentUserId && anyMarked) {
-		contact.unreadCount = 0;
-	}
-
-	// Also, if the conversation is currently open and messages were marked seen locally, reset unread count
-	if (state.contactUserId === contact.id && seenIndices.length > 0) {
-		contact.unreadCount = 0;
-	}
-
-	if (seenIndices.length > 0 || anyMarked) {
-		refreshCard(contact);
-		sortActiveChats();
-	}
-
-	// If any messages were marked as seen, mark the contact's last message as seen
-	if (anyMarked && seenBy !== null && seenBy !== _currentUserId()) {
+	if (anyMarked && seenBy !== null) {
 		contact.lastMessageSeen = true;
+		refreshCard(contact);
+		// the chat on screen keeps its card in Active Chats
 		if (
+			!isOpen &&
 			!contact.isPinned &&
 			!contact.isSaved &&
-			contact.unreadCount === 0
+			(contact.unreadCount || 0) === 0
 		) {
 			moveToContacts(contact);
 			sortContacts();
 		}
+		sortActiveChats();
 	}
 }

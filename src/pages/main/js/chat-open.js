@@ -1,19 +1,73 @@
 import { getMessagesPage, getPinnedMessages } from "./api.js";
+import { noteChatClosed, noteChatOpening } from "./all-contacts.js";
 import { refreshCard, updateTotalUnreadCount } from "./chat-logic.js";
 import { loadOlderMessages } from "./chat-paging.js";
 import { injectMessages } from "./chat-render.js";
-import { DEFAULT_PAGE_LIMIT, _currentUserId, _dom, _pendingCapsuleReveals, _seenApplyTimeoutId, _seenTimeoutId, _unreadSeparatorContactId, _unreadSeparatorIndex, basePadding, messagePaging, pendingMessages, pinnedData, setSeenApplyTimeoutId, setSeenTimeoutId, setSuppressInjectScroll, setUnreadSeparatorContactId, setUnreadSeparatorIndex } from "./chat-state.js";
+import { DEFAULT_PAGE_LIMIT, _dom, _pendingCapsuleReveals, _seenApplyTimeoutId, _seenTimeoutId, _unreadSeparatorContactId, _unreadSeparatorIndex, basePadding, messagePaging, normalizeServerMessage, pendingMessages, pinnedData, setSeenApplyTimeoutId, setSeenTimeoutId, setSuppressInjectScroll, setUnreadSeparatorContactId, setUnreadSeparatorIndex } from "./chat-state.js";
 import { makeMessageSkeleton } from "./skeleton.js";
-import { emitMessageSeen, getSocket } from "./socket.js";
+import { emitMessageSeen, getSocket, setActiveConversation } from "./socket.js";
 import { contacts, messages, state } from "./state.js";
+
+// Same breakpoint as the layout (CSS) and the "All contacts" page
+export const MOBILE_QUERY = "(max-width: 700px)";
+
+function _pageVisible() {
+	try {
+		return document.visibilityState !== "hidden";
+	} catch (e) {
+		return true;
+	}
+}
+
+/**
+ * Marks the open conversation as seen (only while the page is visible) and
+ * clears its unread state. Used when a chat opens and when the user comes
+ * back to the app with a chat open.
+ */
+export function markOpenChatSeen() {
+	const contactId = state.contactUserId;
+	const contact = contacts.find((c) => c.id === contactId);
+	if (!contact?.conversationId || !_pageVisible()) return Promise.resolve();
+	return emitMessageSeen(contact.conversationId)
+		.then((marked) => {
+			// the user may have switched chats meanwhile
+			if (state.contactUserId !== contactId) return;
+			const arr = messages[contactId] || [];
+			if (Array.isArray(marked) && marked.length > 0) {
+				const idSet = new Set(marked.map(String));
+				arr.forEach((m) => {
+					if (!m.user && idSet.has(String(m.id))) m.isSeen = true;
+				});
+			} else {
+				arr.forEach((m) => {
+					if (!m.user) m.isSeen = true;
+				});
+			}
+			if (_dom.chatEl) _dom.chatEl.querySelector(".unread-separator")?.remove();
+			contact.unreadCount = 0;
+			// the latest message is read now (unless it is this user's own)
+			const last = arr[arr.length - 1];
+			if (!last || !last.user) contact.lastMessageSeen = true;
+			refreshCard(contact);
+			updateTotalUnreadCount();
+			setUnreadSeparatorContactId(null);
+			setUnreadSeparatorIndex(-1);
+		})
+		.catch(() => {});
+}
 
 export async function openChat(fromClick = false) {
 	const isAlreadyOpen = _dom.chatPart.style.display === "flex";
-	const isMobile = window.matchMedia("(max-width: 768px)").matches;
+	const isMobile = window.matchMedia(MOBILE_QUERY).matches;
+	const openingContactId = state.contactUserId;
 	// Mark that we're initializing so pagination/scroll-based loads don't fire
 	try {
 		state.initializingChat = true;
 	} catch (e) {}
+
+	// If the chat is opened from "All contacts", remember where we were so the
+	// back button returns exactly there.
+	noteChatOpening();
 
 	_dom.chatPart.style.display = "flex";
 
@@ -37,6 +91,11 @@ export async function openChat(fromClick = false) {
 			_dom.peoplePart.querySelector(".main-header").style.display =
 				"none";
 		}, 200);
+	}
+
+	if (!isMobile) {
+		_dom.peoplePart.querySelector(".main-header").style.display = "";
+		_dom.peoplePart.querySelector(".main-header").style.zIndex = "";
 	}
 
 	// load messages از backend
@@ -65,49 +124,19 @@ export async function openChat(fromClick = false) {
 					.forEach((n) => n.remove());
 				_dom.chatEl.removeAttribute("aria-busy");
 			}
+			// The user may have opened another chat while this one was loading
+			if (state.contactUserId !== openingContactId) return;
 			// normalize for frontend and keep createdAt for paging
-			messages[state.contactUserId] = serverMessages.map((m) => ({
-				id: m.id,
-				user: m.senderId === _currentUserId(),
-				text: m.text,
-				time: new Date(m.createdAt).toLocaleTimeString([], {
-					hour: "2-digit",
-					minute: "2-digit",
-					hour12: false,
-				}),
-				date: new Date(m.createdAt).toISOString().slice(0, 10),
-				createdAt: m.createdAt,
-				isEdited: m.isEdited,
-				isPinned: m.isPinned,
-				isSeen: m.isSeen,
-				replyTo: m.replyToId
-					? {
-							id: m.replyToId,
-							sender: m.replyToName,
-							text: m.replyToText,
-						}
-					: null,
-				forwardedFrom: m.forwardedFrom || null,
-				forwardedText: m.forwardedText || null,
-				reactions: m.reactions || [],
-				isOneTime: m.isOneTime || false,
-				isTimeCapsule: m.isTimeCapsule || false,
-				scheduledFor: m.scheduledFor || null,
-				openedAt: m.openedAt || null,
-				isLocked: m.isLocked || false,
-			}));
+			messages[state.contactUserId] = (Array.isArray(serverMessages) ? serverMessages : []).map(normalizeServerMessage);
 
 			// fetch pinned messages separately (independent of pagination)
 			try {
 				const res = await getPinnedMessages(contact.conversationId);
-				if (res && Array.isArray(res.pinned)) {
-					pinnedData[state.contactUserId] = res.pinned;
-				} else {
-					pinnedData[state.contactUserId] = [];
-				}
+				pinnedData[openingContactId] = res && Array.isArray(res.pinned) ? res.pinned : [];
 			} catch (e) {
-				pinnedData[state.contactUserId] = [];
+				pinnedData[openingContactId] = [];
 			}
+			if (state.contactUserId !== openingContactId) return;
 
 			// paging metadata (suppress auto-load immediately after open)
 			messagePaging[state.contactUserId] = {
@@ -124,7 +153,15 @@ export async function openChat(fromClick = false) {
 			};
 		} catch (err) {
 			console.error("getMessagesPage failed", err);
-			messages[state.contactUserId] = [];
+			if (state.contactUserId !== openingContactId) return;
+			if (_dom.chatEl) {
+				_dom.chatEl
+					.querySelectorAll(".skeleton-placeholder")
+					.forEach((n) => n.remove());
+				_dom.chatEl.removeAttribute("aria-busy");
+			}
+			// keep what was already loaded (e.g. offline): better than an empty chat
+			if (!Array.isArray(messages[state.contactUserId])) messages[state.contactUserId] = [];
 			messagePaging[state.contactUserId] = {
 				hasMore: false,
 				loading: false,
@@ -187,56 +224,10 @@ export async function openChat(fromClick = false) {
 			/* ignore */
 		}
 		setSeenTimeoutId(setTimeout(() => {
-			emitMessageSeen(contact.conversationId)
-				.then((marked) => {
-					try {
-						const arr = messages[state.contactUserId] || [];
-
-						// فقط isSeen رو توی memory آپدیت کن
-						if (Array.isArray(marked) && marked.length > 0) {
-							const idSet = new Set(marked.map(String));
-							arr.forEach((m) => {
-								if (!m.user && idSet.has(String(m.id)))
-									m.isSeen = true;
-							});
-						} else {
-							arr.forEach((m) => {
-								if (!m.user) m.isSeen = true;
-							});
-						}
-
-						// فقط separator رو از DOM حذف کن — بدون re-render
-						if (_dom.chatEl) {
-							_dom.chatEl
-								.querySelector(".unread-separator")
-								?.remove();
-						}
-
-						// unread count رو reset کن
-						const c = contacts.find(
-							(c) => c.id === state.contactUserId,
-						);
-						if (c) {
-							c.unreadCount = 0;
-							refreshCard(c);
-							updateTotalUnreadCount();
-						}
-
-						// separator tracking reset
-						setUnreadSeparatorContactId(null);
-						setUnreadSeparatorIndex(-1);
-					} catch (e) {
-						/* ignore */
-					}
-				})
-				.catch(() => {})
-				.finally(() => {
-					try {
-						setSeenTimeoutId(null);
-					} catch (e) {
-						/* ignore */
-					}
-				});
+			setSeenTimeoutId(null);
+			// a hidden page (phone in a pocket) must not mark anything as seen;
+			// it happens when the user comes back (see main.js)
+			markOpenChatSeen();
 		}, 700));
 	}
 	if (_dom && _dom.chatProfilePicture) {
@@ -282,7 +273,7 @@ export async function openChat(fromClick = false) {
 }
 
 export function closeChat() {
-	const isMobile = window.matchMedia("(max-width: 768px)").matches;
+	const isMobile = window.matchMedia(MOBILE_QUERY).matches;
 
 	_dom.peoplePart.querySelector(".main-header").style.display = "";
 	_dom.peoplePart.querySelector(".main-header").style.zIndex = "";
@@ -321,6 +312,14 @@ export function closeChat() {
 	} catch (e) {
 		// ignore
 	}
+	// do not re-join this chat after a reconnect
+	setActiveConversation(null);
+	try {
+		const typing = document.querySelector(".chat-typing-status");
+		if (typing) typing.textContent = "";
+	} catch (e) {
+		/* ignore */
+	}
 
 	// Cancel pending timeouts for messages in the chat being closed
 	try {
@@ -354,10 +353,22 @@ export function closeChat() {
 		/* ignore */
 	}
 	setUnreadSeparatorContactId(null);
-	// Reset send mode when chat is closed
-	if (typeof state !== "undefined") {
-		state.sendMode = "normal";
+	// An edit, reply or forward being prepared belongs to this chat
+	if (state.isEditing || state.replyTo || state.isForwarding) {
+		state.isEditing = false;
+		state.editingMessageId = null;
+		state.replyTo = null;
+		state.isForwarding = false;
+		state.forwardingMsg = null;
+		state.forwardingMsgs = [];
+		try {
+			resetInput();
+		} catch (e) {
+			/* ignore */
+		}
 	}
+	// Reset send mode when chat is closed
+	state.sendMode = "normal";
 
 	// Clear any pending capsule reveals tied to this chat
 	try { _pendingCapsuleReveals.clear(); } catch (e) { /* ignore */ }
@@ -370,6 +381,9 @@ export function closeChat() {
 
 	setUnreadSeparatorIndex(-1);
 	state.contactUserId = null;
+
+	// Return to "All contacts" (same scroll and search) if the chat came from there
+	noteChatClosed();
 }
 
 // ─── Reset input ──────────────────────────────────────────────────────────────

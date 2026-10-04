@@ -5,7 +5,15 @@ import jwt from "jsonwebtoken";
 import push from "../utils/push.js";
 import prisma from "../prisma.js";
 import { requireAuth } from "../middleware/auth.js";
-import { userSockets, getSocketById } from "../socket/index.js";
+import {
+	userSockets,
+	broadcastUserUpdate,
+	broadcastPresence,
+	disconnectUserSockets,
+	invalidateAllCaches,
+} from "../socket/index.js";
+import { applyPrivacy, relationsFor } from "../utils/privacy.js";
+import { isUsernameTaken } from "../utils/userLookup.js";
 
 import multer from "multer";
 import path from "path";
@@ -18,15 +26,54 @@ const DEFAULT_BCRYPT_ROUNDS = process.env.NODE_ENV === 'production' ? 12 : 10;
 const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS || DEFAULT_BCRYPT_ROUNDS);
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,30}$/;
 const PRIVACY_VALUES = new Set(['everyone', 'contacts', 'nobody']);
+const MAX_PASSWORD_LENGTH = 128;
+
+// Avatars: /assets/images/user-profiles/av-<userId>-<random>.jpg
+// The random part keeps pictures from being guessed by user id (they are
+// served publicly), and a new name per upload means no stale browser cache.
+const AVATAR_DIR = path.join(process.cwd(), "public", "assets", "images", "user-profiles");
+const AVATAR_URL_PREFIX = "/assets/images/user-profiles/";
+const LEGACY_AVATAR_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+
+const AVATAR_DEBUG = ["1", "true", "yes"].includes(String(process.env.AVATAR_DEBUG || "").toLowerCase());
+
+/** Removes a user's avatar files, except `keepFileName`. */
+async function removeAvatarFiles(userId, keepFileName = null) {
+	// files from before random names: <userId>.<ext>
+	for (const ext of LEGACY_AVATAR_EXTS) {
+		const name = `${userId}${ext}`;
+		if (name === keepFileName) continue;
+		try {
+			await fs.promises.unlink(path.join(AVATAR_DIR, name));
+		} catch (e) {
+			if (e.code && e.code !== "ENOENT") console.error(e);
+		}
+	}
+	let files = [];
+	try {
+		files = await fs.promises.readdir(AVATAR_DIR);
+	} catch (e) {
+		return;
+	}
+	const prefix = `av-${userId}-`;
+	for (const f of files) {
+		if (!f.startsWith(prefix) || f === keepFileName) continue;
+		try {
+			await fs.promises.unlink(path.join(AVATAR_DIR, f));
+		} catch (e) {
+			if (e.code && e.code !== "ENOENT") console.error(e);
+		}
+	}
+}
+
 const storage = multer.diskStorage({
 	destination: (req, file, cb) => {
-		const dir = path.join(process.cwd(), "public", "assets", "images", "user-profiles");
 		try {
-			if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+			if (!fs.existsSync(AVATAR_DIR)) fs.mkdirSync(AVATAR_DIR, { recursive: true });
 		} catch (e) {
 			// ignore mkdir failures; multer will surface errors
 		}
-		cb(null, dir);
+		cb(null, AVATAR_DIR);
 	},
 	filename: (req, file, cb) => {
 		// Preserve reasonable extension based on mimetype or original name
@@ -39,7 +86,7 @@ const storage = multer.diskStorage({
 		};
 		let ext = mimeMap[file.mimetype] || path.extname(file.originalname) || '.jpg';
 		ext = ext.startsWith('.') ? ext : `.${ext}`;
-		// Use a unique temporary filename to avoid clashes with final avatar filename
+		// Unique temporary filename; the final avatar gets its own name below
 		const unique = `${req.userId}-${Date.now()}-${Math.floor(Math.random() * 1e6)}${ext}`;
 		cb(null, unique);
 	},
@@ -52,6 +99,7 @@ const upload = multer({
 		else cb(new Error("Only images allowed"));
 	},
 });
+
 // ─── Get current user ─────────────────────────────────────────────────────────
 router.get("/me", requireAuth, async (req, res) => {
 	try {
@@ -84,7 +132,7 @@ router.get("/me", requireAuth, async (req, res) => {
 
 // ─── Update current user ──────────────────────────────────────────────────────
 router.patch("/me", requireAuth, async (req, res) => {
-	const { name, username, bio, profilePics, privacyOnline, privacyEmail, privacyProfile } = req.body;
+	const { name, username, bio, profilePics, privacyOnline, privacyEmail, privacyProfile } = req.body || {};
 	const normalizedUsername = typeof username === 'string' ? username.trim() : undefined;
 	const normalizedName = typeof name === 'string' ? name.trim() : undefined;
 	const normalizedBio = typeof bio === 'string' ? bio.trim() : bio;
@@ -100,7 +148,7 @@ router.patch("/me", requireAuth, async (req, res) => {
 			return res.status(400).json({ error: 'Username must be 3-30 alphanumeric characters or underscore' });
 		}
 	}
-	if (bio !== undefined) {
+	if (bio !== undefined && bio !== null) {
 		if (typeof bio !== 'string' || normalizedBio.length > 300) {
 			return res.status(400).json({ error: 'Bio must be 300 characters or fewer' });
 		}
@@ -114,88 +162,66 @@ router.patch("/me", requireAuth, async (req, res) => {
 			return res.status(400).json({ error: `Invalid value for ${key}` });
 		}
 	}
+	// Only clearing the picture is allowed here; uploads go through /me/avatar
+	const clearPics = Array.isArray(profilePics) && profilePics.length === 0;
 
 	try {
-		if (normalizedUsername) {
-			const existing = await prisma.user.findFirst({
-				where: {
-					username: normalizedUsername,
-					NOT: { id: req.userId },
-				},
-			});
-			if (existing) {
-				return res
-					.status(409)
-					.json({ error: "Username already taken" });
-			}
+		if (normalizedUsername && (await isUsernameTaken(normalizedUsername, req.userId))) {
+			return res.status(409).json({ error: "Username already taken" });
 		}
 
-		// Only allow clearing profilePics via an explicit empty array.
-		// Do not accept arbitrary client-supplied `profilePics` values.
-		if (profilePics !== undefined && Array.isArray(profilePics) && profilePics.length === 0) {
-				// Remove any avatar file for this user regardless of extension
-				const exts = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
-				for (const e of exts) {
-					const avatarPath = path.join(
-						process.cwd(),
-						"public",
-						"assets",
-						"images",
-						"user-profiles",
-						`${req.userId}${e}`,
-					);
-					try {
-						await fs.promises.unlink(avatarPath);
-					} catch (e) {
-						if (e.code && e.code !== "ENOENT") console.error(e);
-					}
-				}
-			}
+		const before = await prisma.user.findUnique({
+			where: { id: req.userId },
+			select: { privacyOnline: true, privacyProfile: true },
+		});
 
 		const dataToUpdate = {
 			...(normalizedName !== undefined && { name: normalizedName }),
 			...(normalizedUsername !== undefined && { username: normalizedUsername }),
-			...(bio !== undefined && { bio: normalizedBio }),
+			...(bio !== undefined && { bio: bio === null ? "" : normalizedBio }),
 			...(privacyOnline !== undefined && { privacyOnline }),
 			...(privacyEmail !== undefined && { privacyEmail }),
 			...(privacyProfile !== undefined && { privacyProfile }),
+			...(clearPics && { profilePics: [] }),
 		};
 
-		// if client explicitly cleared profilePics, set it to an empty array
-		if (profilePics !== undefined && Array.isArray(profilePics) && profilePics.length === 0) {
-			dataToUpdate.profilePics = [];
+		let user;
+		try {
+			user = await prisma.user.update({
+				where: { id: req.userId },
+				data: dataToUpdate,
+				select: {
+					id: true,
+					name: true,
+					username: true,
+					email: true,
+					bio: true,
+					profilePics: true,
+					privacyOnline: true,
+					privacyEmail: true,
+					privacyProfile: true,
+				},
+			});
+		} catch (e) {
+			// two people picked the same username at the same moment
+			if (e && e.code === "P2002") return res.status(409).json({ error: "Username already taken" });
+			throw e;
 		}
 
-		const user = await prisma.user.update({
-			where: { id: req.userId },
-			data: dataToUpdate,
-			select: {
-				id: true,
-				name: true,
-				username: true,
-				email: true,
-				bio: true,
-				profilePics: true,
-				privacyOnline: true,
-				privacyEmail: true,
-				privacyProfile: true,
-			},
-		});
+		if (clearPics) await removeAvatarFiles(req.userId);
 
-		// Broadcast profile update when relevant (e.g., avatar cleared)
-		try {
-			const contacts = await prisma.contact.findMany({ where: { contactId: user.id }, select: { ownerId: true } });
-			for (const c of contacts) {
-				const sids = (userSockets && userSockets.get(c.ownerId)) || new Set();
-				for (const sid of sids) {
-					try {
-						const s = getSocketById(sid);
-						if (s) s.emit('user:updated', { id: user.id, name: user.name, username: user.username, profilePics: user.profilePics });
-					} catch (e) { /* ignore per-socket errors */ }
-				}
-			}
-		} catch (e) {
-			/* ignore broadcast failures */
+		// Let contacts see the change right away (each according to the
+		// picture privacy setting), and this user's other devices too.
+		const profileChanged =
+			normalizedName !== undefined ||
+			normalizedUsername !== undefined ||
+			bio !== undefined ||
+			clearPics ||
+			(before && before.privacyProfile !== user.privacyProfile);
+		if (profileChanged) await broadcastUserUpdate(req.userId);
+		if (before && before.privacyOnline !== user.privacyOnline) {
+			const online = userSockets.has(req.userId) && userSockets.get(req.userId).size > 0;
+			await broadcastPresence(req.userId, { online, lastSeen: null, notifyHidden: true });
 		}
 
 		return res.json(user);
@@ -207,12 +233,12 @@ router.patch("/me", requireAuth, async (req, res) => {
 
 // ─── Search users by username ─────────────────────────────────────────────────
 router.get("/search", requireAuth, async (req, res) => {
-	const { q } = req.query;
+	const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
 
-	if (!q || q.trim().length < 2) {
+	if (!q || q.length < 2) {
 		return res.status(400).json({ error: "Query too short" });
 	}
-	if (q.trim().length > 50) {
+	if (q.length > 50) {
 		return res.status(400).json({ error: 'Query too long' });
 	}
 
@@ -220,7 +246,7 @@ router.get("/search", requireAuth, async (req, res) => {
 		const users = await prisma.user.findMany({
 			where: {
 				username: {
-					contains: q.trim(),
+					contains: q,
 					mode: "insensitive",
 				},
 				isDeleted: false,
@@ -232,11 +258,13 @@ router.get("/search", requireAuth, async (req, res) => {
 				username: true,
 				profilePics: true,
 				bio: true,
+				privacyProfile: true,
 			},
 			take: 10,
 		});
 
-		return res.json(users);
+		const rel = await relationsFor(req.userId, users.map((u) => u.id));
+		return res.json(users.map((u) => applyPrivacy(u, rel.get(u.id))));
 	} catch (err) {
 		console.error(err);
 		return res.status(500).json({ error: "Server error" });
@@ -245,46 +273,39 @@ router.get("/search", requireAuth, async (req, res) => {
 
 // ─── Delete account ───────────────────────────────────────────────────────────
 router.delete("/me", requireAuth, async (req, res) => {
-	const { password } = req.body;
+	const { password } = req.body || {};
+	if (typeof password !== "string" || !password) {
+		return res.status(400).json({ error: "Password is required" });
+	}
 
 	try {
-		console.info(`delete-account: request for userId=${req.userId}`);
 		const user = await prisma.user.findUnique({
 			where: { id: req.userId },
 		});
 
 		if (!user) return res.status(404).json({ error: "User not found" });
-		// Avoid logging PII (username). Log only user id.
-		console.info(`delete-account: user found id=${user.id}`);
 
 		const match = await bcrypt.compare(password, user.passwordHash);
-		console.info(`delete-account: password compare result=${match}`);
-		if (!match) return res.status(401).json({ error: "Wrong password" });
+		// 403, not 401: the client treats 401 as "session expired" and logs the
+		// user out, so a mistyped password used to sign them out.
+		if (!match) return res.status(403).json({ error: "Wrong password" });
 
 		// Anonymize user instead of hard-deleting so conversations/messages remain.
 		// This preserves conversation history for other participants while removing personal data.
-		// Precompute anonymized fields and hashed secret, then perform an array-based
-		// transaction which is compatible across Prisma client versions.
 		const now = Date.now();
 		const anonUsername = `deleted_user_${req.userId}_${now}`;
 		const anonEmail = `deleted_user_${req.userId}_${now}@deleted.rivo`;
 		const randomSecret = crypto.randomBytes(32).toString('hex');
-		console.info('delete-account: hashing random secret');
 		const hashed = await bcrypt.hash(randomSecret, BCRYPT_ROUNDS);
-		console.info('delete-account: hashing complete');
 
-		// Build operations. Delete push subscriptions separately so a missing
-		// DB table won't cause the whole transaction to fail.
-		const ops = [];
-
+		// Delete push subscriptions separately so a missing DB table won't
+		// cause the whole transaction to fail.
 		try {
-			if (prisma.pushSubscription && typeof prisma.pushSubscription.deleteMany === 'function') {
-				await prisma.pushSubscription.deleteMany({ where: { userId: req.userId } });
-			}
+			await prisma.pushSubscription.deleteMany({ where: { userId: req.userId } });
 		} catch (e) {
 			// If the PushSubscription table doesn't exist in the DB (common when
 			// migrations are out-of-sync), log and continue. Re-throw unexpected errors.
-			const missingTable = e && (e.code === 'P2010' || e.code === '42P01' || (e.message && e.message.includes('relation "PushSubscription" does not exist')));
+			const missingTable = e && (e.code === 'P2010' || e.code === 'P2021' || e.code === '42P01' || (e.message && e.message.includes('relation "PushSubscription" does not exist')));
 			if (missingTable) {
 				console.warn(`PushSubscription table missing; skipping deletion for user ${req.userId}`);
 			} else {
@@ -292,27 +313,34 @@ router.delete("/me", requireAuth, async (req, res) => {
 			}
 		}
 
-		ops.push(prisma.contact.deleteMany({ where: { ownerId: req.userId } }));
-		ops.push(prisma.contact.updateMany({ where: { contactId: req.userId }, data: { nickname: 'Deleted account' } }));
-		ops.push(prisma.user.update({ where: { id: req.userId }, data: { name: 'Deleted account', username: anonUsername, email: anonEmail, passwordHash: hashed, passwordChangedAt: new Date(), bio: '', profilePics: [], isOnline: false } }));
+		await prisma.$transaction([
+			prisma.contact.deleteMany({ where: { ownerId: req.userId } }),
+			prisma.contact.updateMany({ where: { contactId: req.userId }, data: { nickname: 'Deleted account' } }),
+			prisma.passwordResetToken.deleteMany({ where: { userId: req.userId } }),
+			prisma.user.update({
+				where: { id: req.userId },
+				data: {
+					name: 'Deleted account',
+					username: anonUsername,
+					email: anonEmail,
+					passwordHash: hashed,
+					passwordChangedAt: new Date(),
+					bio: '',
+					profilePics: [],
+					isOnline: false,
+					isDeleted: true,
+				},
+			}),
+		]);
 
-		console.info(`delete-account: executing transaction with ops=${ops.length}`);
-		await prisma.$transaction(ops);
-		console.info('delete-account: transaction complete');
-
-		// Remove in-memory push subscriptions and other ephemeral state
-		try { push.removeAllSubscriptions(req.userId); } catch (e) { /* ignore */ }
+		invalidateAllCaches();
 
 		// Cleanup user avatar files from disk (best-effort)
-		try {
-			const exts = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
-			for (const e of exts) {
-				const pth = path.join(process.cwd(), 'public', 'assets', 'images', 'user-profiles', `${req.userId}${e}`);
-				try { await fs.promises.unlink(pth); } catch (e) { if (e.code && e.code !== 'ENOENT') console.error(e); }
-			}
-		} catch (e) {
-			// ignore cleanup failures
-		}
+		await removeAvatarFiles(req.userId);
+
+		// Contacts see "Deleted account" right away; every session ends.
+		await broadcastUserUpdate(req.userId);
+		disconnectUserSockets(req.userId);
 
 		// Clear auth cookies so client state is reset
 		try { res.clearCookie('token'); res.clearCookie('csrfToken'); } catch (e) { /* ignore */ }
@@ -326,16 +354,20 @@ router.delete("/me", requireAuth, async (req, res) => {
 
 // ─── Change password ─────────────────────────────────────────────────────────
 router.patch("/me/password", requireAuth, async (req, res) => {
-	const { currentPassword, newPassword } = req.body;
-	if (!currentPassword || !newPassword) return res.status(400).json({ error: "Missing fields" });
-	if (typeof newPassword !== 'string' || newPassword.length < 8) return res.status(400).json({ error: "New password too short" });
+	const { currentPassword, newPassword } = req.body || {};
+	if (typeof currentPassword !== "string" || !currentPassword || typeof newPassword !== "string" || !newPassword) {
+		return res.status(400).json({ error: "Missing fields" });
+	}
+	if (newPassword.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters" });
+	if (newPassword.length > MAX_PASSWORD_LENGTH) return res.status(400).json({ error: "New password is too long" });
 
 	try {
 		const user = await prisma.user.findUnique({ where: { id: req.userId } });
 		if (!user) return res.status(404).json({ error: "User not found" });
 
 		const match = await bcrypt.compare(currentPassword, user.passwordHash);
-		if (!match) return res.status(401).json({ error: "Wrong password" });
+		// 403, not 401: a 401 makes the client log the user out (see delete above)
+		if (!match) return res.status(403).json({ error: "Wrong password" });
 
 		const hashed = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
 		const updated = await prisma.user.update({ where: { id: req.userId }, data: { passwordHash: hashed, passwordChangedAt: new Date() } });
@@ -348,6 +380,13 @@ router.patch("/me/password", requireAuth, async (req, res) => {
 			maxAge: 7 * 24 * 60 * 60 * 1000,
 		});
 
+		// Old sessions on other devices end now, not on their next request,
+		// and their notifications stop (a signed-out phone must not keep
+		// showing messages; a browser subscribes again when it signs in)
+		const own = typeof req.get("x-socket-id") === "string" ? req.get("x-socket-id") : null;
+		disconnectUserSockets(req.userId, { exceptSocketId: own });
+		await push.removeAllSubscriptions(req.userId);
+
 		return res.json({ success: true });
 	} catch (err) {
 		console.error(err);
@@ -356,10 +395,18 @@ router.patch("/me/password", requireAuth, async (req, res) => {
 });
 
 // ─── Upload avatar ────────────────────────────────────────────────────────────
-router.post("/me/avatar", requireAuth, upload.single("avatar"), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ error: "No file uploaded" });
-    }
+function receiveAvatar(req, res, next) {
+	upload.single("avatar")(req, res, (err) => {
+		if (!err) return next();
+		const tooBig = err && err.code === "LIMIT_FILE_SIZE";
+		return res.status(tooBig ? 413 : 400).json({ error: tooBig ? "Image is too large (max 5 MB)" : "Only images are allowed" });
+	});
+}
+
+router.post("/me/avatar", requireAuth, receiveAvatar, async (req, res) => {
+	if (!req.file) {
+		return res.status(400).json({ error: "No file uploaded" });
+	}
 
 	// Validate magic bytes (first 12 bytes) to ensure uploaded file is an image
 	const filePath = req.file.path;
@@ -372,7 +419,7 @@ router.post("/me/avatar", requireAuth, upload.single("avatar"), async (req, res)
 		const isJpeg = buf[0] === 0xFF && buf[1] === 0xD8;
 		const isPng = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
 		const isGif = buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46;
-		const isWebp = buf.slice(0,4).toString('ascii') === 'RIFF' && buf.slice(8,12).toString('ascii') === 'WEBP';
+		const isWebp = buf.slice(0, 4).toString('ascii') === 'RIFF' && buf.slice(8, 12).toString('ascii') === 'WEBP';
 
 		if (!isJpeg && !isPng && !isGif && !isWebp) {
 			try { fs.unlinkSync(filePath); } catch (e) { /* ignore */ }
@@ -384,8 +431,7 @@ router.post("/me/avatar", requireAuth, upload.single("avatar"), async (req, res)
 	}
 
 	// Additionally verify image format using Sharp metadata to avoid
-	// trusting client-supplied mimetypes. If metadata cannot be read or
-	// shows a non-image format, reject the upload and remove the file.
+	// trusting client-supplied mimetypes.
 	try {
 		const meta = await sharp(filePath).metadata();
 		const fmt = (meta && meta.format) ? String(meta.format).toLowerCase() : null;
@@ -400,98 +446,63 @@ router.post("/me/avatar", requireAuth, upload.single("avatar"), async (req, res)
 	}
 
 	// Re-encode image to a canonical JPEG to strip metadata and limit size
-	const outExt = '.jpg';
-	const outPath = path.join(path.dirname(filePath), `${req.userId}${outExt}`);
-	const url = `/assets/images/user-profiles/${req.userId}${outExt}`;
+	const outName = `av-${req.userId}-${crypto.randomBytes(12).toString('hex')}.jpg`;
+	const outPath = path.join(AVATAR_DIR, outName);
+	const url = `${AVATAR_URL_PREFIX}${outName}`;
 
-		// Process image, update DB, broadcast, and cleanup in a single try/catch
-		let tempOut = null;
-		try {
-			// Write to a temporary file first to avoid "Cannot use same file for input and output"
-			tempOut = outPath + '.tmp-' + Date.now();
-			// Debug: log paths to help diagnose any input/output collisions.
-			// Disabled by default; set AVATAR_DEBUG=1 to enable in dev only.
-			if (process.env.AVATAR_DEBUG) {
-				console.debug('avatar processing paths', { filePath, outPath, tempOut });
-			}
-			await sharp(filePath)
-				.rotate()
-				.resize({ width: 1024, height: 1024, fit: 'inside' })
-				.jpeg({ quality: 80 })
-				.toFile(tempOut);
-
-			// Replace the destination atomically: remove target if it exists, then rename temp
-			try { await fs.promises.unlink(outPath); } catch (e) { /* ignore if missing */ }
-			await fs.promises.rename(tempOut, outPath);
-
-			// Best-effort: remove any leftover temp file if it still exists
-			try { await fs.promises.unlink(tempOut); } catch (e) { /* ignore */ }
-
-			// Remove the original uploaded file if it's different from the final path
-			if (outPath !== filePath) {
-				try { await fs.promises.unlink(filePath); } catch (e) { /* ignore */ }
-			}
-
-			const updated = await prisma.user.update({
-				where: { id: req.userId },
-				data: { profilePics: [url] },
-				select: { id: true, name: true, username: true, profilePics: true },
-			});
-
-			// Broadcast profile update to connected clients so other users see the
-			// new avatar immediately.
-			try {
-				const contacts = await prisma.contact.findMany({ where: { contactId: updated.id }, select: { ownerId: true } });
-				for (const c of contacts) {
-					const sids = (userSockets && userSockets.get(c.ownerId)) || new Set();
-					for (const sid of sids) {
-						try {
-							const s = getSocketById(sid);
-							if (s) s.emit('user:updated', updated);
-						} catch (e) { /* ignore per-socket errors */ }
-					}
-				}
-			} catch (e) {
-				/* ignore broadcast failures */
-			}
-
-			// Remove any other avatar files for this user with different extensions
-			try {
-				const exts = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
-				for (const e of exts) {
-					const p = path.join(process.cwd(), 'public', 'assets', 'images', 'user-profiles', `${req.userId}${e}`);
-					if (p === outPath) continue;
-					try { await fs.promises.unlink(p); } catch (err) { /* ignore missing */ }
-				}
-			} catch (e) {
-				/* ignore cleanup failures */
-			}
-
-			try {
-				const dir = path.join(process.cwd(), 'public', 'assets', 'images', 'user-profiles');
-				const now = Date.now();
-				const files = await fs.promises.readdir(dir);
-				for (const f of files) {
-					if (!f.startsWith(`${req.userId}-`) && !f.includes('.tmp-')) continue;
-					const full = path.join(dir, f);
-					const st = await fs.promises.stat(full).catch(() => null);
-					if (st && now - st.mtimeMs > 60 * 60 * 1000) {
-						await fs.promises.unlink(full).catch(() => {});
-					}
-				}
-			} catch (e) {
-				/* best-effort cleanup */
-			}
-
-			return res.json({ url });
-		} catch (err) {
-			console.error('avatar processing failed', err);
-			// cleanup: try to remove tempOut, uploaded file, and any partial output
-			try { if (tempOut) await fs.promises.unlink(tempOut); } catch (er) { /* ignore */ }
-			try { await fs.promises.unlink(filePath); } catch (e) { /* ignore */ }
-			try { await fs.promises.unlink(outPath); } catch (e) { /* ignore */ }
-			return res.status(500).json({ error: "Failed to process image" });
+	let tempOut = null;
+	try {
+		tempOut = outPath + '.tmp-' + Date.now();
+		if (AVATAR_DEBUG) {
+			console.debug('avatar processing paths', { filePath, outPath, tempOut });
 		}
+		await sharp(filePath)
+			.rotate()
+			.resize({ width: 1024, height: 1024, fit: 'inside' })
+			.jpeg({ quality: 80 })
+			.toFile(tempOut);
+
+		await fs.promises.rename(tempOut, outPath);
+		tempOut = null;
+
+		// Remove the original upload
+		try { await fs.promises.unlink(filePath); } catch (e) { /* ignore */ }
+
+		await prisma.user.update({
+			where: { id: req.userId },
+			data: { profilePics: [url] },
+		});
+
+		// Older pictures of this user are no longer needed
+		await removeAvatarFiles(req.userId, outName);
+
+		// Remove abandoned temporary uploads (older than an hour)
+		try {
+			const now = Date.now();
+			const files = await fs.promises.readdir(AVATAR_DIR);
+			for (const f of files) {
+				if (!f.startsWith(`${req.userId}-`) && !f.includes('.tmp-')) continue;
+				const full = path.join(AVATAR_DIR, f);
+				const st = await fs.promises.stat(full).catch(() => null);
+				if (st && now - st.mtimeMs > 60 * 60 * 1000) {
+					await fs.promises.unlink(full).catch(() => {});
+				}
+			}
+		} catch (e) {
+			/* best-effort cleanup */
+		}
+
+		// Contacts see the new picture right away (subject to privacy)
+		await broadcastUserUpdate(req.userId);
+
+		return res.json({ url });
+	} catch (err) {
+		console.error('avatar processing failed', err);
+		try { if (tempOut) await fs.promises.unlink(tempOut); } catch (er) { /* ignore */ }
+		try { await fs.promises.unlink(filePath); } catch (e) { /* ignore */ }
+		try { await fs.promises.unlink(outPath); } catch (e) { /* ignore */ }
+		return res.status(500).json({ error: "Failed to process image" });
+	}
 });
 
 export default router;

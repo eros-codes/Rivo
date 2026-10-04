@@ -1,8 +1,13 @@
 import { buildHeaders, safeFetch } from "../../../utils/fetch.js";
 
 // ─── Contacts ────────────────────────────────────────────────────────────────
-export async function getContacts() {
-	return await safeFetch("/api/contacts", {
+// One page of the contact list (see fetchAllContacts in contact-model.js)
+export async function getContacts({ limit = null, skip = null } = {}) {
+	const q = new URLSearchParams();
+	if (limit) q.set("limit", String(limit));
+	if (skip) q.set("skip", String(skip));
+	const qs = q.toString();
+	return await safeFetch(`/api/contacts${qs ? `?${qs}` : ""}`, {
 		credentials: "include",
 		headers: buildHeaders(),
 	});
@@ -94,11 +99,13 @@ export async function register(name, email, username, password) {
 	});
 }
 
-export async function logout() {
+// `endpoint`: this device's push subscription, so only its notifications stop
+export async function logout(endpoint = null) {
 	await safeFetch("/api/auth/logout", {
 		method: "POST",
 		credentials: "include",
 		headers: buildHeaders(),
+		body: JSON.stringify(endpoint ? { endpoint } : {}),
 		expectJson: false,
 	});
 	// remove only auth data so site-wide preferences (theme, rememberedUser) persist
@@ -184,11 +191,13 @@ export async function deleteAccount(password) {
 	});
 }
 
-export async function changePassword(currentPassword, newPassword) {
+// `socketId`: this tab's connection, which stays open (other devices are
+// signed out by the server)
+export async function changePassword(currentPassword, newPassword, socketId = null) {
 	return await safeFetch(`/api/users/me/password`, {
 		method: "PATCH",
 		credentials: "include",
-		headers: buildHeaders(),
+		headers: { ...buildHeaders(), ...(socketId ? { "x-socket-id": socketId } : {}) },
 		body: JSON.stringify({ currentPassword, newPassword }),
 	});
 }

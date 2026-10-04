@@ -58,7 +58,7 @@ export function applyReactionsToMessage(msgEl, reactions, currentUserId) {
 		// Determine if the current user reacted to this emoji
 		const currentReacted = currentUserId
 			? reactions.some(
-					(r) => r.userId === currentUserId && r.emoji === emoji,
+					(r) => Number(r.userId) === Number(currentUserId) && r.emoji === emoji,
 				)
 			: false;
 		const othersReacted = counts[emoji] - (currentReacted ? 1 : 0) > 0;

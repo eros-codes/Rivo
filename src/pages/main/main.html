@@ -85,35 +85,39 @@
 			<div class="main-content" id="main-content">
 				<section class="contacts-container">
 					<h4 class="guid">Contacts</h4>
-					<button type="button" class="contacts-show-more" id="contacts-show-more" hidden>
-						<span id="contacts-show-more-label">Show all contacts</span>
-					</button>
-					<!-- Contacts will be dynamically added here -->
-					<div class="contacts-empty" id="contacts-empty">
-						<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
-							<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"
-								stroke-width="1.5"
-								d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2m8-10a4 4 0 1 0 0-8a4 4 0 0 0 0 8m13 10v-2a4 4 0 0 0-3-3.87m-4-12a4 4 0 0 1 0 7.75" />
-						</svg>
-						<p>No contacts yet</p>
+				<!-- Contacts will be dynamically added here -->
+				<div class="contacts-empty" id="contacts-empty">
+					<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+						<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"
+							stroke-width="1.5"
+							d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2m8-10a4 4 0 1 0 0-8a4 4 0 0 0 0 8m13 10v-2a4 4 0 0 0-3-3.87m-4-12a4 4 0 0 1 0 7.75" />
+					</svg>
+					<p>No contacts yet</p>
+				</div>
+
+					<div class="contacts-fade" id="contacts-fade" hidden>
+						<button type="button" class="contacts-show-more" id="contacts-show-more">Show more</button>
 					</div>
+				</section>
+
+				<!-- All contacts (Show more): right after Contacts so on desktop it takes the Contacts column -->
+				<section class="all-contacts-section" id="all-contacts-section">
+					<header class="all-contacts-header">
+						<button type="button" class="all-contacts-back" id="all-contacts-back" aria-label="Back">
+							<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M16.62 2.99a1.25 1.25 0 0 0-1.77 0L6.54 11.3a.996.996 0 0 0 0 1.41l8.31 8.31c.49.49 1.28.49 1.77 0s.49-1.28 0-1.77L9.38 12l7.25-7.25c.48-.48.48-1.28-.01-1.76"/></svg>
+						</button>
+						<div class="all-contacts-search-bar">
+							<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2" d="m21 21l-4.34-4.34M17 11a6 6 0 1 1-12 0a6 6 0 0 1 12 0"/></svg>
+							<input type="search" class="all-contacts-search" id="all-contacts-search" placeholder="Search contacts" autocomplete="off" />
+						</div>
+					</header>
+					<div class="all-contacts-list" id="all-contacts-list"></div>
+					<p class="all-contacts-empty" id="all-contacts-empty" hidden>No contact found</p>
 				</section>
 
 				<section class="active-chats-container">
 					<h4 class="guid">Active Chats</h4>
 					<!-- Active chats will be dynamically added here -->
-				</section>
-
-				<section class="all-contacts-section" id="all-contacts-section">
-					<header class="all-contacts-header">
-						<button type="button" class="all-contacts-back" id="all-contacts-back" aria-label="Back">
-							<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 18l-6-6l6-6"/></svg>
-						</button>
-						<h4 class="guid">All Contacts</h4>
-					</header>
-					<input type="search" class="all-contacts-search" id="all-contacts-search" placeholder="Search contacts…" autocomplete="off" />
-					<div class="all-contacts-list" id="all-contacts-list"></div>
-					<p class="all-contacts-empty" id="all-contacts-empty" hidden>No contact found</p>
 				</section>
 			</div>
 
@@ -309,6 +313,11 @@
 				<button class="unblock-action-btn" id="unblock-action-btn">
 					Unblock
 				</button>
+
+				<!-- shown instead of the message box when the account was deleted -->
+				<div class="chat-unavailable-notice" id="chat-unavailable-notice" role="status">
+					This account was deleted
+				</div>
 
 				<div class="selection-toolbar">
 					<p class="selection-count">0 Selected</p>
@@ -667,9 +676,6 @@
 						</div>
 					</div>
 					<div class="settings-change-password-actions">
-						<button type="button" class="settings-forgot-password" id="settings-forgot-password">
-							Forgot password?
-						</button>
 						<button type="button" class="settings-change-password-submit" id="settings-change-password-submit">
 							Change Password
 						</button>
@@ -777,6 +783,7 @@
 		</dialog>
 	</main>
 
+	<script src="/chat/client-config.js"></script>
 	<script src="/js/bundle.min.js"></script>
 	<script src="/js/register-sw.js"></script>
 </body>

@@ -15,8 +15,17 @@ export function initAddContact(dom, onContactAdded) {
         if (e.target === _dom.addContactDialog) closeAddContact();
     });
 
+    _dom.addContactName.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            _dom.addContactUsername.focus();
+        }
+    });
     _dom.addContactUsername.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") _handleSubmit();
+        if (e.key === "Enter") {
+            e.preventDefault();
+            _handleSubmit();
+        }
     });
 }
 
@@ -34,6 +43,8 @@ export function closeAddContact() {
 }
 
 async function _handleSubmit() {
+    // Enter while a request is already on its way must not add twice
+    if (_dom.addContactSubmit.disabled) return;
     const name = _dom.addContactName.value.trim();
     const username = _dom.addContactUsername.value.trim().replace(/^@/, "");
 
@@ -52,24 +63,25 @@ async function _handleSubmit() {
     _dom.addContactSubmit.disabled = true;
     _dom.addContactError.textContent = "";
 
-        try {
-        try {
-            const data = await safeFetch("/api/contacts", {
-                method: "POST",
-                credentials: "include",
-                headers: buildHeaders(),
-                body: JSON.stringify({ username, name }),
-            });
-            closeAddContact();
-            _onContactAdded?.(data);
-        } catch (err) {
-            const body = err && err.body && typeof err.body === "object" ? err.body : { error: String(err?.body ?? err?.message ?? "Something went wrong") };
-            _dom.addContactError.textContent = body.error || err.message || "Something went wrong";
-            _dom.addContactSubmit.disabled = false;
-            return;
-        }
-    } catch {
-        _dom.addContactError.textContent = "Connection error";
+    let data;
+    try {
+        data = await safeFetch("/api/contacts", {
+            method: "POST",
+            credentials: "include",
+            headers: buildHeaders(),
+            body: JSON.stringify({ username, name }),
+        });
+    } catch (err) {
+        // safeFetch puts the server's message (e.g. "User not found") in err.message
+        _dom.addContactError.textContent =
+            err && err.status ? err.message || "Something went wrong" : "Connection error";
         _dom.addContactSubmit.disabled = false;
+        return;
+    }
+    closeAddContact();
+    try {
+        await _onContactAdded?.(data);
+    } catch (e) {
+        console.error("add contact: opening the chat failed", e);
     }
 }

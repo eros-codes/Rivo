@@ -15,6 +15,9 @@ let _vaultCache = null;
 let _vaultCacheTs = 0;
 const _vaultCacheTtl = Number(process.env.VAULT_CACHE_TTL || 60) * 1000;
 let _vaultRefreshInterval = null;
+// Dev-only ephemeral KEKs, one per key id. They must stay the same for the
+// whole process, otherwise nothing wrapped earlier could be unwrapped again.
+const _ephemeralKeks = new Map();
 
 function _decodeKey(str) {
   if (!str) throw new Error("empty key string");
@@ -80,8 +83,12 @@ function _getKekBuffer(keyId = "v1") {
     throw new Error("ALLOW_EPHEMERAL_KEK must not be used in production");
   }
   if (process.env.NODE_ENV !== "production" && (allowEphemeral === "1" || allowEphemeral === "true")) {
-    console.warn(`No KEK found (tried: ${candidateNames.join(", ")}). Generating ephemeral KEK because ALLOW_EPHEMERAL_KEK is set. This KEK will be lost on restart.`);
-    return crypto.randomBytes(DEK_LENGTH);
+    const cacheKey = candidateNames[0];
+    if (!_ephemeralKeks.has(cacheKey)) {
+      console.warn(`No KEK found (tried: ${candidateNames.join(", ")}). Generating ephemeral KEK because ALLOW_EPHEMERAL_KEK is set. Messages encrypted with it cannot be read after a restart.`);
+      _ephemeralKeks.set(cacheKey, crypto.randomBytes(DEK_LENGTH));
+    }
+    return _ephemeralKeks.get(cacheKey);
   }
   throw new Error(`no KEK found (tried: ${candidateNames.join(", ")})`);
 }

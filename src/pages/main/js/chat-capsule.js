@@ -1,37 +1,63 @@
 import { unlockCapsule } from "../../../components/messages/messages.js";
 import { refreshCard, sortActiveChats } from "./chat-logic.js";
-import { _dom, _markCapsuleRevealed, _pendingCapsuleReveals } from "./chat-state.js";
+import { _currentUserId, _dom, _markCapsuleRevealed, _pendingCapsuleReveals } from "./chat-state.js";
 import { showNotification } from "./in-app-notification.js";
-import { contacts, messages, state } from "./state.js";
+import { contacts, messages } from "./state.js";
 
-export function handleCapsuleOpened({ messageId, text, openedAt, conversationId }) {
+function _findModelMessage(messageId) {
+	for (const [uid, msgs] of Object.entries(messages)) {
+		if (!Array.isArray(msgs)) continue;
+		const msg = msgs.find((m) => String(m.id) === String(messageId));
+		if (msg) return { contactId: Number(uid), msg };
+	}
+	return null;
+}
+
+// The chat card shows the capsule's text only when it is the latest message
+function _updatePreview(contact, messageId, text) {
+	if (!contact || String(contact.lastMessageId) !== String(messageId)) return;
+	contact.lastMessage = text || "Time capsule unlocked";
+	refreshCard(contact);
+	sortActiveChats();
+}
+
+export function handleCapsuleOpened({ messageId, text, openedAt, conversationId, senderId }) {
 	if (!messageId) return;
 
 	// Update in-memory messages
-	try {
-						for (const [_uid, msgs] of Object.entries(messages)) {
-			if (!Array.isArray(msgs)) continue;
-			const idx = msgs.findIndex((m) => String(m.id) === String(messageId));
-			if (idx !== -1) {
-				msgs[idx].text = text;
-				msgs[idx].openedAt = openedAt;
-				msgs[idx].isLocked = false;
-				msgs[idx].isTimeCapsule = true;
-				break;
-			}
-		}
-	} catch (e) {
-		console.error('handleCapsuleOpened update model failed', e);
+	const found = _findModelMessage(messageId);
+	if (found) {
+		found.msg.text = text;
+		found.msg.openedAt = openedAt;
+		found.msg.isLocked = false;
+		found.msg.isTimeCapsule = true;
 	}
 
-	// Update DOM if present; otherwise queue the reveal for later injection
-	if (!_dom || !_dom.chatEl) {
-		try { _pendingCapsuleReveals.set(String(messageId), { text, openedAt, conversationId }); } catch (e) { /* ignore */ }
+	const contact =
+		contacts.find((c) => c.conversationId === conversationId) ||
+		(found ? contacts.find((c) => c.id === found.contactId) : null);
+	const fromMe =
+		senderId != null ? Number(senderId) === Number(_currentUserId()) : !!(found && found.msg.user);
+	const msgEl = _dom?.chatEl?.querySelector(`.chat-message[data-message-id="${messageId}"]`) || null;
+
+	// The sender's own capsule: it only changes its label to "Opened"
+	if (fromMe) {
+		if (msgEl) {
+			const label = msgEl.querySelector(".capsule-sender-text");
+			if (label) label.textContent = "Opened";
+		}
 		return;
 	}
-	const msgEl = _dom.chatEl.querySelector(`.chat-message[data-message-id="${messageId}"]`);
+
+	// Not on screen: the reveal animation runs when the chat is opened
 	if (!msgEl) {
 		try { _pendingCapsuleReveals.set(String(messageId), { text, openedAt, conversationId }); } catch (e) { /* ignore */ }
+		_updatePreview(contact, messageId, text);
+		try {
+			if (contact && !contact.isMuted && document.visibilityState !== "hidden") {
+				showNotification(contact, { text: "A time capsule was unlocked", id: messageId });
+			}
+		} catch (e) { /* ignore */ }
 		return;
 	}
 
@@ -39,40 +65,6 @@ export function handleCapsuleOpened({ messageId, text, openedAt, conversationId 
 		// Place the real text into the element (keep hidden until revealed)
 		const textEl = msgEl.querySelector('.chat-message-text');
 		if (textEl) textEl.textContent = text || '';
-
-		// Update in-memory contact preview to a placeholder so lists don't show plaintext yet
-		try {
-			const contact = contacts.find(c => c.conversationId === conversationId);
-			if (contact) {
-				contact.lastMessage = 'Time capsule unlocked';
-				refreshCard(contact);
-				sortActiveChats();
-			}
-		} catch (e) { /* ignore */ }
-
-		// Show an in-app notification and a native notification (if permitted)
-		try {
-			const contact = contacts.find(c => c.conversationId === conversationId);
-			if (contact) {
-				const notifMsg = { text: 'A time capsule was unlocked', id: messageId };
-				try { showNotification(contact, notifMsg); } catch (e) { /* ignore */ }
-				if (window.Notification && Notification.permission === 'granted') {
-					try {
-						const n = new Notification('Time capsule unlocked', {
-							body: 'A time capsule in your chat has been unlocked. Click to view.',
-							data: { conversationId, messageId },
-						});
-						n.onclick = function () {
-							try {
-								window.focus();
-								document.dispatchEvent(new CustomEvent('in-app-notif:open', { detail: { contactId: contact.id, messageId } }));
-								n.close();
-							} catch (e) { /* ignore */ }
-						};
-					} catch (e) { /* ignore */ }
-				}
-			}
-		} catch (e) { /* ignore */ }
 
 		// Schedule unlock animation to run only when the message element becomes visible
 		const runReveal = () => {
@@ -100,26 +92,7 @@ export function handleCapsuleOpened({ messageId, text, openedAt, conversationId 
 				setTimeout(() => {
 					msgEl.classList.remove('capsule-unlocking');
 					msgEl.classList.add('capsule-opened');
-
-					// mark in-memory message as unlocked and update contact preview to real text
-					try {
-						for (const [_uid, msgs] of Object.entries(messages)) {
-							if (!Array.isArray(msgs)) continue;
-							const idx = msgs.findIndex((m) => String(m.id) === String(messageId));
-							if (idx !== -1) {
-								msgs[idx].isLocked = false;
-								msgs[idx].openedAt = openedAt;
-								break;
-							}
-						}
-						const contact = contacts.find(c => c.conversationId === conversationId);
-						if (contact) {
-							contact.lastMessage = text || '';
-							refreshCard(contact);
-							sortActiveChats();
-						}
-					} catch (e) { /* ignore */ }
-
+					_updatePreview(contact, messageId, text);
 					// Persist that we've shown the reveal animation for this message
 					try { _markCapsuleRevealed(String(messageId)); } catch (e) { /* ignore */ }
 				}, 950);
@@ -156,15 +129,3 @@ export function handleCapsuleOpened({ messageId, text, openedAt, conversationId 
 		console.error('handleCapsuleOpened DOM update failed', e);
 	}
 }
-
-// Dev helper: manually trigger capsule-open flow from the browser console.
-// Usage: window.__rivo_test_unlockCapsule(messageId, "optional revealed text")
-try {
-	if (typeof window !== 'undefined') {
-		window.__rivo_test_unlockCapsule = (messageId, text = 'Test unlock') => {
-			try {
-				handleCapsuleOpened({ messageId, text, openedAt: new Date().toISOString() });
-			} catch (e) { console.error('test unlock failed', e); }
-		};
-	}
-} catch (e) { /* ignore */ }

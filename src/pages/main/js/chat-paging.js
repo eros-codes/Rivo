@@ -1,8 +1,8 @@
 import { applyReactionsToMessage, createMessage } from "../../../components/messages/messages.js";
 import { getMessagesPage } from "./api.js";
-import { scrollToPinnedMessage, updatePinnedMessage } from "./chat-pinned.js";
-import { createDateSeparator, createUnreadSeparator, injectMessages } from "./chat-render.js";
-import { DEFAULT_PAGE_LIMIT, MAX_CLIENT_PAGE_LIMIT, MAX_MESSAGES_PER_CONVERSATION, _currentUserId, _dom, messagePaging } from "./chat-state.js";
+import { updatePinnedMessage } from "./chat-pinned.js";
+import { createDateSeparator, createUnreadSeparator, injectMessages, messageForDisplay } from "./chat-render.js";
+import { DEFAULT_PAGE_LIMIT, MAX_CLIENT_PAGE_LIMIT, _dom, _unreadSeparatorContactId, _unreadSeparatorIndex, messagePaging, normalizeServerMessage, setUnreadSeparatorIndex } from "./chat-state.js";
 import { getCurrentUser } from "./currentUser.js";
 import { createTopMessageSkeleton } from "./skeleton.js";
 import { contacts, messages, state } from "./state.js";
@@ -98,51 +98,34 @@ export async function loadOlderMessages({ skipSuppress = false } = {}) {
 			return;
 		}
 
-		const normalized = more.map((m) => ({
-			id: m.id,
-			user: m.senderId === _currentUserId(),
-			text: m.text,
-			time: new Date(m.createdAt).toLocaleTimeString([], {
-				hour: "2-digit",
-				minute: "2-digit",
-				hour12: false,
-			}),
-			date: new Date(m.createdAt).toISOString().slice(0, 10),
-			createdAt: m.createdAt,
-			isEdited: m.isEdited,
-			isPinned: m.isPinned,
-			isSeen: m.isSeen,
-				isOneTime: m.isOneTime || false,
-				isTimeCapsule: m.isTimeCapsule || false,
-				scheduledFor: m.scheduledFor || null,
-				openedAt: m.openedAt || null,
-				isLocked: m.isLocked || false,
-			replyTo: m.replyToId
-				? {
-					id: m.replyToId,
-					sender: m.replyToName,
-					text: m.replyToText,
-				}
-				: null,
-			forwardedFrom: m.forwardedFrom || null,
-			forwardedText: m.forwardedText || null,
-			reactions: m.reactions || [],
-		}));
-
-		// prepend into model
-		const oldMsgs = messages[uid] || [];
-		messages[uid] = [...normalized, ...oldMsgs];
-
-		// enforce size cap
-		if (
-			Array.isArray(messages[uid]) &&
-			messages[uid].length > MAX_MESSAGES_PER_CONVERSATION
-		) {
-			messages[uid] = messages[uid].slice(-MAX_MESSAGES_PER_CONVERSATION);
+		// The user switched to another chat while this page was loading
+		if (state.contactUserId !== uid) {
+			if (topSkel && topSkel.parentNode) topSkel.remove();
+			if (_dom.chatEl) _dom.chatEl.removeAttribute("aria-busy");
+			return;
 		}
+
+		// skip anything already loaded (e.g. a message that arrived meanwhile)
+		const oldMsgs = messages[uid] || [];
+		const knownIds = new Set(oldMsgs.map((m) => String(m.id)));
+		const normalized = more.filter((m) => !knownIds.has(String(m.id))).map(normalizeServerMessage);
 
 		// update hasMore
 		meta.hasMore = more.length === PAGE_LIMIT;
+		if (normalized.length === 0) {
+			if (topSkel && topSkel.parentNode) topSkel.remove();
+			if (_dom.chatEl) _dom.chatEl.removeAttribute("aria-busy");
+			return;
+		}
+
+		// prepend into model (history the user asked for is never trimmed: that
+		// used to drop exactly the page that was just loaded)
+		messages[uid] = [...normalized, ...oldMsgs];
+
+		// the unread separator position is an index into this array
+		if (_unreadSeparatorContactId === uid && _unreadSeparatorIndex !== -1) {
+			setUnreadSeparatorIndex(_unreadSeparatorIndex + normalized.length);
+		}
 
 		// reindex model
 		messages[uid].forEach((m, i) => (m.index = i));
@@ -169,20 +152,20 @@ export async function loadOlderMessages({ skipSuppress = false } = {}) {
 				// Build fragment for the newly fetched older messages
 				const frag = document.createDocumentFragment();
 				let lastDate = null;
-				normalized.forEach((message, _idx) => {
+				// at most one "Unread messages" line, and only if the open chat
+				// does not show one already
+				const hasUnreadLine = !!_dom.chatEl.querySelector(".unread-separator");
+				const firstUnseenIndex = messages[uid].findIndex((m) => m.isSeen !== true && !m.user);
+				normalized.forEach((message) => {
 					// message.index should already be 0..L-1
 					if (message.date && message.date !== lastDate) {
 						frag.appendChild(createDateSeparator(message.date));
 						lastDate = message.date;
 					}
-					// If unread separator belongs in this new range, insert it
-					const firstUnseenIndex = Array.isArray(messages[uid])
-						? messages[uid].findIndex((m) => m.isSeen !== true && !m.user)
-						: -1;
-					if (message.index === firstUnseenIndex && firstUnseenIndex !== -1) {
+					if (!hasUnreadLine && message.index === firstUnseenIndex && firstUnseenIndex !== -1) {
 						frag.appendChild(createUnreadSeparator());
 					}
-					const node = createMessage(message);
+					const node = createMessage(messageForDisplay(message, uid));
 					if (message.reactions && message.reactions.length > 0) {
 						try {
 							const _cu = getCurrentUser();
@@ -192,23 +175,24 @@ export async function loadOlderMessages({ skipSuppress = false } = {}) {
 					frag.appendChild(node);
 				});
 
-				// Remember original first node to detect duplicate separators
+				// remove the loading skeleton first, so the old content's first
+				// element (its date line) can be compared with the new page
+				if (topSkel && topSkel.parentNode) topSkel.remove();
 				const originalFirst = _dom.chatEl.firstElementChild;
-				// Prepend fragment
 				_dom.chatEl.prepend(frag);
 
-				// If we introduced duplicate date separators at the boundary, remove one
+				// The old first day line repeats the new page's last day: keep one
 				try {
-					if (originalFirst) {
-						const prev = originalFirst.previousElementSibling;
-						if (prev && prev.classList && prev.classList.contains("date-separator") && originalFirst.classList && originalFirst.classList.contains("date-separator")) {
-							originalFirst.parentNode.removeChild(originalFirst);
-						}
+					if (
+						originalFirst &&
+						originalFirst.classList.contains("date-separator") &&
+						originalFirst.dataset.date &&
+						originalFirst.dataset.date === lastDate
+					) {
+						originalFirst.remove();
 					}
 				} catch (e) {}
 
-				// remove top skeleton if present
-				if (topSkel && topSkel.parentNode) topSkel.remove();
 				_dom.chatEl.removeAttribute("aria-busy");
 
 				// restore scroll position to keep the viewport stable

@@ -9,13 +9,15 @@ window.addEventListener("load", () => {
         (async () => {
             try {
                 const res = await fetch('/api/users/me', { credentials: 'include' });
+                // replace(): "back" must not return to this loading screen;
+                // the query (a notification's chat) is passed on
                 if (res.ok) {
-                    window.location.href = '/chat/main.html';
+                    window.location.replace('/chat/main.html' + window.location.search);
                 } else {
-                    window.location.href = '/auth/auth.html';
+                    window.location.replace('/auth/auth.html');
                 }
             } catch (e) {
-                window.location.href = '/auth/auth.html';
+                window.location.replace('/auth/auth.html');
             }
         })();
     }, 1600);

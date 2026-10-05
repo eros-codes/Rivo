@@ -16,6 +16,7 @@
     "test:e2e": "node scripts/test.mjs e2e",
     "test:integration": "node tests/integration/socket-flow.js",
     "db:check": "node server/scripts/check_duplicates.js",
+    "db:seed": "node prisma/seed/index.js",
     "db:backup": "bash scripts/backup-db.sh",
     "db:restore": "bash scripts/restore-db.sh",
     "mock-vault": "node server/scripts/mock_vault_server.js",

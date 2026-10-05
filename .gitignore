@@ -71,3 +71,7 @@ secrets.json
 
 # Uploaded profile pictures (the folder is created on the first upload)
 /public/assets/images/user-profiles/*
+
+# Pictures for the test data (npm run db:seed): yours, not the repo's
+/prisma/seed/avatars/*
+!/prisma/seed/avatars/README.md

@@ -1,0 +1,32 @@
+// The server's TypeScript. Node runs the .ts files as they are (it strips
+// the types; Node 22.18+), so there is no build step: this is only for
+// checking, by `npm run typecheck`. Files still in .js are not checked yet.
+{
+	"compilerOptions": {
+		"target": "es2023",
+		"lib": ["es2023"],
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"types": ["node"],
+
+		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		"noImplicitOverride": true,
+		"noImplicitReturns": true,
+		"noFallthroughCasesInSwitch": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+
+		// only what Node can run by removing the types: no enum, no
+		// namespace with code, no constructor parameter properties
+		"erasableSyntaxOnly": true,
+		"verbatimModuleSyntax": true,
+		"allowImportingTsExtensions": true,
+		"noEmit": true,
+
+		"isolatedModules": true,
+		"forceConsistentCasingInFileNames": true,
+		"skipLibCheck": true
+	},
+	"include": ["**/*.ts"]
+}

@@ -98,11 +98,14 @@ scripts/
   backup-db.sh             ← بکاپ دیتابیس و عکس‌ها
   restore-db.sh            ← بازگردانی (تمرینی یا واقعی)
   db-url.mjs               ← آدرس دیتابیس برای ابزارهای Postgres
-server/                    ← Express 5 + Socket.IO + Prisma
-  utils/logger.js          ← لاگ JSON با reqId/userId
+server/                    ← Express 5 + Socket.IO + Prisma (در حال انتقال به TypeScript، بخش ۳)
+  tsconfig.json            ← چک تایپ سرور (npm run typecheck)
+  utils/logger.ts          ← لاگ JSON با reqId/userId
+  utils/errors.ts          ← خواندن پیام/کد خطای throw شده
   scripts/check_duplicates.js ← npm run db:check
 public/                    ← assetها (فونت، آیکن، emoji data) + خروجی build
 prisma/                    ← schema و migrationها
+  seed/                    ← داده‌ی تست (npm run db:seed)
 tests/
   unit/                    ← منطق کلاینت (node:test + tsx)
   api/                     ← سرور واقعی + دیتابیس تست (node:test)
@@ -116,6 +119,44 @@ eslint.config.js           ← ESLint 10 (flat config)
 ---
 
 ## ۳. سرور
+
+### TypeScript در سرور
+
+سرور در حال انتقال از JS به TypeScript است، در سه مرحله و بدون تغییر رفتار:
+
+| مرحله | فایل‌ها | وضعیت |
+|---|---|---|
+| ۱ | `config`، `env`، `events`، `prisma`، همه‌ی `utils/`، `services/caches`، `services/actionLimit`، `realtime/registry` | ✅ |
+| ۲ | `services/` (messages، contacts، presence)، `auth/sessions`، `jobs/` | ✅ |
+| ۳ | `routes/`، `socket/`، `middleware/`، `http/`، `index` | ✅ |
+
+- **بدون build:** Node از ۲۲.۱۸ به بعد فایل `.ts` را مستقیم اجرا می‌کند (فقط
+  تایپ‌ها را حذف می‌کند). `tsc` فقط چک می‌کند: `npm run typecheck`
+  (`server/tsconfig.json`، حالت strict).
+- **فقط syntaxی که پاک‌شدنی است** (`erasableSyntaxOnly`): نه `enum`، نه
+  `namespace` با کد، نه parameter property در constructor. به جای enum، union
+  رشته‌ها (`"asc" | "desc"`).
+- **importها با پسوند واقعی:** `from "../prisma.ts"`. فایل‌های JS باقی‌مانده هم
+  ماژول‌های TS را با `.ts` import می‌کنند. تایپ‌هایی که فقط تایپ‌اند با
+  `import type`.
+- **دیتابیس:** تایپ‌ها را Prisma از `schema.prisma` می‌سازد (`npx prisma
+  generate`، که `npm install` هم انجامش می‌دهد): فیلد اشتباه در `where` و
+  `select`، یا خواندن فیلدی که select نشده، قبل از اجرا خطا می‌گیرد.
+- **چیزی که throw شده `unknown` است:** پیامش با `messageOf(e)` و کدش (مثلاً
+  `P2002` در Prisma) با `codeOf(e)` از `utils/errors.ts`.
+- **همه‌ی سرور TypeScript است** به جز ابزارهای دستی `server/scripts/` و
+  `prisma/seed/` (JS؛ ماژول‌های سرور را با `.ts` import می‌کنند). سرور با
+  `node server/index.ts` بالا می‌آید.
+- **handlerهای Express چیزی برنمی‌گردانند** (تایپ‌های Express 5):
+  `return void res.status(400).json(...)` یعنی «جواب بده و تمام»؛ Express مقدار
+  برگشتی را به هر حال نادیده می‌گیرد.
+- **نتیجه‌ی کارهای سرویس پیام** یا `{ error }` است یا موفق؛ با
+  `if ("error" in result)` از هم جدا می‌شوند.
+- **`req.userId` / `req.sessionId`** را `requireAuth` می‌گذارد
+  (`server/types/express.d.ts`)؛ فقط در routeهای پشت آن خوانده می‌شوند.
+- **سوکت:** هر چه به اتصال تعلق دارد در `socket.data` است (`SocketData` در
+  `realtime/registry.ts`)، از جمله `userId`. payload رویدادها هنوز تک‌تک تایپ
+  نشده‌اند (`Incoming`: شیئی با محتوای نامعلوم که هر handler خودش چک می‌کند).
 
 ### نشست‌ها (Sessions)
 
@@ -463,7 +504,7 @@ npm run test:integration
 
 ### لاگ‌ها
 
-`server/utils/logger.js`. در production هر خط یک JSON است:
+`server/utils/logger.ts`. در production هر خط یک JSON است:
 
 ```json
 {"time":"2026-10-07T09:01:22.545Z","level":"info","msg":"http","reqId":"9fa4bb92-7ab5","userId":12,"details":{"method":"POST","path":"/api/messages","status":201,"ms":14.2}}

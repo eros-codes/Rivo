@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import prisma from "../prisma.js";
-import { unwrapDEK, wrapDEK, initKeyStore } from "../utils/encryption.js";
+import prisma from "../prisma.ts";
+import { unwrapDEK, wrapDEK, initKeyStore } from "../utils/encryption.ts";
 import crypto from "node:crypto";
 import fs from "node:fs";
 

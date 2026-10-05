@@ -1,7 +1,7 @@
-import prisma from "../prisma.js";
+import prisma from "../prisma.ts";
 import dotenv from "dotenv";
 import crypto from "node:crypto";
-import { generateDEK, encryptMessage, wrapDEK, unwrapDEK, decryptMessage } from "../utils/encryption.js";
+import { generateDEK, encryptMessage, wrapDEK, unwrapDEK, decryptMessage } from "../utils/encryption.ts";
 
 dotenv.config();
 

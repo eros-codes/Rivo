@@ -1,5 +1,5 @@
 // How the API tests reach a real Rivo server: started here (node
-// server/index.js) on a free port against the test database, emails written
+// server/index.ts) on a free port against the test database, emails written
 // to a file instead of being sent, the database inspected with Prisma.
 //
 //   TEST_DATABASE_URL  a database only for tests (its name must contain
@@ -71,7 +71,7 @@ export async function startServer(extraEnv = {}) {
 	const mailFile = join(dir, "mails.jsonl");
 	const settings = testEnv(port, mailFile, extraEnv);
 	const env = { ...process.env, DATABASE_URL: testDatabaseUrl(), ...settings };
-	const proc = spawn(process.execPath, ["server/index.js"], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"] });
+	const proc = spawn(process.execPath, ["server/index.ts"], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"] });
 	const out = [];
 	proc.stdout.on("data", (d) => out.push(d));
 	proc.stderr.on("data", (d) => out.push(d));

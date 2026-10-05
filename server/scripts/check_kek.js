@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import dotenv from 'dotenv';
 dotenv.config();
-import { generateDEK, wrapDEK } from '../utils/encryption.js';
+import { generateDEK, wrapDEK } from '../utils/encryption.ts';
 
 try {
   const dek = generateDEK();

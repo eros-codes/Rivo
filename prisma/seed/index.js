@@ -6,7 +6,7 @@
 //
 // Never on a production server. Stop the server while it runs (it keeps
 // caches of who is in which chat), start it again afterwards.
-import "../../server/env.js";
+import "../../server/env.ts";
 import { MAIN, PASSWORD, people, prisma, seed, wipe } from "./seed.js";
 
 const args = new Set(process.argv.slice(2));

@@ -6,9 +6,9 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/dev.mjs",
-    "start": "node server/index.js",
-    "server": "nodemon server/index.js",
-    "typecheck": "tsc -p tsconfig.json && tsc -p client/sw/tsconfig.json",
+    "start": "node server/index.ts",
+    "server": "nodemon --ext js,ts,json server/index.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p client/sw/tsconfig.json && tsc -p server/tsconfig.json",
     "lint": "eslint .",
     "test": "node scripts/test.mjs all",
     "test:unit": "node scripts/test.mjs unit",
@@ -54,8 +54,17 @@
   "devDependencies": {
     "@eslint/js": "^10.0.0",
     "@playwright/test": "^1.56.0",
+    "@types/bcrypt": "^5.0.0",
+    "@types/cookie-parser": "^1.4.0",
+    "@types/cors": "^2.8.0",
+    "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.0",
+    "@types/multer": "^1.4.0",
+    "@types/node": "^24.0.0",
+    "@types/nodemailer": "^6.4.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "@types/web-push": "^3.6.0",
     "esbuild": "^0.28.0",
     "eslint": "^10.1.0",
     "nodemon": "^3.1.14",
@@ -67,6 +76,6 @@
     "braces": "^3.0.3"
   },
   "engines": {
-    "node": ">=20.19"
+    "node": ">=22.18"
   }
 }

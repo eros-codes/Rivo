@@ -8,7 +8,7 @@ Encryption at rest (DEK/KEK) — Rivo
 
 فایل‌های مرتبط
 ----------------
-- `server/utils/encryption.js` — توابع اصلی رمزنگاری و `initKeyStore()` برای خواندن KEK از Vault یا fallback به env: [server/utils/encryption.js](server/utils/encryption.js)
+- `server/utils/encryption.ts` — توابع اصلی رمزنگاری و `initKeyStore()` برای خواندن KEK از Vault یا fallback به env: [server/utils/encryption.ts](server/utils/encryption.ts)
 - اسکریپت‌ها:
   - `server/scripts/push_keks_to_vault.js` — آپلود KEK‌ها به Vault (interactive + dry‑run): [server/scripts/push_keks_to_vault.js](server/scripts/push_keks_to_vault.js)
   - `server/scripts/mock_vault_server.js` — mock Vault محلی برای تست: [server/scripts/mock_vault_server.js](server/scripts/mock_vault_server.js)
@@ -16,7 +16,7 @@ Encryption at rest (DEK/KEK) — Rivo
   - `server/scripts/insert_persistent_message.js` — درج پیام تست برای چرخش: [server/scripts/insert_persistent_message.js](server/scripts/insert_persistent_message.js)
   - `server/scripts/verify_decrypted_after_rotation.js` — بررسی بازگشایی پیام پس از چرخش: [server/scripts/verify_decrypted_after_rotation.js](server/scripts/verify_decrypted_after_rotation.js)
   - `server/scripts/test_message_encryption.js` — تست E2E رمز/بازگشایی: [server/scripts/test_message_encryption.js](server/scripts/test_message_encryption.js)
-- مسیرهای API/socket: `server/routes/messages.js`, `server/socket/index.js` (رمزنگاری قبل از ذخیره؛ بازگشایی در خواندن): [server/routes/messages.js](server/routes/messages.js) — [server/socket/index.js](server/socket/index.js)
+- مسیرهای API/socket: `server/routes/messages.ts`, `server/socket/index.ts` (رمزنگاری قبل از ذخیره؛ بازگشایی در خواندن): [server/routes/messages.ts](server/routes/messages.ts) — [server/socket/index.ts](server/socket/index.ts)
 
 راه‌اندازی Vault (نمونه HashiCorp Vault KV v2)
 ----------------------------------------------

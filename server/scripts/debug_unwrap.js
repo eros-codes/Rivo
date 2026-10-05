@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import dotenv from "dotenv";
-import prisma from "../prisma.js";
-import { initKeyStore, unwrapDEK } from "../utils/encryption.js";
+import prisma from "../prisma.ts";
+import { initKeyStore, unwrapDEK } from "../utils/encryption.ts";
 
 dotenv.config();
 

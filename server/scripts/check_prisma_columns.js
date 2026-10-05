@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import prisma from "../prisma.js";
+import prisma from "../prisma.ts";
 
 async function check() {
   try {

@@ -13,7 +13,7 @@ await watchAll();
 
 // nodemon's own script, run with this Node (works the same on Windows)
 const nodemon = require.resolve("nodemon/bin/nodemon.js");
-const server = spawn(process.execPath, [nodemon, "--watch", "server", "--watch", ".env", "--ext", "js,json", "server/index.js"], {
+const server = spawn(process.execPath, [nodemon, "--watch", "server", "--watch", ".env", "--ext", "js,ts,json", "server/index.ts"], {
 	cwd: ROOT,
 	stdio: "inherit",
 });

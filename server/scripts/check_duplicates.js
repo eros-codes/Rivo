@@ -4,8 +4,8 @@
 // `npx prisma migrate deploy` on a database with real data.
 //
 //   npm run db:check
-import "../env.js";
-import prisma from "../prisma.js";
+import "../env.ts";
+import prisma from "../prisma.ts";
 
 const rows = (sql) => prisma.$queryRawUnsafe(sql);
 

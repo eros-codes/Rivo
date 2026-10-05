@@ -7,8 +7,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import bcrypt from "bcrypt";
-import prisma from "../../server/prisma.js";
-import { encryptMessage, generateDEK, initKeyStore, wrapDEK } from "../../server/utils/encryption.js";
+import prisma from "../../server/prisma.ts";
+import { encryptMessage, generateDEK, initKeyStore, wrapDEK } from "../../server/utils/encryption.ts";
 import { MAIN, PASSWORD, chats, friends, mainList, people, saved, side } from "./data.js";
 
 const ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import prisma from "../prisma.js";
+import prisma from "../prisma.ts";
 
 async function main() {
   const id = process.argv[2] || 4;

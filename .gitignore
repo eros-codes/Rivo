@@ -10,6 +10,14 @@ node_modules/
 dist/
 build/
 out/
+# (the web clients, built by `npm run build` from client/)
+/public/app/
+/public/chat/
+/public/auth/
+/public/landing/
+/public/404.html
+/public/reset-password.html
+/public/service-worker.js
 
 # Logs
 logs/
@@ -24,6 +32,13 @@ pids/
 *.pid
 *.seed
 *.pid.lock
+
+# Tests (Playwright's report and failure artifacts)
+test-results/
+playwright-report/
+
+# Database backups (scripts/backup-db.sh): user data, never in git
+backups/
 
 # Coverage
 coverage/

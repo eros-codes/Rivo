@@ -139,7 +139,7 @@ async function main() {
           // Consecutive failures mean a systemic problem (wrong KEK), not a few bad rows.
           // Continuing only makes the damage wider.
           if (failed >= 10 && rotated === 0) {
-            throw new Error(`aborting: ${failed} consecutive failures with no success — check that KEK '${to}' is correct`);
+            throw new Error(`aborting: ${failed} consecutive failures with no success — check that KEK '${to}' is correct`, { cause: e });
           }
         }
       }

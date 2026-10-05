@@ -3,6 +3,10 @@
 // Every user chooses who may see their online status, email and profile
 // picture: "everyone", "contacts" (people *they* have saved as a contact) or
 // "nobody". Blocking someone also hides all three from that person.
+//
+// A contact row the server made by itself (someone added this user, which
+// puts them in this user's list too) is not "saved by them": otherwise anyone
+// could see a "contacts only" profile just by adding its owner.
 import prisma from "../prisma.js";
 
 /**
@@ -15,11 +19,11 @@ export async function relationsFor(viewerId, targetIds) {
 	if (!Number.isInteger(viewerId) || ids.length === 0) return map;
 	const rows = await prisma.contact.findMany({
 		where: { ownerId: { in: ids }, contactId: viewerId },
-		select: { ownerId: true, isBlocked: true },
+		select: { ownerId: true, isBlocked: true, addedByOwner: true },
 	});
 	for (const r of rows) {
 		const cur = map.get(r.ownerId) || { hasViewer: false, blockedViewer: false };
-		cur.hasViewer = true;
+		if (r.addedByOwner) cur.hasViewer = true;
 		if (r.isBlocked) cur.blockedViewer = true;
 		map.set(r.ownerId, cur);
 	}
@@ -36,11 +40,11 @@ export async function audienceOf(targetId, viewerIds) {
 	if (!Number.isInteger(targetId) || ids.length === 0) return map;
 	const rows = await prisma.contact.findMany({
 		where: { ownerId: targetId, contactId: { in: ids } },
-		select: { contactId: true, isBlocked: true },
+		select: { contactId: true, isBlocked: true, addedByOwner: true },
 	});
 	for (const r of rows) {
 		const cur = map.get(r.contactId) || { hasViewer: false, blockedViewer: false };
-		cur.hasViewer = true;
+		if (r.addedByOwner) cur.hasViewer = true;
 		if (r.isBlocked) cur.blockedViewer = true;
 		map.set(r.contactId, cur);
 	}

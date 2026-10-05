@@ -1,0 +1,113 @@
+/* The page: the lists and the open chat side by side (on a phone the chat,
+   the profile and the panels slide over the lists) */
+body {
+	overflow: hidden;
+	background-color: var(--background-color);
+	/* no double-tap zoom, and taps are not delayed */
+	touch-action: manipulation;
+}
+#root {
+	width: 100%;
+	height: 100%;
+}
+.parts {
+	display: flex;
+	width: 100%;
+	flex-direction: row;
+	overflow: auto;
+}
+.people-part {
+	width: 100%;
+	overflow: auto;
+	height: 100dvh;
+	display: inline;
+}
+.chat-part {
+	overflow: hidden;
+	display: flex;
+	width: 100%;
+	height: 100dvh;
+	background-color: var(--background-color);
+}
+.main-content {
+	height: auto;
+	display: flex;
+	flex-direction: row-reverse;
+	align-items: flex-start;
+	overflow: auto;
+	justify-content: start;
+}
+.guid {
+	position: absolute;
+	color: var(--sub-text-secondary-color);
+	font-size: 0.75rem;
+	top: 0.8rem;
+	left: 1.5rem;
+	text-transform: uppercase;
+	letter-spacing: 0.1rem;
+	z-index: 101;
+	user-select: none;
+}
+
+.chat-part.slide-in,
+.edit-profile-panel.slide-in,
+.contact-profile-details.slide-in {
+	animation: slideInFromRight 0.3s ease;
+}
+.chat-part.slide-out,
+.edit-profile-panel.slide-out,
+.contact-profile-details.slide-out {
+	animation: slideOutToRight 0.3s ease forwards;
+}
+
+@media (max-width: 700px) {
+	.contact-profile-details,
+	.edit-profile-panel {
+		position: fixed;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100dvh;
+		z-index: 300;
+	}
+	.main-content {
+		flex-direction: column-reverse;
+	}
+	/* the visible height: an on-screen keyboard does not cover the message box */
+	.chat-part {
+		height: var(--viewport-height, 100dvh);
+		position: fixed;
+		top: var(--viewport-top, 0);
+		left: 0;
+		z-index: 300;
+	}
+}
+
+@keyframes slideInFromRight {
+	from {
+		transform: translateX(100%);
+	}
+	to {
+		transform: translateX(0);
+	}
+}
+@keyframes slideOutToRight {
+	from {
+		transform: translateX(0);
+	}
+	to {
+		transform: translateX(100%);
+	}
+}
+
+/* no account copy on this device and no server */
+.boot-error {
+	position: fixed;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 2rem;
+	text-align: center;
+	color: var(--chat-time);
+}

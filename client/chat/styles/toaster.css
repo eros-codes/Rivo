@@ -1,0 +1,80 @@
+/* What stays on top of everything (see TopLayer): no box of its own; while a
+   dialog is open it is a popover in the top layer, above the dialog */
+.top-layer {
+	display: contents;
+}
+.top-layer:popover-open {
+	display: block;
+	position: fixed;
+	inset: 0 auto auto 0;
+	width: 0;
+	height: 0;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	overflow: visible;
+	background: transparent;
+	color: inherit;
+	/* not the dialog's own text size */
+	font-size: 1rem;
+}
+
+/* The short message at the bottom (its distance from the bottom is set by the app) */
+.toaster {
+	position: fixed;
+	bottom: 1rem;
+	left: 50%;
+	transform: translateX(-50%);
+	width: max-content;
+	max-width: calc(100% - 3rem);
+	display: flex;
+	gap: 0.5rem;
+	z-index: 500;
+	opacity: 1;
+	animation: toastIn 0.3s ease;
+	transition: opacity 0.15s ease;
+}
+.toaster.leaving {
+	opacity: 0;
+	pointer-events: none;
+}
+@keyframes toastIn {
+	from {
+		opacity: 0;
+	}
+}
+.toast {
+	width: 100%;
+	background: var(--header-color);
+	padding: 0.75rem 1rem;
+	backdrop-filter: blur(30px);
+	box-shadow: var(--shadow);
+	justify-content: center;
+	align-items: center;
+	gap: 0.5rem;
+	border-radius: 2rem;
+	display: flex;
+}
+.toast-icon {
+	flex-shrink: 0;
+	width: 1.25rem;
+	height: 1.25rem;
+}
+.toast-icon svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+	color: var(--text-secondary-color);
+}
+.toast-message {
+	color: var(--text-secondary-color);
+}
+.undo-btn {
+	flex-shrink: 0;
+	padding: 0.125rem 0.5rem;
+	border-radius: 1rem;
+	background: #464646;
+	border: none;
+	color: var(--text-secondary-color);
+	cursor: pointer;
+}

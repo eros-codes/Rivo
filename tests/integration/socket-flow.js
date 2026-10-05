@@ -1,205 +1,296 @@
-// Integration test scaffold for socket flows.
-// Usage:
-// TEST_SERVER_URL=http://localhost:3000 TEST_USER_A=alice TEST_PASS_A=passA TEST_USER_B=bob TEST_PASS_B=passB node tests/integration/socket-flow.js
+// End-to-end check of a running Rivo server with two existing accounts:
+// signing in, the contact between them, live messages over the socket
+// (send → receive, duplicate send, edit, reply, pin, typing, seen, delete)
+// and catching up through the sync endpoint.
+//
+//   TEST_SERVER_URL=http://localhost:3000 \
+//   TEST_USER_A=alice TEST_PASS_A=... TEST_USER_B=bob TEST_PASS_B=... \
+//   npm run test:integration
+//
+// Both accounts must exist already (signing up needs an email code). The test
+// makes them contacts if they are not, deletes the messages it sends, and
+// signs its two sessions out at the end. Never point it at accounts whose
+// chat you care about: it posts into their conversation.
+import { randomUUID } from "node:crypto";
+import { io } from "socket.io-client";
 
-import { io } from 'socket.io-client';
-
-const SERVER = process.env.TEST_SERVER_URL || 'http://localhost:3000';
+const SERVER = (process.env.TEST_SERVER_URL || "http://localhost:3000").replace(/\/+$/, "");
 const USER_A = process.env.TEST_USER_A;
 const PASS_A = process.env.TEST_PASS_A;
 const USER_B = process.env.TEST_USER_B;
 const PASS_B = process.env.TEST_PASS_B;
 
 if (!USER_A || !PASS_A || !USER_B || !PASS_B) {
-  console.error('Please set TEST_SERVER_URL, TEST_USER_A, TEST_PASS_A, TEST_USER_B, TEST_PASS_B');
-  process.exit(1);
+	console.error("Set TEST_USER_A, TEST_PASS_A, TEST_USER_B and TEST_PASS_B (and TEST_SERVER_URL if not http://localhost:3000).");
+	process.exit(1);
 }
 
-// Helper: login, optionally create user when CREATE_TEST_USERS=1
-async function loginAndGetCookie(user, pass) {
-  const res = await fetch(`${SERVER}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ identifier: user, password: pass }),
-  });
+// ─── HTTP with a cookie jar ───────────────────────────────────────────────
 
-  if (!res.ok) {
-    throw new Error(`login failed for ${user}: ${res.status}`);
-  }
-
-  const raw = res.headers.get('set-cookie');
-  if (!raw) throw new Error('No set-cookie header received');
-  return raw.split(',').map(s => s.split(';')[0]).join('; ');
+class Client {
+	constructor(label) {
+		this.label = label;
+		this.jar = new Map();
+	}
+	cookieHeader() {
+		return [...this.jar].map(([k, v]) => `${k}=${v}`).join("; ");
+	}
+	/** The CSRF token the server set ("rivo_csrf", or "__Host-rivo_csrf" in production). */
+	csrf() {
+		for (const [k, v] of this.jar) if (k.endsWith("rivo_csrf")) return decodeURIComponent(v);
+		return "";
+	}
+	remember(res) {
+		for (const line of res.headers.getSetCookie()) {
+			const [pair, ...attrs] = line.split(";");
+			const at = pair.indexOf("=");
+			const name = pair.slice(0, at).trim();
+			const value = pair.slice(at + 1).trim();
+			const expired = !value || attrs.some((a) => /^\s*max-age=0\s*$/i.test(a) || /expires=thu, 01 jan 1970/i.test(a));
+			if (expired) this.jar.delete(name);
+			else this.jar.set(name, value);
+		}
+	}
+	async request(method, path, body, { csrf = true } = {}) {
+		const headers = { Accept: "application/json", "User-Agent": "RivoIntegrationTest/1.0" };
+		if (this.jar.size) headers.Cookie = this.cookieHeader();
+		if (method !== "GET" && csrf) headers["X-CSRF-Token"] = this.csrf();
+		if (body !== undefined) headers["Content-Type"] = "application/json";
+		const res = await fetch(SERVER + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), redirect: "manual" });
+		this.remember(res);
+		const text = await res.text();
+		let data;
+		try {
+			data = text ? JSON.parse(text) : null;
+		} catch {
+			data = text;
+		}
+		return { status: res.status, data };
+	}
+	async login(identifier, password) {
+		const r = await this.request("POST", "/api/auth/login", { identifier, password });
+		if (r.status !== 200) throw new Error(`${this.label}: sign-in failed (${r.status} ${r.data?.error ?? ""})`);
+		if (!this.csrf()) throw new Error(`${this.label}: the server set no CSRF cookie`);
+		return r.data.user;
+	}
+	logout() {
+		return this.request("POST", "/api/auth/logout", {}).catch(() => null);
+	}
 }
 
-async function tryEnsureUser(user, pass) {
-  try {
-    return await loginAndGetCookie(user, pass);
-  } catch (e) {
-    if (process.env.CREATE_TEST_USERS === '1' || process.env.CREATE_TEST_USERS === 'true') {
-      console.log(`Attempting to register ${user} because login failed`);
-      const reg = await fetch(`${SERVER}/api/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: user, email: `${user}@example.test`, username: user, password: pass }),
-      });
-      if (!reg.ok && reg.status !== 409) {
-        throw new Error(`Failed to register ${user}: ${reg.status}`);
-      }
-      return await loginAndGetCookie(user, pass);
-    }
-    throw e;
-  }
+// ─── Socket helpers ───────────────────────────────────────────────────────
+
+function connect(client) {
+	return new Promise((resolve, reject) => {
+		const socket = io(SERVER, {
+			extraHeaders: { Cookie: client.cookieHeader() },
+			auth: { visible: true },
+			reconnection: false,
+			timeout: 8000,
+		});
+		// every event is kept, so one that arrives before we wait for it is not lost
+		socket.seen = [];
+		socket.onAny((event, data) => socket.seen.push({ event, data, used: false }));
+		socket.once("connect", () => resolve(socket));
+		socket.once("connect_error", (e) => reject(new Error(`${client.label}: socket refused (${e?.message ?? e})`)));
+	});
 }
 
-async function createOrGetConversation(cookie, otherUsername) {
-  // Try creating contact
-  // Extract CSRF token from cookie (double-submit cookie pattern)
-  const csrfMatch = String(cookie).match(/csrfToken=([^;\s]+)/);
-  const csrf = csrfMatch ? csrfMatch[1] : null;
-  const res = await fetch(`${SERVER}/api/contacts`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Cookie: cookie,
-      ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
-    },
-    body: JSON.stringify({ username: otherUsername }),
-  });
-
-  if (res.ok) {
-    const json = await res.json();
-    return json.conversationId || json.conversation?.id;
-  }
-
-  // If already exists or other error, list contacts and find the conversation
-  if (res.status === 409 || res.status === 200 || res.status === 400) {
-    const list = await fetch(`${SERVER}/api/contacts`, { headers: { Cookie: cookie } });
-    if (!list.ok) throw new Error('Failed to list contacts');
-    const arr = await list.json();
-    const found = arr.find((c) => c.contact && (c.contact.username === otherUsername || c.contact?.username === otherUsername));
-    return found?.conversationId || found?.conversation?.id;
-  }
-
-  const body = await res.text();
-  throw new Error(`createOrGetConversation failed: ${res.status} ${body}`);
+function ask(socket, event, payload, timeout = 6000) {
+	return socket.timeout(timeout).emitWithAck(event, payload);
 }
 
-function emitWithAck(socket, event, payload, timeout = 5000) {
-  return new Promise((resolve, reject) => {
-    let done = false;
-    const timer = setTimeout(() => {
-      if (!done) {
-        done = true;
-        reject(new Error('ack timeout: ' + event));
-      }
-    }, timeout);
-    try {
-      socket.emit(event, payload, (resp) => {
-        if (done) return;
-        done = true;
-        clearTimeout(timer);
-        resolve(resp);
-      });
-    } catch (err) {
-      if (!done) {
-        done = true;
-        clearTimeout(timer);
-        reject(err);
-      }
-    }
-  });
+function waitFor(socket, event, match = () => true, timeout = 6000) {
+	return new Promise((resolve, reject) => {
+		const take = () => {
+			const hit = socket.seen.find((e) => !e.used && e.event === event && match(e.data));
+			if (!hit) return false;
+			hit.used = true;
+			clearInterval(poll);
+			clearTimeout(timer);
+			resolve(hit.data);
+			return true;
+		};
+		const poll = setInterval(take, 20);
+		const timer = setTimeout(() => {
+			clearInterval(poll);
+			reject(new Error(`no "${event}" within ${timeout} ms`));
+		}, timeout);
+		take();
+	});
 }
 
-function waitForEvent(socket, event, timeout = 5000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      socket.off(event, onEv);
-      reject(new Error('timeout waiting for ' + event));
-    }, timeout);
-    function onEv(data) {
-      clearTimeout(timer);
-      resolve(data);
-    }
-    socket.once(event, onEv);
-  });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ─── The checks ───────────────────────────────────────────────────────────
+
+let passed = 0;
+async function step(name, fn) {
+	try {
+		const result = await fn();
+		passed += 1;
+		console.log(`  ✓ ${name}`);
+		return result;
+	} catch (e) {
+		e.message = `${name}: ${e.message}`;
+		throw e;
+	}
 }
 
-(async () => {
-  try {
-    const cookieA = await tryEnsureUser(USER_A, PASS_A);
-    const cookieB = await tryEnsureUser(USER_B, PASS_B);
+function check(condition, message) {
+	if (!condition) throw new Error(message);
+}
 
-    console.log('Logged in and retrieved cookies');
-    console.log('cookieA:', cookieA);
-    console.log('cookieB:', cookieB);
+/** A's contact row for B: added now, or found among A's contacts. */
+async function contactRow(a, username) {
+	const added = await a.request("POST", "/api/contacts", { username });
+	if (added.status === 201) return added.data;
+	if (added.status !== 409) throw new Error(`adding the contact failed (${added.status} ${added.data?.error ?? ""})`);
+	for (let skip = 0; skip < 5000; skip += 100) {
+		const page = await a.request("GET", `/api/contacts?limit=100&skip=${skip}`);
+		if (page.status !== 200) throw new Error(`listing contacts failed (${page.status})`);
+		const row = page.data.find((r) => !r.isSaved && r.contact?.username?.toLowerCase() === username.toLowerCase());
+		if (row) return row;
+		if (page.data.length < 100) break;
+	}
+	throw new Error("the server says the contact exists but it is not in the list");
+}
 
-    const conversationId = await createOrGetConversation(cookieA, USER_B);
-    if (!conversationId) throw new Error('Failed to determine conversationId');
-    console.log('Conversation ID:', conversationId);
+async function main() {
+	const a = new Client("A");
+	const b = new Client("B");
+	let sockA = null;
+	let sockB = null;
+	try {
+		console.log(`Rivo integration test against ${SERVER}`);
+		const [userA, userB] = await step("both accounts sign in", () => Promise.all([a.login(USER_A, PASS_A), b.login(USER_B, PASS_B)]));
+		check(userA.id !== userB.id, "TEST_USER_A and TEST_USER_B are the same account");
 
-    const sockA = io(SERVER, { extraHeaders: { Cookie: cookieA }, withCredentials: true });
-    const sockB = io(SERVER, { extraHeaders: { Cookie: cookieB }, withCredentials: true });
+		await step("a request without the CSRF token is refused", async () => {
+			const r = await a.request("PATCH", "/api/users/me", {}, { csrf: false });
+			check(r.status === 403, `expected 403, got ${r.status}`);
+		});
 
-    sockA.on('connect_error', (err) => console.error('A connect_error', err && err.message ? err.message : err));
-    sockB.on('connect_error', (err) => console.error('B connect_error', err && err.message ? err.message : err));
+		const row = await step("A and B are contacts", () => contactRow(a, USER_B));
+		const conversationId = row.conversationId;
+		check(Number.isInteger(conversationId), "the contact row has no conversation");
+		check(!row.isBlocked, "A has blocked B: unblock to run this test");
 
-    await new Promise((resolve) => {
-      let connected = 0;
-      function check() { if (++connected === 2) resolve(); }
-      sockA.on('connect', () => { console.log('A connected'); check(); });
-      sockB.on('connect', () => { console.log('B connected'); check(); });
-    });
+		[sockA, sockB] = await step("both connect live", () => Promise.all([connect(a), connect(b)]));
+		sockA.emit("conversation:join", { conversationId });
+		sockB.emit("conversation:join", { conversationId });
+		const cursor = new Date().toISOString();
+		await sleep(300);
 
-    // Ensure both sockets join the conversation room
-    await Promise.all([
-      emitWithAck(sockA, 'conversation:join', { conversationId }).catch(() => {}),
-      emitWithAck(sockB, 'conversation:join', { conversationId }).catch(() => {}),
-    ]);
+		const clientId = randomUUID().replace(/-/g, "");
+		const text = `integration test ${new Date().toISOString()}`;
+		const sent = await step("A sends, B receives it", async () => {
+			const ack = await ask(sockA, "message:send", { conversationId, text, clientId });
+			check(ack?.success && ack.message?.id, `send failed: ${JSON.stringify(ack)}`);
+			const got = await waitFor(sockB, "message:new", (m) => m?.id === ack.message.id);
+			check(got.text === text, "B got different text");
+			check(got.clientId === undefined || got.clientId === null || got.clientId === clientId, "B got another sender's clientId");
+			return ack.message;
+		});
 
-    // 1) Send a message from A and expect B to receive it
-    const text = 'hello from A ' + Date.now();
-    const newMsgPromise = waitForEvent(sockB, 'message:new', 5000);
-    const ack = await emitWithAck(sockA, 'message:send', { conversationId, text });
-    if (!ack || ack.error || !ack.message) throw new Error('message:send failed: ' + JSON.stringify(ack));
-    const sent = ack.message;
-    const recv = await newMsgPromise;
-    console.log('B received message:', recv.id);
+		await step("sending the same message again does not duplicate it", async () => {
+			const ack = await ask(sockA, "message:send", { conversationId, text, clientId });
+			check(ack?.success && ack.duplicate === true && ack.message?.id === sent.id, `expected the first message back: ${JSON.stringify(ack)}`);
+			await sleep(300);
+			check(!sockB.seen.some((e) => e.event === "message:new" && e.data?.id === sent.id && !e.used), "B was sent the message twice");
+		});
 
-    // 2) Edit message and expect B to receive edit notification
-    const editPromise = waitForEvent(sockB, 'message:edited', 5000);
-    const editAck = await emitWithAck(sockA, 'message:edit', { messageId: sent.id, text: text + ' (edited)' });
-    if (!editAck || editAck.error) throw new Error('message:edit failed: ' + JSON.stringify(editAck));
-    const editEvent = await editPromise;
-    console.log('B received edit:', editEvent);
+		await step("A edits, B sees the edit", async () => {
+			const ack = await ask(sockA, "message:edit", { messageId: sent.id, text: `${text} (edited)` });
+			check(ack?.success, `edit failed: ${JSON.stringify(ack)}`);
+			const ev = await waitFor(sockB, "message:edited", (e) => e?.messageId === sent.id);
+			check(ev.text === `${text} (edited)` && ev.isEdited, "the edit B got is wrong");
+		});
 
-    // 3) Pin message -> B should receive pinned event
-    const pinPromise = waitForEvent(sockB, 'message:pinned', 5000);
-    const pinAck = await emitWithAck(sockA, 'message:pin', { messageId: sent.id });
-    if (!pinAck || pinAck.error) throw new Error('message:pin failed');
-    const pinEvent = await pinPromise;
-    console.log('B received pin event:', pinEvent);
+		await step("B cannot edit A's message", async () => {
+			const ack = await ask(sockB, "message:edit", { messageId: sent.id, text: "not mine" });
+			check(ack?.error, "the server let B edit A's message");
+		});
 
-    // 4) Typing: A starts typing, B should receive typing:start
-    const typingPromise = waitForEvent(sockB, 'typing:start', 5000);
-    sockA.emit('typing:start', { conversationId });
-    const typingEvent = await typingPromise;
-    console.log('B received typing start:', typingEvent.userId);
+		const reply = await step("a reply quotes the real message, not what the client claims", async () => {
+			const ack = await ask(sockB, "message:send", {
+				conversationId,
+				text: "integration reply",
+				clientId: randomUUID().replace(/-/g, ""),
+				replyToId: sent.id,
+				replyToText: "something A never said",
+			});
+			check(ack?.success, `reply failed: ${JSON.stringify(ack)}`);
+			const got = await waitFor(sockA, "message:new", (m) => m?.id === ack.message.id);
+			check(got.replyToText === `${text} (edited)`, `A got the quote "${got.replyToText}"`);
+			return ack.message;
+		});
 
-    // 5) Message seen: B marks seen and A should receive message:seen
-    const seenPromiseA = waitForEvent(sockA, 'message:seen', 5000);
-    const seenAck = await emitWithAck(sockB, 'message:seen', { conversationId });
-    if (!seenAck || seenAck.error) throw new Error('message:seen ack failed');
-    const seenEvent = await seenPromiseA;
-    console.log('A received seen event for ids:', seenEvent.messageIds || seenAck.marked);
+		await step("A pins, B sees the pin", async () => {
+			const ack = await ask(sockA, "message:pin", { messageId: sent.id });
+			check(ack?.success, `pin failed: ${JSON.stringify(ack)}`);
+			const ev = await waitFor(sockB, "message:pinned", (e) => e?.messageId === sent.id);
+			if (ev.isPinned) {
+				// leave the chat's pins as they were
+				await ask(sockA, "message:pin", { messageId: sent.id });
+			}
+		});
 
-    // Cleanup
-    sockA.close();
-    sockB.close();
-    console.log('Integration test finished successfully');
-    process.exit(0);
-  } catch (e) {
-    console.error('Integration test error', e);
-    process.exit(1);
-  }
-})();
+		await step("A types, B sees it", async () => {
+			sockA.emit("typing:start", { conversationId });
+			const ev = await waitFor(sockB, "typing:start", (e) => e?.conversationId === conversationId);
+			check(ev.userId === userA.id, "typing came from the wrong user");
+			sockA.emit("typing:stop", { conversationId });
+		});
+
+		await step("B reads, A sees it read", async () => {
+			const ack = await ask(sockB, "message:seen", { conversationId, upToId: sent.id });
+			check(ack?.success, `seen failed: ${JSON.stringify(ack)}`);
+			if (ack.marked?.length) {
+				const ev = await waitFor(sockA, "message:seen", (e) => e?.messageIds?.includes(sent.id));
+				check(ev.seenBy === userB.id, "seen by the wrong user");
+			}
+		});
+
+		await step("a device that was away catches up through /changes", async () => {
+			const r = await b.request("GET", `/api/conversations/${conversationId}/changes?since=${encodeURIComponent(cursor)}`);
+			check(r.status === 200, `changes failed (${r.status})`);
+			check(typeof r.data.cursor === "string", "no new cursor");
+			if (!r.data.reset) {
+				const m = r.data.messages.find((x) => x.id === sent.id);
+				check(m, "the message is not among the changes");
+				check(m.isEdited, "the change has the old version");
+			}
+		});
+
+		await step("A deletes the message for both, B sees it go", async () => {
+			const ack = await ask(sockA, "messages:delete", { messageIds: [sent.id] });
+			check(ack?.success, `delete failed: ${JSON.stringify(ack)}`);
+			check((await ask(sockB, "messages:delete", { messageIds: [reply.id] }))?.success, "B could not delete its reply");
+			await waitFor(sockB, "message:deleted", (e) => e?.messageId === sent.id);
+			const r = await b.request("GET", `/api/conversations/${conversationId}/changes?since=${encodeURIComponent(cursor)}`);
+			const m = r.data?.messages?.find((x) => x.id === sent.id);
+			if (!r.data?.reset) check(m?.isDeleted && !m.text, "the deletion is not in the changes, or it kept its text");
+		});
+
+		await step("a signed-out session loses its connection", async () => {
+			const closed = new Promise((resolve) => sockB.once("disconnect", resolve));
+			await b.logout();
+			await Promise.race([closed, sleep(4000).then(() => Promise.reject(new Error("B's socket stayed connected")))]);
+			const r = await b.request("GET", "/api/users/me");
+			check(r.status === 401, `expected 401 after signing out, got ${r.status}`);
+		});
+
+		console.log(`\nAll ${passed} checks passed.`);
+		return 0;
+	} catch (e) {
+		console.error(`\n✗ ${e.message}`);
+		return 1;
+	} finally {
+		sockA?.close();
+		sockB?.close();
+		await Promise.all([a.logout(), b.logout()]);
+	}
+}
+
+process.exit(await main());

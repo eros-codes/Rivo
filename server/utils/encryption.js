@@ -3,6 +3,7 @@
 import crypto from "node:crypto";
 import http from "node:http";
 import https from "node:https";
+import { log } from "./logger.js";
 
 const DEK_LENGTH = 32; // 256 bits
 const IV_LENGTH = 12; // 96 bits, recommended for GCM
@@ -53,7 +54,7 @@ function _getKekBuffer(keyId = "v1") {
         try {
           return _decodeKey(String(_vaultCache[name]));
         } catch (err) {
-          throw new Error(`invalid KEK in vault ${name}: ${err.message}`);
+          throw new Error(`invalid KEK in vault ${name}: ${err.message}`, { cause: err });
         }
       }
     }
@@ -71,7 +72,7 @@ function _getKekBuffer(keyId = "v1") {
       try {
         return _decodeKey(process.env[name]);
       } catch (err) {
-        throw new Error(`invalid KEK in env ${name}: ${err.message}`);
+        throw new Error(`invalid KEK in env ${name}: ${err.message}`, { cause: err });
       }
     }
   }
@@ -85,7 +86,7 @@ function _getKekBuffer(keyId = "v1") {
   if (process.env.NODE_ENV !== "production" && (allowEphemeral === "1" || allowEphemeral === "true")) {
     const cacheKey = candidateNames[0];
     if (!_ephemeralKeks.has(cacheKey)) {
-      console.warn(`No KEK found (tried: ${candidateNames.join(", ")}). Generating ephemeral KEK because ALLOW_EPHEMERAL_KEK is set. Messages encrypted with it cannot be read after a restart.`);
+      log.warn(`No KEK found (tried: ${candidateNames.join(", ")}). Generating ephemeral KEK because ALLOW_EPHEMERAL_KEK is set. Messages encrypted with it cannot be read after a restart.`);
       _ephemeralKeks.set(cacheKey, crypto.randomBytes(DEK_LENGTH));
     }
     return _ephemeralKeks.get(cacheKey);
@@ -130,7 +131,7 @@ function decryptMessage(ciphertextB64, ivB64, authTagB64, dek) {
     return plain.toString("utf8");
   } catch (err) {
     // GCM authentication failures will throw here
-    throw new Error(`decryption failed: ${err.message}`);
+    throw new Error(`decryption failed: ${err.message}`, { cause: err });
   }
 }
 
@@ -163,7 +164,7 @@ function unwrapDEK(wrappedB64, keyId = "v1") {
     if (dek.length !== DEK_LENGTH) throw new Error("unwrapped DEK length mismatch");
     return dek;
   } catch (err) {
-    throw new Error(`failed to unwrap DEK: ${err.message}`);
+    throw new Error(`failed to unwrap DEK: ${err.message}`, { cause: err });
   }
 }
 
@@ -185,7 +186,7 @@ async function _fetchVaultSecrets() {
         throw new Error('Vault must use HTTPS in production');
       }
     } catch (e) {
-      throw new Error(`VAULT_ADDR is invalid or insecure: ${String(e && e.message ? e.message : e)}`);
+      throw new Error(`VAULT_ADDR is invalid or insecure: ${String(e && e.message ? e.message : e)}`, { cause: e });
     }
   }
 
@@ -240,7 +241,7 @@ async function _fetchVaultSecrets() {
       const json2 = await _getJson(v1);
       if (json2 && json2.data) return json2.data;
     } catch (e2) {
-      throw new Error(`failed to fetch secrets from Vault: ${e.message}; ${e2?.message || ""}`);
+      throw new Error(`failed to fetch secrets from Vault: ${e.message}; ${e2?.message || ""}`, { cause: e2 });
     }
   }
 }
@@ -261,8 +262,7 @@ async function initKeyStore() {
         _vaultRefreshInterval = setInterval(() => {
           refreshKeyStore().catch((e) => {
             // Log but do not crash the process
-            // eslint-disable-next-line no-console
-            console.error('vault refresh failed', e && e.message ? e.message : e);
+            log.error('vault refresh failed', e && e.message ? e.message : e);
           });
         }, refreshMs);
       } catch (e) {
@@ -273,7 +273,7 @@ async function initKeyStore() {
     throw new Error("empty secret data from vault");
   } catch (e) {
     // surface clear error so server startup can decide how to handle
-    throw new Error(`initKeyStore failed: ${e.message}`);
+    throw new Error(`initKeyStore failed: ${e.message}`, { cause: e });
   }
 }
 

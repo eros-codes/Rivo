@@ -3,6 +3,7 @@
 // decryption and time-capsule rules live in one place.
 import prisma from "../prisma.js";
 import { unwrapDEK, decryptMessage } from "./encryption.js";
+import { log } from "./logger.js";
 
 const UNAVAILABLE = "Message unavailable";
 
@@ -27,7 +28,7 @@ export function decryptBody(m) {
 			const dek = unwrapDEK(m.wrapped_dek, m.key_id || "v1");
 			return { text: decryptMessage(m.ciphertext, m.iv, m.auth_tag, dek), dek, ok: true };
 		} catch (e) {
-			console.error("decrypt failed for message", m.id, e && e.message ? e.message : e);
+			log.error("decrypt failed for message", m.id, e && e.message ? e.message : e);
 			return { text: UNAVAILABLE, dek: null, ok: false };
 		}
 	}
@@ -39,7 +40,7 @@ export function decryptBody(m) {
 /** replyToText / forwardedText: encrypted JSON {c, iv, t} or legacy plaintext. */
 export function decryptAux(value, dek, msgId) {
 	if (!value) return null;
-	let parsed = null;
+	let parsed;
 	try {
 		parsed = JSON.parse(value);
 	} catch {
@@ -50,7 +51,7 @@ export function decryptAux(value, dek, msgId) {
 		try {
 			return decryptMessage(parsed.c, parsed.iv, parsed.t, dek);
 		} catch (e) {
-			console.error("failed to decrypt quoted text", msgId, e && e.message ? e.message : e);
+			log.error("failed to decrypt quoted text", msgId, e && e.message ? e.message : e);
 			return UNAVAILABLE;
 		}
 	}
@@ -70,13 +71,14 @@ export async function loadReplySenders(msgs) {
 		const rows = await prisma.message.findMany({ where: { id: { in: ids } }, select: { id: true, senderId: true } });
 		for (const r of rows) map.set(r.id, r.senderId);
 	} catch (e) {
-		console.error("loadReplySenders failed", e && e.message ? e.message : e);
+		log.error("loadReplySenders failed", e && e.message ? e.message : e);
 	}
 	return map;
 }
 
 /** The message as `viewerId` may see it (never includes ciphertext or keys). */
 export function serializeMessage(m, viewerId, { now = new Date(), replySenders = null } = {}) {
+	if (m.isDeleted) return tombstone(m, viewerId);
 	const isSender = m.senderId === viewerId;
 	const hidden = isCapsuleLocked(m, now) && !isSender;
 	let text = null;
@@ -96,7 +98,7 @@ export function serializeMessage(m, viewerId, { now = new Date(), replySenders =
 		isSeen: !!m.isSeen,
 		isEdited: !!m.isEdited,
 		isPinned: !!m.isPinned,
-		isDeleted: !!m.isDeleted,
+		isDeleted: false,
 		isOneTime: !!m.isOneTime,
 		isTimeCapsule: !!m.isTimeCapsule,
 		scheduledFor: toIso(m.scheduledFor),
@@ -108,10 +110,30 @@ export function serializeMessage(m, viewerId, { now = new Date(), replySenders =
 		replyToText,
 		forwardedText,
 		forwardedFrom: m.forwardedFrom ?? null,
-		reactions: Array.isArray(m.reactions) ? m.reactions : [],
-		createdAt: m.createdAt,
+		reactions: Array.isArray(m.reactions) ? m.reactions.map((r) => ({ userId: r.userId, emoji: r.emoji })) : [],
+		createdAt: toIso(m.createdAt),
+		updatedAt: toIso(m.updatedAt || m.createdAt),
 	};
-	if (m.sender) out.sender = m.sender;
+	// the id the sending device gave it (lets that device match its pending copy)
+	if (isSender && m.clientId) out.clientId = m.clientId;
+	return out;
+}
+
+/**
+ * What is left of a deleted message: enough for a client to remove it. The
+ * sender also gets its clientId back: a device re-sending a message that was
+ * deleted in the meantime can then let go of its pending copy.
+ */
+export function tombstone(m, viewerId = null) {
+	const out = {
+		id: m.id,
+		conversationId: m.conversationId,
+		senderId: m.senderId,
+		isDeleted: true,
+		createdAt: toIso(m.createdAt),
+		updatedAt: toIso(m.updatedAt || m.createdAt),
+	};
+	if (viewerId !== null && m.senderId === viewerId && m.clientId) out.clientId = m.clientId;
 	return out;
 }
 
@@ -128,7 +150,7 @@ export function previewMessage(m, viewerId, now = new Date()) {
 		conversationId: m.conversationId,
 		senderId: m.senderId,
 		text: masked ? null : decryptBody(m).text,
-		createdAt: m.createdAt,
+		createdAt: toIso(m.createdAt),
 		isDeleted: !!m.isDeleted,
 		isEdited: !!m.isEdited,
 		isPinned: !!m.isPinned,

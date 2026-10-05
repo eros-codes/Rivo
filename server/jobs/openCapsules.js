@@ -1,101 +1,79 @@
+// Opens time capsules whose time has come (runs every 30 seconds).
 import prisma from "../prisma.js";
-import { decryptBody } from "../utils/messageView.js";
 import push from "../utils/push.js";
-import { deliverToConversation, getRecipientsCached, hasVisibleSocket } from "../socket/index.js";
+import { envNumber } from "../config.js";
+import { loadReplySenders, serializeMessage } from "../utils/messageView.js";
+import { getRecipientsCached } from "../services/caches.js";
+import { deliverToConversation, hasVisibleSocket } from "../realtime/registry.js";
+import { log } from "../utils/logger.js";
 
-// Process due time-capsules in bounded batches to avoid large DB/CPU spikes
-const OPEN_CAPSULES_BATCH_SIZE = parseInt(process.env.OPEN_CAPSULES_BATCH_SIZE || "50", 10) || 50;
+const BATCH = envNumber("OPEN_CAPSULES_BATCH_SIZE", 50);
+let running = false;
 
-let _running = false;
-
-// `io` and `userSockets` are accepted for backwards compatibility; delivery
-// goes through the shared socket helpers.
-// eslint-disable-next-line no-unused-vars
-export async function openDueCapsules(_io, _userSockets) {
-	// a slow run must not overlap with the next tick
-	if (_running) return;
-	_running = true;
-	const now = new Date();
+export async function openDueCapsules() {
+	// a slow run must not overlap the next tick
+	if (running) return;
+	running = true;
 	try {
-		const whereClause = {
-			isTimeCapsule: true,
-			openedAt: null,
-			isDeleted: false,
-			scheduledFor: { lte: now },
-		};
-
-		// Fetch a bounded batch ordered by scheduled time (oldest first)
+		const now = new Date();
 		const due = await prisma.message.findMany({
-			where: whereClause,
-			take: OPEN_CAPSULES_BATCH_SIZE,
-			orderBy: [{ scheduledFor: 'asc' }, { id: 'asc' }],
+			where: { isTimeCapsule: true, openedAt: null, isDeleted: false, scheduledFor: { lte: now } },
+			take: BATCH,
+			orderBy: [{ scheduledFor: "asc" }, { id: "asc" }],
+			include: { reactions: { select: { userId: true, emoji: true }, orderBy: { id: "asc" } } },
 		});
-
-		if (!due || due.length === 0) return;
-
-		let processed = 0;
+		let opened = 0;
 		for (const msg of due) {
-			// Attempt atomic update: only set openedAt if still null
-			const updated = await prisma.message.updateMany({
-				where: { id: msg.id, openedAt: null, isDeleted: false },
-				data: { openedAt: now },
-			});
-			if (!updated || updated.count === 0) {
-				// someone else already opened it
-				continue;
-			}
+			// only if nobody opened it meanwhile
+			const r = await prisma.message.updateMany({ where: { id: msg.id, openedAt: null, isDeleted: false }, data: { openedAt: now, updatedAt: now } });
+			if (!r.count) continue;
+			opened++;
+			const message = { ...msg, openedAt: now, updatedAt: now };
+			const replySenders = await loadReplySenders([message]);
+			// every device of both people, each with the message as they may see it
+			await deliverToConversation(msg.conversationId, "message:capsule:opened", null, {
+				perUser: (uid) => {
+					const view = serializeMessage(message, uid, { now, replySenders });
+					return {
+						messageId: msg.id,
+						conversationId: msg.conversationId,
+						senderId: msg.senderId,
+						text: view.text,
+						openedAt: now.toISOString(),
+						message: view,
+					};
+				},
+			}).catch((e) => log.error("capsule delivery failed", e?.message || e));
 
-			processed += 1;
-
-			const body = decryptBody(msg);
-			const payload = {
-				messageId: msg.id,
-				conversationId: msg.conversationId,
-				senderId: msg.senderId,
-				text: body.ok ? body.text : null,
-				openedAt: now.toISOString(),
-				...(body.ok ? {} : { error: true }),
-			};
-
-			// Every device of both people (the sender sees "Opened" too)
-			try {
-				await deliverToConversation(msg.conversationId, "message:capsule:opened", payload);
-			} catch (e) {
-				console.error('openDueCapsules delivery failed', e);
-			}
-
-			// Notify recipients who do not have the app open
 			try {
 				const rows = await getRecipientsCached(msg.conversationId);
 				const notified = new Set();
-				for (const r of rows) {
-					const uid = r.ownerId;
-					if (uid === msg.senderId || notified.has(uid) || r.isMuted || r.isBlocked) continue;
+				for (const row of rows) {
+					const uid = row.ownerId;
+					if (uid === msg.senderId || notified.has(uid) || row.isMuted || row.isBlocked) continue;
 					notified.add(uid);
 					if (hasVisibleSocket(uid)) continue;
-					push.sendNotificationToUser(uid, {
-						title: r.nickname || 'Time capsule unlocked',
-						body: 'A time capsule in your chat has been unlocked. Open the app to view.',
-						data: {
-							conversationId: msg.conversationId,
-							messageId: msg.id,
-							url: `/chat/main.html?conversationId=${msg.conversationId}&messageId=${msg.id}`,
-						},
-						tag: `conversation-${msg.conversationId}`,
-					}).catch(() => { /* suppress push errors */ });
+					push
+						.sendNotificationToUser(uid, {
+							title: row.nickname || "Time capsule unlocked",
+							body: "A time capsule in your chat was unlocked. Open the app to read it.",
+							data: {
+								conversationId: msg.conversationId,
+								messageId: msg.id,
+								url: `/chat/?conversationId=${msg.conversationId}&messageId=${msg.id}`,
+							},
+							tag: `conversation-${msg.conversationId}`,
+						})
+						.catch(() => {});
 				}
 			} catch (e) {
-				console.error('openDueCapsules push failed', e);
+				log.error("capsule notification failed", e?.message || e);
 			}
 		}
-
-		if (processed > 0) {
-			const more = due.length === OPEN_CAPSULES_BATCH_SIZE ? " (more may remain for the next run)" : "";
-			console.info(`openDueCapsules: opened ${processed} capsule(s)${more}`);
-		}
+		if (opened > 0) log.info(`opened ${opened} time capsule(s)${due.length === BATCH ? " (more next run)" : ""}`);
 	} catch (e) {
-		console.error('openDueCapsules error', e);
+		log.error("openDueCapsules failed", e);
 	} finally {
-		_running = false;
+		running = false;
 	}
 }

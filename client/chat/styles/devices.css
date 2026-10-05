@@ -1,0 +1,119 @@
+/* Settings → Devices (shares the archived dialog's header) */
+.devices-dialog {
+	border: none;
+	border-radius: 1.5rem;
+	padding: 0;
+	width: min(92vw, 440px);
+	max-height: 80vh;
+	display: none;
+	flex-direction: column;
+	overflow: hidden;
+	background: var(--background-color);
+	box-shadow: var(--shadow);
+	position: fixed;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+}
+.devices-dialog[open] {
+	display: flex;
+}
+.devices-dialog::backdrop {
+	background: rgba(0, 0, 0, 0.45);
+	backdrop-filter: blur(2px);
+}
+.devices-list {
+	flex: 1;
+	min-height: 6rem;
+	overflow-y: auto;
+	padding: 1rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+.devices-loading,
+.devices-error {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 0.75rem;
+	padding: 1.5rem 1rem;
+	color: var(--chat-time);
+	text-align: center;
+}
+.devices-loading svg {
+	width: 1.5rem;
+	height: 1.5rem;
+}
+.device-item {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 0.75rem 1rem;
+	border-radius: 1rem;
+	background: var(--header-color);
+	color: var(--text-secondary-color);
+}
+.device-icon {
+	display: flex;
+	flex-shrink: 0;
+	color: var(--text-secondary-color);
+	opacity: 0.85;
+}
+.device-item.current .device-icon {
+	color: var(--accent);
+	opacity: 1;
+}
+.device-info {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+}
+.device-name {
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.device-meta {
+	font-size: 0.75rem;
+	color: var(--chat-time);
+}
+.device-item.current .device-meta {
+	color: var(--accent);
+}
+.device-signout {
+	flex-shrink: 0;
+	padding: 0.4rem 0.8rem;
+	border: 1px solid var(--glass-border);
+	border-radius: 0.75rem;
+	background: transparent;
+	color: var(--danger-color);
+	font-size: 0.8rem;
+	cursor: pointer;
+}
+.device-signout:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+.devices-signout-all {
+	margin: 0 1rem 1rem;
+	padding: 0.7rem 1rem;
+	border: none;
+	border-radius: 1rem;
+	background: var(--danger-color);
+	color: #fff;
+	font-weight: 600;
+	cursor: pointer;
+}
+.devices-signout-all:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+@media (hover: hover) {
+	.device-signout:not(:disabled):hover {
+		background: rgba(255, 85, 85, 0.1);
+	}
+}

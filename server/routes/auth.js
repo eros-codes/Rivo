@@ -1,620 +1,373 @@
 import { Router } from "express";
 import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
-import prisma from "../prisma.js";
-import crypto from "crypto";
+import crypto from "node:crypto";
 import nodemailer from "nodemailer";
+import { appendFile } from "node:fs/promises";
+import prisma from "../prisma.js";
+import { config, envNumber } from "../config.js";
 import push from "../utils/push.js";
 import { verificationEmail } from "../utils/verificationEmail.js";
 import resetPasswordEmail from "../utils/resetPasswordEmail.js";
-import { findUserByIdentifier, findUserByUsername, isEmailTaken, isUsernameTaken } from "../utils/userLookup.js";
-import { disconnectUserSockets } from "../socket/index.js";
+import { accountExistsEmail } from "../utils/accountExistsEmail.js";
+import { isEmail, USERNAME_RE } from "../utils/validators.js";
+import { findUserByIdentifier, isEmailTaken, isUsernameTaken } from "../utils/userLookup.js";
+import {
+	clearSessionCookies,
+	loadSession,
+	readToken,
+	revokeAllSessions,
+	revokeSession,
+	sessionOfRequest,
+	startSession,
+	tokenFromRequest,
+} from "../auth/sessions.js";
+import { log } from "../utils/logger.js";
 
 const router = Router();
-// bcrypt rounds: default to 12 in production, 10 in development
-const DEFAULT_BCRYPT_ROUNDS = process.env.NODE_ENV === 'production' ? 12 : 10;
-const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS || DEFAULT_BCRYPT_ROUNDS);
-// Basic server-side email format check to avoid passing invalid addresses to SMTP
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const USERNAME_RE = /^[a-zA-Z0-9_]{3,30}$/;
-// bcrypt only looks at the first 72 bytes; refuse absurdly long passwords
-const MAX_PASSWORD_LENGTH = 128;
 
-// Simple verification TTL (configurable via VERIFICATION_TTL_MINUTES)
-const VERIFICATION_TTL_MS = (Number(process.env.VERIFICATION_TTL_MINUTES) || 10) * 60 * 1000; // minutes -> ms
-const RESET_TOKEN_TTL_MS = (Number(process.env.RESET_TOKEN_TTL_MINUTES) || 30) * 60 * 1000; // minutes -> ms
+const VERIFICATION_TTL_MS = envNumber("VERIFICATION_TTL_MINUTES", 10) * 60_000;
+const RESET_TOKEN_TTL_MS = envNumber("RESET_TOKEN_TTL_MINUTES", 30) * 60_000;
+const SEND_WINDOW_MS = envNumber("VERIFICATION_SEND_WINDOW_MINUTES", 60) * 60_000;
+const SEND_LIMIT = envNumber("VERIFICATION_SEND_LIMIT", 5);
+const MAX_ATTEMPTS = envNumber("VERIFICATION_MAX_ATTEMPTS", 5);
+const MAX_SEND_COUNTS = envNumber("MAX_SEND_COUNTS", 20_000);
 
-// Verification state is stored in the database so it survives restarts and
-// works across multiple app instances.
-// Per-email rate limiting for verification sends
-const VERIFICATION_SEND_WINDOW_MS = (Number(process.env.VERIFICATION_SEND_WINDOW_MINUTES) || 60) * 60 * 1000; // default 60 minutes
-const VERIFICATION_SEND_LIMIT = Number(process.env.VERIFICATION_SEND_LIMIT) || 5; // default 5 sends per window
-// memory fallback counter: Map<normalizedEmail, { count, timer }>
-const _sendCounts = new Map();
-const MAX_SEND_COUNTS = Number(process.env.MAX_SEND_COUNTS || 20000);
+const hashCode = (code) => crypto.createHash("sha256").update(String(code)).digest("hex");
+const normEmail = (email) => String(email || "").toLowerCase().trim();
 
-// Per-email verification attempts allowed before requiring a new code
-const VERIFICATION_MAX_ATTEMPTS = Number(process.env.VERIFICATION_MAX_ATTEMPTS || 5);
-
-function _hashCode(code) {
-    return crypto.createHash("sha256").update(String(code)).digest("hex");
+function maskEmail(email) {
+	const [local, domain] = String(email).split("@");
+	if (!domain) return "***";
+	return `${local?.[0] || "*"}***${local && local.length > 1 ? local[local.length - 1] : "*"}@${domain}`;
 }
 
-function _normEmail(email) {
-    return String(email || '').toLowerCase().trim();
-}
-
-function _maskEmail(email) {
-    try {
-        const [local, domain] = String(email).split('@');
-        if (!domain) return '***';
-        const start = local && local.length ? local[0] : '*';
-        const end = local && local.length > 1 ? local[local.length - 1] : '*';
-        return `${start}***${end}@${domain}`;
-    } catch (e) { return '***'; }
-}
-
-async function _incrementSendCount(email) {
-    // Memory-only implementation for send-count; normalize email key
-    const key = _normEmail(email);
-    // Evict oldest entries if store grows too large
-    try {
-        if (_sendCounts.size >= MAX_SEND_COUNTS) {
-            const oldest = _sendCounts.keys().next().value;
-            if (oldest) {
-                const t = _sendCounts.get(oldest)?.timer;
-                if (t) clearTimeout(t);
-                _sendCounts.delete(oldest);
-            }
-        }
-    } catch (e) {
-        /* ignore eviction errors */
-    }
-
-    const entry = _sendCounts.get(key) || { count: 0, timer: null };
-    entry.count += 1;
-    if (!entry.timer) {
-        entry.timer = setTimeout(() => _sendCounts.delete(key), VERIFICATION_SEND_WINDOW_MS);
-    }
-    _sendCounts.set(key, entry);
-    return entry.count;
-}
-
-async function _storeVerification(email, code) {
-    const key = _normEmail(email);
-    await prisma.emailVerification.deleteMany({ where: { email: key, verifiedAt: null } });
-    await prisma.emailVerification.create({
-        data: {
-            email: key,
-            codeHash: _hashCode(code),
-            expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS),
-        },
-    });
-}
-
-async function _getVerification(email) {
-    return prisma.emailVerification.findFirst({
-        where: { email: _normEmail(email), verifiedAt: null, expiresAt: { gt: new Date() } },
-        orderBy: { id: "desc" },
-    });
-}
-
-async function _clearVerification(email) {
-    await prisma.emailVerification.deleteMany({ where: { email: _normEmail(email), verifiedAt: null } });
+// Counters for sending limits (in memory; they only need to survive a window)
+const sendCounts = new Map();
+function countSend(key) {
+	if (sendCounts.size >= MAX_SEND_COUNTS) {
+		const oldest = sendCounts.keys().next().value;
+		clearTimeout(sendCounts.get(oldest)?.timer);
+		sendCounts.delete(oldest);
+	}
+	const entry = sendCounts.get(key) || { count: 0, timer: null };
+	entry.count += 1;
+	if (!entry.timer) {
+		entry.timer = setTimeout(() => sendCounts.delete(key), SEND_WINDOW_MS);
+		entry.timer.unref?.();
+	}
+	sendCounts.set(key, entry);
+	return entry.count;
 }
 
 setInterval(() => {
-    prisma.emailVerification
-        .deleteMany({ where: { expiresAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } } })
-        .catch((e) => console.warn("verification cleanup failed", e?.message || e));
-}, 60 * 60 * 1000).unref();
+	prisma.emailVerification
+		.deleteMany({ where: { expiresAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } } })
+		.catch((e) => log.warn("verification cleanup failed", e?.message || e));
+}, 60 * 60 * 1000).unref?.();
 
-async function _sendEmail({ to, subject, text, html }) {
-    // Lazy-create and cache transporter to avoid recreating per-request
-    if (typeof globalThis._rivo_smtp_transporter === 'undefined') globalThis._rivo_smtp_transporter = null;
-    function _createTransporter() {
-        const host = process.env.SMTP_HOST;
-        const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined;
-        const user = process.env.SMTP_USER;
-        const pass = process.env.SMTP_PASS;
-        if (!host || !port || !user || !pass) {
-            throw new Error('SMTP not configured');
-        }
-        const tr = nodemailer.createTransport({
-            host,
-            port,
-            secure: String(port) === '465',
-            auth: { user, pass },
-        });
-        return tr;
-    }
+// The automated tests read emails (codes, reset links) from a file instead
+// of a mailbox. Never in production: the server refuses to start with it.
+const CAPTURE_FILE = !config.isProd && process.env.MAIL_CAPTURE_FILE ? process.env.MAIL_CAPTURE_FILE : null;
 
-    let transporter = globalThis._rivo_smtp_transporter;
-    if (!transporter) {
-        transporter = _createTransporter();
-        // cache immediately to avoid concurrent creators
-        globalThis._rivo_smtp_transporter = transporter;
-        // attempt a verify in background (non-fatal)
-        transporter.verify().then(() => {
-            console.info('SMTP verified');
-        }).catch((e) => {
-            console.warn('SMTP verify failed (will still attempt send):', e && e.message ? e.message : e);
-        });
-    }
-
-    const maxAttempts = 3;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-            const info = await transporter.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, text, html });
-            return info;
-        } catch (e) {
-            // auth errors should not be retried
-            const isAuthErr = e && (e.code === 'EAUTH' || e.responseCode === 535 || e.responseCode === 534);
-            if (isAuthErr) {
-                throw e;
-            }
-            if (attempt < maxAttempts) {
-                const backoff = 200 * Math.pow(2, attempt - 1);
-                await new Promise((r) => setTimeout(r, backoff));
-                continue;
-            }
-            throw e;
-        }
-    }
+let transporter = null;
+async function sendEmail({ to, subject, text, html }) {
+	if (CAPTURE_FILE) {
+		await appendFile(CAPTURE_FILE, `${JSON.stringify({ to, subject, text, html, at: new Date().toISOString() })}\n`);
+		return { captured: true };
+	}
+	if (!transporter) {
+		const { SMTP_HOST: host, SMTP_USER: user, SMTP_PASS: pass } = process.env;
+		const port = Number(process.env.SMTP_PORT) || undefined;
+		if (!host || !port || !user || !pass) throw new Error("SMTP not configured");
+		transporter = nodemailer.createTransport({ host, port, secure: port === 465, auth: { user, pass } });
+		transporter.verify().catch((e) => log.warn("SMTP verify failed (sending is still tried):", e?.message || e));
+	}
+	for (let attempt = 1; ; attempt++) {
+		try {
+			return await transporter.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, text, html });
+		} catch (e) {
+			const authError = e && (e.code === "EAUTH" || e.responseCode === 535 || e.responseCode === 534);
+			if (authError || attempt >= 3) throw e;
+			await new Promise((r) => setTimeout(r, 200 * 2 ** (attempt - 1)));
+		}
+	}
 }
 
-// POST /send-code -> sends a 6-digit code to the given email
-router.post('/send-code', async (req, res) => {
-    const { email, identifier, username } = req.body || {};
-    // Invalid formats should behave like unknown accounts so the response does not leak account existence.
-    if (email && typeof email === 'string' && !EMAIL_RE.test(String(email).trim())) {
-        return res.json({ success: true });
-    }
-    const rawTarget = email || identifier || username || '';
-    if (typeof rawTarget !== 'string' || !rawTarget.trim()) return res.status(400).json({ error: 'Email or username required' });
-    let target = rawTarget.trim();
-    try {
-        // If a username was provided, resolve to the user's email
-        let sendTo = target;
-        if (!/@/.test(sendTo)) {
-            try {
-                const user = await findUserByUsername(sendTo, { isDeleted: false });
-                if (!user || !user.email) {
-                    // Don't reveal whether the username exists; return success
-                    return res.json({ success: true });
-                }
-                sendTo = user.email;
-            } catch (e) {
-                // On DB errors, fail safely
-                console.error('send-code username lookup failed', e && e.message ? e.message : e);
-                return res.status(500).json({ error: 'Server error' });
-            }
-        }
+function publicUser(u) {
+	return {
+		id: u.id,
+		name: u.name,
+		username: u.username,
+		email: u.email,
+		bio: u.bio || "",
+		profilePics: u.profilePics || [],
+		privacyOnline: u.privacyOnline,
+		privacyEmail: u.privacyEmail,
+		privacyProfile: u.privacyProfile,
+	};
+}
 
-        // If the resolved target looks like an email, ensure it has a basic
-        // valid format before attempting SMTP to avoid nodemailer throwing
-        // errors for obviously malformed addresses.
-        if (/@/.test(sendTo) && !EMAIL_RE.test(sendTo)) {
-            return res.json({ success: true });
-        }
+// ─── Email verification (sign-up) ─────────────────────────────────────────
+// The form answers the same way whether or not the address already has an
+// account (that one gets a "you already have an account" email instead of a
+// code), so sign-up cannot be used to find out who uses Rivo.
+router.post("/send-code", async (req, res) => {
+	const { email } = req.body || {};
+	if (!isEmail(email)) return res.status(400).json({ error: "Please enter a valid email address" });
+	const to = email.trim();
+	const key = normEmail(to);
+	try {
+		if (countSend(`ip:${req.ip}`) > SEND_LIMIT * 3 || countSend(key) > SEND_LIMIT) {
+			log.warn(`send-code limited: ${maskEmail(to)} ip=${req.ip}`);
+			return res.status(429).json({ error: "Too many verification attempts. Try later." });
+		}
 
-        // IP-based rate limiting is also needed to prevent abuse of the mail service.
-        const ipCount = await _incrementSendCount(`ip:${req.ip}`);
-        if (ipCount > VERIFICATION_SEND_LIMIT * 3) {
-            console.warn(`send-code ip rate limited: ip=${req.ip} count=${ipCount}`);
-            return res.status(429).json({ error: 'Too many verification attempts. Try later.' });
-        }
+		if (await isEmailTaken(key)) {
+			try {
+				const t = accountExistsEmail({ appName: config.appName, signInUrl: `${config.appUrl}/auth/`, resetUrl: `${config.appUrl}/auth/?forgot=1` });
+				await sendEmail({ to, subject: t.subject, text: t.text, html: t.html });
+				log.info(`sign-up attempt for an existing account: ${maskEmail(to)}`);
+			} catch (e) {
+				log.error("account-exists email failed", e?.message || e);
+				return res.status(500).json({ error: "Failed to send email" });
+			}
+			return res.json({ success: true });
+		}
 
-        // per-email rate limit
-        const sendCount = await _incrementSendCount(sendTo);
-        if (sendCount > VERIFICATION_SEND_LIMIT) {
-            const masked = _maskEmail(sendTo);
-            console.warn(`send-code rate limited: ${masked} ip=${req.ip} count=${sendCount}`);
-            return res.status(429).json({ error: 'Too many verification attempts. Try later.' });
-        }
-
-        const masked = _maskEmail(sendTo);
-        console.info(`send-code requested: ${masked} ip=${req.ip} ua=${req.headers['user-agent'] || ''} count=${sendCount}`);
-
-        const code = crypto.randomInt(100000, 1000000);
-        await _storeVerification(sendTo, code);
-
-        // send email via SMTP
-        try {
-            const tmpl = verificationEmail({
-                code,
-                email: sendTo,
-                appName: process.env.APP_NAME || 'Rivo',
-                expiresMinutes: Math.max(1, Math.floor(VERIFICATION_TTL_MS / 60000)),
-            });
-            await _sendEmail({ to: sendTo, subject: tmpl.subject, text: tmpl.text, html: tmpl.html });
-            console.info(`verification email sent: ${masked} ip=${req.ip}`);
-        } catch (e) {
-            console.error('failed to send verification email', e && e.message ? e.message : e);
-            // cleanup stored code
-            await _clearVerification(sendTo);
-            return res.status(500).json({ error: 'Failed to send email' });
-        }
-
-        return res.json({ success: true });
-    } catch (e) {
-        console.error('send-code failed', e && e.message ? e.message : e);
-        return res.status(500).json({ error: 'Server error' });
-    }
+		const code = crypto.randomInt(100000, 1000000);
+		await prisma.emailVerification.deleteMany({ where: { email: key, verifiedAt: null } });
+		await prisma.emailVerification.create({ data: { email: key, codeHash: hashCode(code), expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS) } });
+		try {
+			const t = verificationEmail({ code, email: to, appName: config.appName, expiresMinutes: Math.max(1, Math.floor(VERIFICATION_TTL_MS / 60000)) });
+			await sendEmail({ to, subject: t.subject, text: t.text, html: t.html });
+			log.info(`verification email sent: ${maskEmail(to)}`);
+		} catch (e) {
+			log.error("verification email failed", e?.message || e);
+			await prisma.emailVerification.deleteMany({ where: { email: key, verifiedAt: null } });
+			return res.status(500).json({ error: "Failed to send email" });
+		}
+		return res.json({ success: true });
+	} catch (e) {
+		log.error("send-code failed", e?.message || e);
+		return res.status(500).json({ error: "Server error" });
+	}
 });
 
-// POST /verify-code -> verify that a code matches for the given email
-router.post('/verify-code', async (req, res) => {
-    const { email, code } = req.body || {};
-    if (!email || !code) return res.status(400).json({ error: 'Missing fields' });
-    try {
-        const entry = await _getVerification(email);
-        if (!entry) return res.status(400).json({ error: 'Invalid or expired code' });
-
-        const attempts = entry.attempts || 0;
-        if (attempts >= VERIFICATION_MAX_ATTEMPTS) {
-            await _clearVerification(email);
-            return res.status(429).json({ error: 'Too many attempts. Request a new verification code.' });
-        }
-
-        if (entry.codeHash !== _hashCode(code)) {
-            await prisma.emailVerification.update({
-                where: { id: entry.id },
-                data: { attempts: { increment: 1 } },
-            });
-            return res.status(400).json({ error: 'Invalid code' });
-        }
-
-        await prisma.emailVerification.update({
-            where: { id: entry.id },
-            data: { verifiedAt: new Date(), expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS) },
-        });
-        console.info(`verify-code success: ${_maskEmail(email)} ip=${req.ip}`);
-        return res.json({ success: true });
-    } catch (e) {
-        console.error('verify-code failed', e && e.message ? e.message : e);
-        return res.status(500).json({ error: 'Server error' });
-    }
+router.post("/verify-code", async (req, res) => {
+	const { email, code } = req.body || {};
+	if (!isEmail(email) || (typeof code !== "string" && typeof code !== "number") || !/^\d{6}$/.test(String(code).trim())) {
+		return res.status(400).json({ error: "Invalid or expired code" });
+	}
+	try {
+		const key = normEmail(email);
+		const entry = await prisma.emailVerification.findFirst({
+			where: { email: key, verifiedAt: null, expiresAt: { gt: new Date() } },
+			orderBy: { id: "desc" },
+		});
+		if (!entry) return res.status(400).json({ error: "Invalid or expired code" });
+		// every guess uses up one try first, in a single step, so many guesses
+		// sent at the same moment cannot all slip under the limit
+		const claimed = await prisma.emailVerification.updateMany({
+			where: { id: entry.id, attempts: { lt: MAX_ATTEMPTS } },
+			data: { attempts: { increment: 1 } },
+		});
+		if (claimed.count === 0) {
+			await prisma.emailVerification.deleteMany({ where: { email: key, verifiedAt: null } });
+			return res.status(429).json({ error: "Too many attempts. Request a new verification code." });
+		}
+		const ok = crypto.timingSafeEqual(Buffer.from(entry.codeHash), Buffer.from(hashCode(String(code).trim())));
+		if (!ok) return res.status(400).json({ error: "Invalid code" });
+		await prisma.emailVerification.update({
+			where: { id: entry.id },
+			data: { verifiedAt: new Date(), expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS) },
+		});
+		return res.json({ success: true });
+	} catch (e) {
+		log.error("verify-code failed", e?.message || e);
+		return res.status(500).json({ error: "Server error" });
+	}
 });
 
-// POST /check-availability -> lets the sign-up form say "username taken"
-// before a verification code is sent, instead of after the whole flow.
-router.post('/check-availability', async (req, res) => {
-    const { email, username } = req.body || {};
-    try {
-        const count = await _incrementSendCount(`avail:${req.ip}`);
-        if (count > 60) return res.status(429).json({ error: 'Too many attempts. Try later.' });
-        const result = { emailTaken: false, usernameTaken: false };
-        if (typeof email === 'string' && EMAIL_RE.test(email.trim())) result.emailTaken = await isEmailTaken(email);
-        if (typeof username === 'string' && USERNAME_RE.test(username.trim())) result.usernameTaken = await isUsernameTaken(username);
-        return res.json(result);
-    } catch (e) {
-        console.error('check-availability failed', e && e.message ? e.message : e);
-        return res.status(500).json({ error: 'Server error' });
-    }
+// The sign-up form says a username is taken before a code is sent (usernames
+// are public anyway). Email addresses are never checked here: see send-code.
+router.post("/check-availability", async (req, res) => {
+	const { username } = req.body || {};
+	try {
+		if (countSend(`avail:${req.ip}`) > 60) return res.status(429).json({ error: "Too many attempts. Try later." });
+		const result = { usernameTaken: false };
+		if (typeof username === "string" && USERNAME_RE.test(username.trim())) result.usernameTaken = await isUsernameTaken(username);
+		return res.json(result);
+	} catch (e) {
+		log.error("check-availability failed", e?.message || e);
+		return res.status(500).json({ error: "Server error" });
+	}
 });
 
-// ─── Register ─────────────────────────────────────────────────────────────────
+// ─── Register ─────────────────────────────────────────────────────────────
 router.post("/register", async (req, res) => {
-    const { name, email, username, password } = req.body || {};
+	const { name, email, username, password } = req.body || {};
+	if (!name || !email || !username || !password) return res.status(400).json({ error: "All fields are required" });
+	if ([name, email, username, password].some((v) => typeof v !== "string")) return res.status(400).json({ error: "Invalid fields" });
+	const cleanName = name.trim();
+	const cleanUsername = username.trim();
+	if (cleanName.length < 2 || cleanName.length > 100) return res.status(400).json({ error: "Name must be between 2 and 100 characters" });
+	if (!isEmail(email)) return res.status(400).json({ error: "Please enter a valid email address" });
+	if (!USERNAME_RE.test(cleanUsername)) return res.status(400).json({ error: "Username must be 3-30 letters, numbers or underscores" });
+	if (password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters" });
+	if (password.length > config.maxPasswordLength) return res.status(400).json({ error: "Password is too long" });
 
-    if (!name || !email || !username || !password) {
-        return res.status(400).json({ error: "All fields are required" });
-    }
-    if (typeof name !== "string" || typeof email !== "string" || typeof username !== "string" || typeof password !== "string") {
-        return res.status(400).json({ error: "Invalid fields" });
-    }
-    const cleanName = name.trim();
-    const cleanUsername = username.trim();
-    if (cleanName.length < 2 || cleanName.length > 100) {
-        return res.status(400).json({ error: "Name must be between 2 and 100 characters" });
-    }
-    if (!EMAIL_RE.test(email.trim())) {
-        return res.status(400).json({ error: "Please enter a valid email address" });
-    }
-    if (password.length > MAX_PASSWORD_LENGTH) {
-        return res.status(400).json({ error: "Password is too long" });
-    }
+	try {
+		const key = normEmail(email);
+		const verification = await prisma.emailVerification.findFirst({
+			where: { email: key, verifiedAt: { not: null }, consumedAt: null, expiresAt: { gt: new Date() } },
+			orderBy: { id: "desc" },
+		});
+		if (!verification) return res.status(403).json({ error: "Email not verified" });
+		if (await isEmailTaken(key)) return res.status(409).json({ error: "This email is already taken" });
+		if (await isUsernameTaken(cleanUsername)) return res.status(409).json({ error: "This username is already taken" });
 
-    try {
-        const normEmail = _normEmail(email);
-        const verification = await prisma.emailVerification.findFirst({
-            where: { email: normEmail, verifiedAt: { not: null }, consumedAt: null, expiresAt: { gt: new Date() } },
-            orderBy: { id: "desc" },
-        });
-        if (!verification) {
-            return res.status(403).json({ error: 'Email not verified' });
-        }
-
-        // Basic server-side username format validation to prevent invalid or
-        // potentially dangerous usernames (spaces, XSS payloads, etc.).
-        if (!USERNAME_RE.test(cleanUsername)) {
-            return res.status(400).json({ error: 'Username must be 3-30 alphanumeric characters or underscore' });
-        }
-		// Usernames and emails are unique regardless of letter case
-		if (await isEmailTaken(normEmail)) {
-			return res.status(409).json({ error: "This email is already taken" });
-		}
-		if (await isUsernameTaken(cleanUsername)) {
-			return res.status(409).json({ error: "This username is already taken" });
-		}
-
-        // Enforce minimum password length for registration to match change-password rules
-        if (typeof password !== 'string' || password.length < 8) {
-            return res.status(400).json({ error: 'Password must be at least 8 characters' });
-        }
-
-        const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-
-		// All steps must succeed together: otherwise a user can be left without saved messages.
+		const passwordHash = await bcrypt.hash(password, config.bcryptRounds);
 		let user;
 		try {
+			// the account and its Saved Messages chat are created together
 			user = await prisma.$transaction(async (tx) => {
-				const created = await tx.user.create({
-					data: { name: cleanName, email: normEmail, username: cleanUsername, passwordHash },
-				});
-				const savedConv = await tx.conversation.create({
-					data: {
-						members: { create: [{ userId: created.id }] },
-					},
-				});
-				await tx.contact.create({
-					data: {
-						ownerId: created.id,
-						contactId: created.id,
-						conversationId: savedConv.id,
-						isSaved: true,
-					},
-				});
+				const created = await tx.user.create({ data: { name: cleanName, email: key, username: cleanUsername, passwordHash } });
+				const saved = await tx.conversation.create({ data: { members: { create: [{ userId: created.id }] } } });
+				await tx.contact.create({ data: { ownerId: created.id, contactId: created.id, conversationId: saved.id, isSaved: true } });
 				return created;
 			});
 		} catch (e) {
-			// someone took the same email/username at the same moment
-			if (e && e.code === "P2002") return res.status(409).json({ error: "This email or username is already taken" });
+			if (e?.code === "P2002") return res.status(409).json({ error: "This email or username is already taken" });
 			throw e;
 		}
-
-        // consume verified marker so it can't be reused
-        await prisma.emailVerification
-            .update({ where: { id: verification.id }, data: { consumedAt: new Date() } })
-            .catch((e) => console.warn('failed to consume verification', e?.message || e));
-
+		await prisma.emailVerification
+			.update({ where: { id: verification.id }, data: { consumedAt: new Date() } })
+			.catch((e) => log.warn("failed to consume verification", e?.message || e));
 		return res.status(201).json({ success: true, userId: user.id });
-	} catch (err) {
-        console.error(err);
-        return res.status(500).json({ error: "Server error" });
-    }
+	} catch (e) {
+		log.error("register failed", e);
+		return res.status(500).json({ error: "Server error" });
+	}
 });
 
-// ─── Login ────────────────────────────────────────────────────────────────────
+// ─── Login / logout ───────────────────────────────────────────────────────
 router.post("/login", async (req, res) => {
-    const { identifier, password } = req.body || {};
-
-    if (!identifier || !password || typeof identifier !== "string" || typeof password !== "string") {
-        return res.status(400).json({ error: "All fields are required" });
-    }
-
-    try {
-        // Email or username, letter case does not matter
-        const user = await findUserByIdentifier(identifier, { isDeleted: false });
-
-        if (!user) {
-            // Mitigate timing attacks by performing a bcrypt work factor
-            // so responses for missing users take similar time to existing ones.
-            try {
-                await bcrypt.hash(password, BCRYPT_ROUNDS);
-            } catch (e) {
-                // ignore hashing errors; we still want to return generic 401
-            }
-            return res.status(401).json({ error: "Invalid credentials" });
-        }
-
-        const match = await bcrypt.compare(password, user.passwordHash);
-
-        if (!match) {
-            return res.status(401).json({ error: "Invalid credentials" });
-        }
-
-        if (!process.env.JWT_SECRET) {
-            console.error('JWT_SECRET not set at login time');
-            return res.status(500).json({ error: 'Server misconfiguration' });
-        }
-
-        const token = jwt.sign(
-            { userId: user.id },
-            process.env.JWT_SECRET,
-            { expiresIn: "7d" }
-        );
-
-        // Set HttpOnly cookie so clients can opt into cookie-based auth.
-        try {
-            res.cookie("token", token, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === "production",
-                sameSite: "lax",
-                maxAge: 7 * 24 * 60 * 60 * 1000,
-            });
-            // Also set a non-HttpOnly CSRF token cookie (double-submit pattern)
-            const csrfToken = crypto.randomBytes(24).toString("hex");
-            res.cookie("csrfToken", csrfToken, {
-                httpOnly: false,
-                secure: process.env.NODE_ENV === "production",
-                sameSite: "lax",
-                maxAge: 7 * 24 * 60 * 60 * 1000,
-            });
-        } catch (e) {
-            // ignore cookie set errors
-        }
-
-        // Don't return the JWT in the JSON response to avoid accidental client-side storage.
-        return res.json({
-            success: true,
-            user: {
-                id: user.id,
-                name: user.name,
-                username: user.username,
-                email: user.email,
-                bio: user.bio,
-                profilePics: user.profilePics,
-            },
-        });
-    } catch (err) {
-        console.error(err);
-        return res.status(500).json({ error: "Server error" });
-    }
+	const { identifier, password } = req.body || {};
+	if (!identifier || !password || typeof identifier !== "string" || typeof password !== "string") {
+		return res.status(400).json({ error: "All fields are required" });
+	}
+	try {
+		const user = password.length <= config.maxPasswordLength ? await findUserByIdentifier(identifier, { isDeleted: false }) : null;
+		if (!user) {
+			// the same work as a real check, so timing does not reveal accounts
+			await bcrypt.hash(password.slice(0, config.maxPasswordLength), config.bcryptRounds).catch(() => {});
+			return res.status(401).json({ error: "Invalid credentials" });
+		}
+		if (!(await bcrypt.compare(password, user.passwordHash))) return res.status(401).json({ error: "Invalid credentials" });
+		await startSession(res, user.id, req.get("user-agent"));
+		return res.json({ success: true, user: publicUser(user) });
+	} catch (e) {
+		log.error("login failed", e);
+		return res.status(500).json({ error: "Server error" });
+	}
 });
 
-// ─── Logout ───────────────────────────────────────────────────────────────────
 router.post("/logout", async (req, res) => {
-    // Stop notifications on THIS device only (the browser sends its own push
-    // endpoint); the user's other devices stay signed in and keep theirs.
-    try {
-        const token = req.cookies?.token;
-        const endpoint = req.body && typeof req.body.endpoint === "string" ? req.body.endpoint : null;
-        if (token && endpoint) {
-            try {
-                const payload = jwt.verify(token, process.env.JWT_SECRET);
-                if (payload?.userId) await push.removeSubscriptionByEndpoint(payload.userId, endpoint);
-            } catch (e) { /* invalid token */ }
-        }
-    } catch (e) { /* ignore */ }
-
-    // Clear cookie-based tokens
-    res.clearCookie("token");
-    res.clearCookie("csrfToken");
-    return res.json({ success: true });
+	try {
+		const payload = readToken(tokenFromRequest(req));
+		const session = payload ? await loadSession(payload).catch(() => null) : null;
+		if (session) {
+			// this device's notifications stop (they belong to its session; an
+			// endpoint from before sessions existed is removed by its address)
+			const endpoint = typeof req.body?.endpoint === "string" ? req.body.endpoint : null;
+			if (endpoint) await push.removeSubscriptionByEndpoint(session.userId, endpoint);
+			await revokeSession(session.id);
+		}
+	} catch (e) {
+		log.warn("logout cleanup failed", e?.message || e);
+	}
+	clearSessionCookies(res);
+	return res.json({ success: true });
 });
+
+// ─── Password reset by email ──────────────────────────────────────────────
+async function issueResetLink(user) {
+	const rawToken = crypto.randomBytes(32).toString("hex");
+	await prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
+	await prisma.passwordResetToken.create({
+		data: {
+			userId: user.id,
+			tokenHash: crypto.createHash("sha256").update(rawToken).digest("hex"),
+			expiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS),
+		},
+	});
+	const link = `${config.appUrl}/reset-password.html?token=${encodeURIComponent(rawToken)}`;
+	await sendEmail({
+		to: user.email,
+		subject: `Reset your ${config.appName} password`,
+		text: `Use this link to reset your password: ${link}`,
+		html: resetPasswordEmail({ link, appName: config.appName, expiresMinutes: Math.max(1, Math.floor(RESET_TOKEN_TTL_MS / 60000)) }),
+	});
+}
 
 router.post("/request-password-reset", async (req, res) => {
-    const { identifier } = req.body || {};
+	const { identifier } = req.body || {};
+	try {
+		// signed in (Settings → "Send reset email"): the session says who it is,
+		// and a failure to send can be reported
+		const session = await sessionOfRequest(req);
+		if (session) {
+			const me = await prisma.user.findUnique({ where: { id: session.userId } });
+			if (!me || me.isDeleted) return res.status(401).json({ error: "Unauthorized" });
+			if (countSend(`reset:${me.id}`) > SEND_LIMIT) return res.status(429).json({ error: "Too many reset emails. Try later." });
+			await issueResetLink(me);
+			return res.json({ success: true });
+		}
 
-    try {
-        let user = null;
-
-        // اگر کاربر وارد سیستم است، هویتش از کوکی گرفته می‌شود و نیازی
-        // به فرستادن ایمیل نیست (که در localStorage هم ذخیره نمی‌شود)
-        const token = req.cookies?.token;
-        if (token) {
-            try {
-                const payload = jwt.verify(token, process.env.JWT_SECRET);
-                if (payload?.userId) {
-                    user = await prisma.user.findUnique({ where: { id: payload.userId } });
-                }
-            } catch (e) {
-                /* توکن نامعتبر: ادامه با identifier */
-            }
-        }
-
-        if (!user) {
-            const rawIdentifier = typeof identifier === "string" ? identifier.trim() : "";
-            if (!rawIdentifier) {
-                return res.status(400).json({ error: "Missing identifier" });
-            }
-            // email or username, letter case does not matter
-            user = await findUserByIdentifier(rawIdentifier);
-        }
-
-        if (!user || user.isDeleted) {
-            return res.json({ success: true });
-        }
-
-        // Do not let anyone flood an inbox with reset emails (the answer stays
-        // the same so it does not reveal whether the account exists)
-        const resetCount = await _incrementSendCount(`reset:${user.id}`);
-        const resetIpCount = await _incrementSendCount(`reset-ip:${req.ip}`);
-        if (resetCount > VERIFICATION_SEND_LIMIT || resetIpCount > VERIFICATION_SEND_LIMIT * 3) {
-            console.warn(`password reset rate limited: user=${user.id} ip=${req.ip}`);
-            return res.json({ success: true });
-        }
-
-        const rawToken = crypto.randomBytes(32).toString("hex");
-        const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
-        const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
-
-        await prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
-        await prisma.passwordResetToken.create({
-            data: {
-                userId: user.id,
-                tokenHash,
-                expiresAt,
-            },
-        });
-
-        const appUrl = (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
-        const resetLink = `${appUrl}/reset-password.html?token=${encodeURIComponent(rawToken)}`;
-
-        await _sendEmail({
-            to: user.email,
-            subject: "Reset your Rivo password",
-            text: `Use this link to reset your password: ${resetLink}`,
-            html: resetPasswordEmail({
-                link: resetLink,
-                appName: process.env.APP_NAME || "Rivo",
-                expiresMinutes: Math.max(1, Math.floor(RESET_TOKEN_TTL_MS / 60000)),
-            }),
-        });
-
-        return res.json({ success: true });
-    } catch (e) {
-        console.error("request-password-reset failed", e && e.message ? e.message : e);
-        return res.status(500).json({ error: "Failed to send reset email" });
-    }
+		const raw = typeof identifier === "string" ? identifier.trim() : "";
+		if (!raw || raw.length > 254) return res.status(400).json({ error: "Missing identifier" });
+		const user = await findUserByIdentifier(raw);
+		// The answer never reveals whether the account exists, not even by how
+		// long it takes: it is sent before any of the work for a real account.
+		res.json({ success: true });
+		if (!user || user.isDeleted) return;
+		if (countSend(`reset:${user.id}`) > SEND_LIMIT || countSend(`reset-ip:${req.ip}`) > SEND_LIMIT * 3) {
+			log.warn(`password reset limited: user=${user.id} ip=${req.ip}`);
+			return;
+		}
+		issueResetLink(user).catch((e) => log.error("password reset email failed", e?.message || e));
+	} catch (e) {
+		log.error("request-password-reset failed", e?.message || e);
+		if (!res.headersSent) return res.status(500).json({ error: "Failed to send reset email" });
+	}
 });
 
 router.post("/reset-password-with-token", async (req, res) => {
-    const { token, newPassword } = req.body || {};
-    if (!token || typeof token !== "string" || !newPassword || typeof newPassword !== "string" || newPassword.length < 8) {
-        return res.status(400).json({ error: "Missing or invalid fields" });
-    }
-    if (newPassword.length > MAX_PASSWORD_LENGTH) {
-        return res.status(400).json({ error: "Password is too long" });
-    }
-
-    try {
-        const rawToken = String(token).trim();
-        const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
-        const resetToken = await prisma.passwordResetToken.findFirst({
-            where: {
-                tokenHash,
-                usedAt: null,
-                expiresAt: { gt: new Date() },
-            },
-            include: { user: true },
-        });
-
-        if (!resetToken || !resetToken.user || resetToken.user.isDeleted) {
-            return res.status(400).json({ error: "Invalid or expired reset token" });
-        }
-
-        const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-        await prisma.$transaction([
-            prisma.passwordResetToken.deleteMany({ where: { userId: resetToken.user.id } }),
-            prisma.user.update({
-                where: { id: resetToken.user.id },
-                data: {
-                    passwordHash,
-                    passwordChangedAt: new Date(),
-                },
-            }),
-        ]);
-
-        // Every old session ends: sign in again with the new password. Their
-        // notifications stop as well (browsers subscribe again on sign-in).
-        disconnectUserSockets(resetToken.user.id);
-        await push.removeAllSubscriptions(resetToken.user.id);
-
-        try {
-            res.clearCookie("token");
-            res.clearCookie("csrfToken");
-        } catch (e) {
-            // ignore cookie clear errors
-        }
-
-        return res.json({ success: true });
-    } catch (e) {
-        console.error("reset-password-with-token failed", e && e.message ? e.message : e);
-        return res.status(500).json({ error: "Server error" });
-    }
+	const { token, newPassword } = req.body || {};
+	if (typeof token !== "string" || !token || typeof newPassword !== "string" || newPassword.length < 8) {
+		return res.status(400).json({ error: "Missing or invalid fields" });
+	}
+	if (newPassword.length > config.maxPasswordLength) return res.status(400).json({ error: "Password is too long" });
+	try {
+		const tokenHash = crypto.createHash("sha256").update(token.trim()).digest("hex");
+		const reset = await prisma.passwordResetToken.findFirst({
+			where: { tokenHash, usedAt: null, expiresAt: { gt: new Date() } },
+			include: { user: true },
+		});
+		if (!reset?.user || reset.user.isDeleted) return res.status(400).json({ error: "Invalid or expired reset token" });
+		const passwordHash = await bcrypt.hash(newPassword, config.bcryptRounds);
+		await prisma.$transaction([
+			prisma.passwordResetToken.deleteMany({ where: { userId: reset.user.id } }),
+			prisma.user.update({ where: { id: reset.user.id }, data: { passwordHash, passwordChangedAt: new Date() } }),
+		]);
+		// every device signs in again with the new password
+		await revokeAllSessions(reset.user.id);
+		clearSessionCookies(res);
+		return res.json({ success: true });
+	} catch (e) {
+		log.error("reset-password-with-token failed", e?.message || e);
+		return res.status(500).json({ error: "Server error" });
+	}
 });
 
 export default router;

@@ -17,7 +17,7 @@ model User {
   isOnline     Boolean   @default(false)
   lastSeen     DateTime?
   privacyOnline  String @default("everyone")
-  privacyEmail   String @default("everyone")
+  privacyEmail   String @default("contacts")
   privacyProfile String @default("everyone")
   passwordChangedAt DateTime?
   isDeleted      Boolean  @default(false)
@@ -31,6 +31,24 @@ model User {
   conversations  ConversationMember[]
   reactions      MessageReaction[]
   passwordResets PasswordResetToken[]
+  sessions       Session[]
+}
+
+// One signed-in device. The session cookie carries a JWT that names it, so a
+// device can be signed out on its own (and right away) by revoking its row.
+model Session {
+  id         String    @id
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     Int
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  userAgent  String?
+
+  pushSubscriptions PushSubscription[]
+
+  @@index([userId])
 }
 
 model PasswordResetToken {
@@ -73,17 +91,26 @@ model Contact {
   isBlocked      Boolean      @default(false)
   isArchived     Boolean      @default(false)
   isSaved        Boolean      @default(false)
+  // false for a row the server made on its own (the other person added this
+  // user, or wrote after being removed) until the owner writes in the chat
+  // or names the person: only then do they count as "my contacts" for the
+  // privacy settings
+  addedByOwner   Boolean      @default(true)
   unreadCount    Int          @default(0)
   conversation   Conversation @relation(fields: [conversationId], references: [id])
   conversationId Int
+  // a person is in someone's list once; one Saved Messages per user (its
+  // row names the owner themselves)
+  @@unique([ownerId, contactId, isSaved])
   @@index([conversationId])
   @@index([ownerId])
 }
 
 model Conversation {
   id            Int                  @id @default(autoincrement())
-  // Deterministic participants key (sorted user ids) to enforce a unique
-  // conversation per participant set. Add a migration after this change.
+  // Sorted member ids, from an older version; the server no longer sets it
+  // (only server/scripts/seed_test_contacts.js does). Kept so no migration
+  // has to drop it.
   participantsKey String?            @unique
   createdAt     DateTime             @default(now())
   lastMessageAt DateTime?
@@ -98,6 +125,7 @@ model ConversationMember {
   userId         Int
   conversation   Conversation @relation(fields: [conversationId], references: [id])
   conversationId Int
+  @@unique([conversationId, userId])
   @@index([conversationId])
 }
 
@@ -123,24 +151,35 @@ model Message {
   isTimeCapsule  Boolean      @default(false)
   scheduledFor   DateTime?
   openedAt       DateTime?
+  // id the sending device gave the message, so a retried send is stored once
+  clientId       String?
   replyToId      Int?
   replyToName    String?
   replyToText    String?
   forwardedFrom  String?
   forwardedText  String?
   createdAt      DateTime     @default(now())
+  // every change (edit, delete, seen, pin, reaction, capsule opening) moves it,
+  // so a client can ask for "what changed since" after being offline
+  updatedAt      DateTime     @updatedAt
   reactions      MessageReaction[]
+  @@unique([senderId, clientId])
   @@index([conversationId])
   // pages of a chat (newest first, by time then id)
   @@index([conversationId, createdAt, id])
   // the time-capsule job looks for due capsules every 30 seconds
   @@index([isTimeCapsule, scheduledFor])
+  // changes of a chat since a moment (sync after a reconnect)
+  @@index([conversationId, updatedAt])
 }
 
 model PushSubscription {
   id        Int      @id @default(autoincrement())
   user      User     @relation(fields: [userId], references: [id])
   userId    Int
+  // the signed-in device it belongs to: signing that device out stops them
+  session   Session? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId String?
   endpoint  String   @unique
   p256dh    String
   auth      String
@@ -148,6 +187,7 @@ model PushSubscription {
   createdAt DateTime @default(now())
   lastUsed  DateTime?
   @@index([userId])
+  @@index([sessionId])
 }
 
 model MessageReaction {

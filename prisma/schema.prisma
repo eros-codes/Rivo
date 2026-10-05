@@ -108,10 +108,6 @@ model Contact {
 
 model Conversation {
   id            Int                  @id @default(autoincrement())
-  // Sorted member ids, from an older version; the server no longer sets it
-  // (only server/scripts/seed_test_contacts.js does). Kept so no migration
-  // has to drop it.
-  participantsKey String?            @unique
   createdAt     DateTime             @default(now())
   lastMessageAt DateTime?
   members       ConversationMember[]
@@ -135,9 +131,8 @@ model Message {
   conversationId Int
   sender         User         @relation(fields: [senderId], references: [id])
   senderId       Int
-  // legacy plaintext (nullable during migration)
-  text           String?
-  // encrypted fields (DEK/KEK envelope encryption)
+  // the text, encrypted (DEK/KEK envelope encryption: server/ENCRYPTION.md);
+  // a deleted message keeps none of it
   ciphertext     String?
   iv             String?
   auth_tag       String?
@@ -155,6 +150,7 @@ model Message {
   clientId       String?
   replyToId      Int?
   replyToName    String?
+  // the quoted / forwarded text, sealed with this message's own DEK
   replyToText    String?
   forwardedFrom  String?
   forwardedText  String?

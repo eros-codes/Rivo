@@ -121,8 +121,9 @@ test("too many changes → reset", { timeout: 60_000 }, async () => {
 	const row = (await a.get("/api/contacts")).data.find((c) => c.isSaved);
 	const cursor = new Date(Date.now() - 60_000).toISOString();
 	const many = [];
+	// (deleted ones: a change like any other, and no keys needed to write them)
 	for (let i = 0; i < 501; i++) {
-		many.push({ conversationId: conv(row), senderId: a.me.id, text: `x${i}` });
+		many.push({ conversationId: conv(row), senderId: a.me.id, isDeleted: true });
 	}
 	await a.db("message", "createMany", { data: many });
 	const ch = (await a.get(`/api/conversations/${conv(row)}/changes?since=${encodeURIComponent(cursor)}`)).data;

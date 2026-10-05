@@ -5,13 +5,16 @@ import type { Message } from "@prisma/client";
 import prisma from "../prisma.ts";
 import push from "../utils/push.ts";
 import { config } from "../config.ts";
-import { generateDEK, encryptMessage, wrapDEK } from "../utils/encryption.ts";
-import { parseId } from "../utils/validators.ts";
+import { generateDEK, encryptMessage, sealText, wrapDEK } from "../utils/encryption.ts";
+import type { DeleteMessagesData, EditMessageData, ForwardMessagesData, MarkSeenData, ReactData, SendMessageData } from "../../shared/schemas/messages.ts";
+import { CAPSULE_MAX_DELAY_MS, CAPSULE_MIN_DELAY_MS } from "../../shared/limits.ts";
 import { decryptAux, decryptBody, isCapsuleLocked, serializeMessage, type StoredMessage } from "../utils/messageView.ts";
 import { blockState, getMembersCached, getRecipientsCached, isMember, invalidateConversation, type Recipient } from "./caches.ts";
 import { deliverToConversation, emitToUser, hasVisibleSocket, isUserViewing } from "../realtime/registry.ts";
 import { emitContactUpsert } from "./contacts.ts";
 import { log } from "../utils/logger.ts";
+import { iso } from "../utils/wire.ts";
+import type { Deleted, Edited, Forwarded, Pinned, Reacted, Seen } from "../../shared/api.ts";
 import { codeOf, messageOf } from "../utils/errors.ts";
 
 /** Who acts: the user, and the device when it came over the socket (it gets the answer, not the event). */
@@ -23,12 +26,14 @@ export interface Actor {
 export interface Fail {
 	error: string;
 }
+/** What an action answers: done (and what it did), or why not. The socket
+ * acks and the REST answers of shared/ are checked against these. */
+export type Result<T = object> = Fail | ({ success: true } & T);
 /** A message as one user sees it. */
 export type MessageView = ReturnType<typeof serializeMessage>;
 
 const ACTIVE_KEY_ID = process.env.ACTIVE_KEY_ID || "v1";
 const MAX_LEN = config.messages.maxLength;
-const CLIENT_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
 export const ERR = {
 	invalid: "Invalid data",
@@ -41,7 +46,7 @@ export const ERR = {
 };
 
 /** HTTP status for an action's error. */
-export function statusFor(result: { error?: unknown } | null | undefined): number {
+export function statusFor(result: Fail): number {
 	const e = String(result?.error || "");
 	if (!e) return 200;
 	if (e === ERR.server) return 500;
@@ -56,7 +61,6 @@ export function statusFor(result: { error?: unknown } | null | undefined): numbe
 export const DELETED = {
 	isDeleted: true,
 	isPinned: false,
-	text: null,
 	ciphertext: null,
 	iv: null,
 	auth_tag: null,
@@ -64,11 +68,6 @@ export const DELETED = {
 	replyToText: null,
 	forwardedText: null,
 };
-
-function sealed(plain: string, dek: Buffer): string {
-	const r = encryptMessage(plain, dek);
-	return JSON.stringify({ c: r.ciphertext, iv: r.iv, t: r.authTag });
-}
 
 function cleanText(v: unknown): string | null {
 	return typeof v === "string" && v.trim() ? v.trim().slice(0, MAX_LEN) : null;
@@ -113,19 +112,8 @@ async function blockedError(convId: number, userId: number): Promise<string | nu
 /** Truncates to whole minutes (capsules are scheduled with minute precision). */
 const toMinute = (d: Date) => new Date(Math.floor(d.getTime() / 60000) * 60000);
 
-/** A send as the client asks for it (nothing in it is trusted). */
-export interface SendInput {
-	conversationId?: unknown;
-	text?: unknown;
-	forwardOf?: unknown;
-	isOneTime?: unknown;
-	isTimeCapsule?: unknown;
-	scheduledFor?: unknown;
-	clientId?: unknown;
-	/** (older clients) */
-	clientMessageId?: unknown;
-	replyToId?: unknown;
-}
+/** A send, already checked against SendMessage (shared/schemas/messages.ts). */
+export type SendInput = SendMessageData;
 
 /** A checked send: everything needed to store it. */
 interface Prepared {
@@ -146,39 +134,19 @@ interface Prepared {
 }
 
 /**
- * Validates a send and returns everything needed to store it, or { error }.
+ * The rest of a send's checks (the ones that need the database or the
+ * clock) and everything needed to store it, or { error }.
  */
 async function prepareSend(actor: Actor, data: SendInput): Promise<Prepared | Fail> {
-	const convId = parseId(data.conversationId);
-	if (!convId) return { error: "Invalid conversationId" };
-	// a forward names the message it copies; its text and author come from there
-	const forwardOf = data.forwardOf === undefined || data.forwardOf === null ? null : parseId(data.forwardOf);
-	if (data.forwardOf !== undefined && data.forwardOf !== null && !forwardOf) return { error: "Invalid forwardOf" };
-	let text = typeof data.text === "string" ? data.text.trim() : "";
-	if (!forwardOf && (!text || text.length > MAX_LEN)) return { error: ERR.invalid };
-	const isOneTime = data.isOneTime === true;
-	const isTimeCapsule = data.isTimeCapsule === true;
-	if (isOneTime && isTimeCapsule) return { error: ERR.invalid };
-	if (forwardOf && (isOneTime || isTimeCapsule)) return { error: ERR.invalid };
-	const clientId = data.clientId ?? data.clientMessageId ?? null;
-	if (clientId !== null && (typeof clientId !== "string" || !CLIENT_ID_RE.test(clientId))) return { error: "Invalid clientId" };
+	const { conversationId: convId, forwardOf, isOneTime, isTimeCapsule, clientId, replyToId } = data;
+	// (a forward's text and author come from the message it copies)
+	let text = data.text;
 
-	let replyToId = null;
-	if (data.replyToId !== undefined && data.replyToId !== null && data.replyToId !== "") {
-		replyToId = parseId(data.replyToId);
-		if (!replyToId) return { error: "Invalid replyToId" };
-	}
-
-	let scheduledFor = null;
-	if (isTimeCapsule) {
-		if (!data.scheduledFor) return { error: "scheduledFor required" };
-		const raw = new Date(data.scheduledFor as string | number | Date);
-		if (Number.isNaN(raw.getTime())) return { error: "scheduledFor invalid" };
-		const at = toMinute(raw);
-		const now = toMinute(new Date());
-		if (at < new Date(now.getTime() + 5 * 60_000) || at > new Date(now.getTime() + 365 * 24 * 60 * 60_000)) {
-			return { error: "scheduledFor out of range" };
-		}
+	let scheduledFor: Date | null = null;
+	if (isTimeCapsule && data.scheduledFor) {
+		const at = toMinute(data.scheduledFor);
+		const now = toMinute(new Date()).getTime();
+		if (at.getTime() < now + CAPSULE_MIN_DELAY_MS || at.getTime() > now + CAPSULE_MAX_DELAY_MS) return { error: "scheduledFor out of range" };
 		scheduledFor = at;
 	}
 
@@ -292,7 +260,6 @@ async function storeAndDeliver(actor: Actor, p: Prepared): Promise<SendResult> {
 			data: {
 				conversationId: p.convId,
 				senderId: actor.userId,
-				text: null,
 				ciphertext: body.ciphertext,
 				iv: body.iv,
 				auth_tag: body.authTag,
@@ -304,9 +271,9 @@ async function storeAndDeliver(actor: Actor, p: Prepared): Promise<SendResult> {
 				scheduledFor: p.scheduledFor,
 				replyToId: p.replyToId,
 				replyToName: p.replyToName,
-				replyToText: p.replyToText ? sealed(p.replyToText, dek) : null,
+				replyToText: p.replyToText ? sealText(p.replyToText, dek) : null,
 				forwardedFrom: p.forwardedFrom,
-				forwardedText: p.forwardedText ? sealed(p.forwardedText, dek) : null,
+				forwardedText: p.forwardedText ? sealText(p.forwardedText, dek) : null,
 			},
 		});
 	} catch (e) {
@@ -336,7 +303,11 @@ async function storeAndDeliver(actor: Actor, p: Prepared): Promise<SendResult> {
 
 	await deliverToConversation(p.convId, "message:new", null, {
 		exceptSocketId: actor.socketId ?? null,
-		perUser: (uid) => (uid === actor.userId ? own : serializeFor(message, uid, p.replyToSenderId)),
+		perUser: (uid) => {
+			const view = uid === actor.userId ? own : serializeFor(message, uid, p.replyToSenderId);
+			// (a message that was just stored is never deleted; the type cannot know)
+			return view.isDeleted ? undefined : view;
+		},
 	});
 
 	if (!p.isSelf) notifyRecipients(actor, p, message);
@@ -364,7 +335,7 @@ function notifyRecipients(actor: Actor, p: Prepared, message: Message): void {
 	})().catch((e: unknown) => log.error("push notify failed", messageOf(e) || e));
 }
 
-export async function sendMessageAs(actor: Actor, data: SendInput = {}): Promise<SendResult> {
+export async function sendMessageAs(actor: Actor, data: SendInput): Promise<SendResult> {
 	try {
 		const p = await prepareSend(actor, data);
 		if ("error" in p) return p;
@@ -379,18 +350,29 @@ export async function sendMessageAs(actor: Actor, data: SendInput = {}): Promise
  * Several forwarded messages in one go (selection forward). Stops at the first
  * refusal that applies to the whole chat (blocked, deleted account).
  */
-export async function forwardMessagesAs(actor: Actor, { conversationId, items }: { conversationId?: unknown; items?: unknown } = {}) {
-	if (!Array.isArray(items) || items.length === 0 || items.length > config.messages.batchMax) return { error: ERR.invalid };
+export async function forwardMessagesAs(
+	actor: Actor,
+	{ conversationId, items }: ForwardMessagesData,
+): Promise<Result<Forwarded> | ({ success: true; error: string } & Forwarded)> {
 	const messages: MessageView[] = [];
-	const failed: { clientId: unknown; error: string }[] = [];
-	for (const entry of items) {
-		const item = entry as { forwardOf?: unknown; clientId?: unknown } | null | undefined;
-		const result = await sendMessageAs(actor, { conversationId, forwardOf: item?.forwardOf ?? null, clientId: item?.clientId });
+	const failed: { clientId: string | null; error: string }[] = [];
+	for (const item of items) {
+		const clientId = item.clientId ?? null;
+		const result = await sendMessageAs(actor, {
+			conversationId,
+			forwardOf: item.forwardOf,
+			clientId,
+			text: "",
+			isOneTime: false,
+			isTimeCapsule: false,
+			replyToId: null,
+			scheduledFor: null,
+		});
 		if ("error" in result) {
-			if ([ERR.forbidden, ERR.gone, ERR.blockedByMe, ERR.blockedByOther, "Invalid conversationId"].includes(result.error)) {
+			if ([ERR.forbidden, ERR.gone, ERR.blockedByMe, ERR.blockedByOther].includes(result.error)) {
 				return messages.length ? { success: true, messages, failed: items.length - messages.length, error: result.error } : result;
 			}
-			failed.push({ clientId: item?.clientId ?? null, error: result.error });
+			failed.push({ clientId, error: result.error });
 			continue;
 		}
 		messages.push(result.message);
@@ -398,11 +380,7 @@ export async function forwardMessagesAs(actor: Actor, { conversationId, items }:
 	return { success: true, messages, failed: failed.length, failures: failed };
 }
 
-export async function editMessageAs(actor: Actor, { messageId, text }: { messageId?: unknown; text?: unknown } = {}) {
-	const msgId = parseId(messageId);
-	if (!msgId) return { error: "Invalid messageId" };
-	const plain = typeof text === "string" ? text.trim() : "";
-	if (!plain || plain.length > MAX_LEN) return { error: ERR.invalid };
+export async function editMessageAs(actor: Actor, { messageId: msgId, text: plain }: EditMessageData): Promise<Result<Edited>> {
 	try {
 		const message = await prisma.message.findUnique({ where: { id: msgId } });
 		if (!message || message.senderId !== actor.userId) return { error: ERR.forbidden };
@@ -421,12 +399,11 @@ export async function editMessageAs(actor: Actor, { messageId, text }: { message
 		const reseal = (value: string | null): string | null => {
 			if (!value) return value;
 			const old = decryptAux(value, oldDek, message.id);
-			return old === null || old === undefined ? null : sealed(old, dek);
+			return old === null || old === undefined ? null : sealText(old, dek);
 		};
 		const updated = await prisma.message.update({
 			where: { id: msgId },
 			data: {
-				text: null,
 				ciphertext: body.ciphertext,
 				iv: body.iv,
 				auth_tag: body.authTag,
@@ -441,10 +418,10 @@ export async function editMessageAs(actor: Actor, { messageId, text }: { message
 		await deliverToConversation(
 			message.conversationId,
 			"message:edited",
-			{ messageId: msgId, conversationId: message.conversationId, text: plain, isEdited: true, updatedAt: updated.updatedAt },
+			{ messageId: msgId, conversationId: message.conversationId, text: plain, isEdited: true, updatedAt: iso(updated.updatedAt) },
 			{ exceptSocketId: actor.socketId ?? null },
 		);
-		return { success: true, text: plain, updatedAt: updated.updatedAt };
+		return { success: true, text: plain, updatedAt: iso(updated.updatedAt) };
 	} catch (e) {
 		log.error("edit failed", e);
 		return { error: ERR.server };
@@ -467,9 +444,7 @@ export async function recomputeUnread(convId: number): Promise<void> {
 }
 
 /** Deletes the sender's own messages (one or many, of one conversation each). */
-export async function deleteMessagesAs(actor: Actor, { messageIds }: { messageIds?: unknown } = {}) {
-	const ids = Array.isArray(messageIds) ? [...new Set(messageIds.map(parseId).filter((id): id is number => id !== null))] : [];
-	if (ids.length === 0 || ids.length > config.messages.batchMax) return { error: ERR.invalid };
+export async function deleteMessagesAs(actor: Actor, { messageIds: ids }: DeleteMessagesData): Promise<Result<Deleted>> {
 	try {
 		const rows = await prisma.message.findMany({ where: { id: { in: ids } } });
 		if (rows.length !== ids.length || rows.some((m) => m.senderId !== actor.userId)) return { error: ERR.forbidden };
@@ -492,7 +467,7 @@ export async function deleteMessagesAs(actor: Actor, { messageIds }: { messageId
 				await deliverToConversation(
 					convId,
 					"message:deleted",
-					{ messageId: m.id, conversationId: convId, senderId: m.senderId, isSeen: !!m.isSeen, updatedAt: now },
+					{ messageId: m.id, conversationId: convId, senderId: m.senderId, isSeen: !!m.isSeen, updatedAt: iso(now) },
 					{ exceptSocketId: actor.socketId ?? null },
 				);
 			}
@@ -504,13 +479,7 @@ export async function deleteMessagesAs(actor: Actor, { messageIds }: { messageId
 	}
 }
 
-export function deleteMessageAs(actor: Actor, { messageId }: { messageId?: unknown } = {}) {
-	return deleteMessagesAs(actor, { messageIds: [messageId] });
-}
-
-export async function togglePinAs(actor: Actor, { messageId }: { messageId?: unknown } = {}) {
-	const msgId = parseId(messageId);
-	if (!msgId) return { error: "Invalid messageId" };
+export async function togglePinAs(actor: Actor, { messageId: msgId }: { messageId: number }): Promise<Result<Pinned>> {
 	try {
 		const message = await prisma.message.findUnique({ where: { id: msgId } });
 		if (!message || message.isDeleted) return { error: "Not found" };
@@ -527,7 +496,7 @@ export async function togglePinAs(actor: Actor, { messageId }: { messageId?: unk
 		await deliverToConversation(
 			message.conversationId,
 			"message:pinned",
-			{ messageId: msgId, conversationId: message.conversationId, isPinned: updated.isPinned, updatedAt: updated.updatedAt },
+			{ messageId: msgId, conversationId: message.conversationId, isPinned: updated.isPinned, updatedAt: iso(updated.updatedAt) },
 			{ exceptSocketId: actor.socketId ?? null },
 		);
 		return { success: true, isPinned: updated.isPinned };
@@ -537,9 +506,7 @@ export async function togglePinAs(actor: Actor, { messageId }: { messageId?: unk
 	}
 }
 
-export async function reactAs(actor: Actor, { messageId, emoji }: { messageId?: unknown; emoji?: unknown } = {}) {
-	const msgId = parseId(messageId);
-	if (!msgId || typeof emoji !== "string" || !emoji || emoji.length > 16 || /\s/.test(emoji)) return { error: ERR.invalid };
+export async function reactAs(actor: Actor, { messageId: msgId, emoji }: ReactData): Promise<Result<Reacted>> {
 	try {
 		const message = await prisma.message.findUnique({
 			where: { id: msgId },
@@ -553,7 +520,7 @@ export async function reactAs(actor: Actor, { messageId, emoji }: { messageId?: 
 
 		const key = { messageId_userId: { messageId: msgId, userId: actor.userId } };
 		const existing = await prisma.messageReaction.findUnique({ where: key });
-		let action;
+		let action: Reacted["action"];
 		if (existing && existing.emoji === emoji) {
 			await prisma.messageReaction.delete({ where: key });
 			action = "removed";
@@ -575,7 +542,7 @@ export async function reactAs(actor: Actor, { messageId, emoji }: { messageId?: 
 			actorId: actor.userId,
 			emoji,
 			action,
-			updatedAt: updated.updatedAt,
+			updatedAt: iso(updated.updatedAt),
 		});
 
 		// the author hears about it when the app is not open
@@ -605,11 +572,7 @@ export async function reactAs(actor: Actor, { messageId, emoji }: { messageId?: 
  * Marks the other person's messages as read, up to `upToId` (the newest
  * message this device has shown), and sets the reader's unread counter.
  */
-export async function markSeenAs(actor: Actor, { conversationId, upToId }: { conversationId?: unknown; upToId?: unknown } = {}) {
-	const convId = parseId(conversationId);
-	if (!convId) return { success: true, marked: [] };
-	const limit = upToId === undefined || upToId === null ? null : parseId(upToId);
-	if (upToId !== undefined && upToId !== null && !limit) return { error: ERR.invalid };
+export async function markSeenAs(actor: Actor, { conversationId: convId, upToId: limit }: MarkSeenData): Promise<Result<Seen>> {
 	try {
 		if (!(await isMember(convId, actor.userId))) return { error: ERR.forbidden };
 		const where = {
@@ -663,7 +626,7 @@ export async function cleanupSeenOneTime(userId: number, convId: number): Promis
 }
 
 /** Clears a whole conversation for both people. */
-export async function clearConversation(userId: number, convId: number, { upToId = null }: { upToId?: number | null } = {}) {
+export async function clearConversation(userId: number, convId: number, { upToId = null }: { upToId?: number | null } = {}): Promise<Result<{ upToId: number | null }>> {
 	// someone who was blocked cannot wipe the other person's copy of the chat
 	const others = (await getRecipientsCached(convId)).filter((r) => r.ownerId !== userId);
 	if (others.some((r) => r.isBlocked)) return { error: ERR.forbidden };

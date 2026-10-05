@@ -7,8 +7,8 @@ import { addContact } from "../../services/actions";
 import { closeDialog, openChat } from "../../services/navigation";
 import { session } from "../../state/stores";
 import { useUi } from "../selectors";
+import { USERNAME_PATTERN as USERNAME_RE } from "../../../../shared/limits.ts";
 
-const USERNAME_RE = /^[a-zA-Z0-9_]{3,30}$/;
 
 function AddContact() {
 	const myUsername = useStore(session, (s) => s.me?.username ?? "");

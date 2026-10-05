@@ -13,8 +13,10 @@ import { showToast } from "./feedback";
 import { serverNow } from "./clock";
 import * as realtime from "./realtime";
 import { stopTyping } from "./typing";
+import { MESSAGE_MAX_LENGTH } from "../../../shared/limits.ts";
 
-export const MAX_LENGTH = 1500;
+/** (the protocol's limit: shared/limits.ts) */
+export const MAX_LENGTH = MESSAGE_MAX_LENGTH;
 
 /** Answers that mean "try again later", not "no". */
 const TRANSIENT = new Set(["Server error", "Rate limit exceeded"]);

@@ -20,6 +20,7 @@ import { patchMe, setMe } from "../../services/session";
 import { contacts, session } from "../../state/stores";
 import { useUi } from "../selectors";
 import { ResponsivePanel } from "./ResponsivePanel";
+import { PASSWORD_MAX_LENGTH as PASSWORD_MAX, PASSWORD_MIN_LENGTH as PASSWORD_MIN } from "../../../../shared/limits.ts";
 
 type Section = "accent" | "wallpaper" | "privacyOnline" | "privacyEmail" | "privacyProfile" | "password";
 
@@ -32,7 +33,6 @@ const privacyLabel = (v: Privacy | undefined) => PRIVACY_OPTIONS.find((o) => o.v
 
 /** localStorage holds ~5M characters; the wallpaper takes at most half. */
 const WALLPAPER_MAX_CHARS = 2_500_000;
-const PASSWORD_MAX = 128;
 const RESET_COOLDOWN_MS = 30_000;
 /** survives closing Settings, so the button cannot be hammered */
 let resetCooldownUntil = 0;
@@ -290,7 +290,7 @@ function ChangePasswordForm({ me, onDone }: { me: Me; onDone: () => void }) {
 	const submit = async () => {
 		if (busy) return;
 		if (!current) return fail("Enter your current password.", currentRef);
-		if (next.length < 8) return fail("Your new password must be at least 8 characters.", nextRef);
+		if (next.length < PASSWORD_MIN) return fail(`Your new password must be at least ${PASSWORD_MIN} characters.`, nextRef);
 		if (next.length > PASSWORD_MAX) return fail("Your new password is too long.", nextRef);
 		if (next !== confirm) return fail("The new passwords don't match.", confirmRef);
 		if (next === current) return fail("The new password must be different from the current one.", nextRef);
@@ -334,7 +334,7 @@ function ChangePasswordForm({ me, onDone }: { me: Me; onDone: () => void }) {
 			{/* lets password managers file the new password under the right account */}
 			<input type="text" name="username" autoComplete="username" value={me.username} readOnly className="visually-hidden" tabIndex={-1} aria-hidden="true" />
 			<div className="settings-change-password-field">
-				<p className="settings-hint">Your password must be at least 8 characters long.</p>
+				<p className="settings-hint">Your password must be at least {PASSWORD_MIN} characters long.</p>
 				<PasswordInput inputRef={currentRef} value={current} onChange={setCurrent} placeholder="Current password" label="Current password" autoComplete="current-password" className="settings-password-input" autoFocus />
 			</div>
 			<div className="settings-change-password-field">

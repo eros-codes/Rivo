@@ -10,7 +10,9 @@ import push from "../utils/push.ts";
 import { verificationEmail } from "../utils/verificationEmail.ts";
 import resetPasswordEmail from "../utils/resetPasswordEmail.ts";
 import { accountExistsEmail } from "../utils/accountExistsEmail.ts";
-import { isEmail, USERNAME_RE } from "../utils/validators.ts";
+import { CheckAvailability, Login, Logout, Register, RequestPasswordReset, ResetPassword, SendCode, VerifyCode } from "../../shared/schemas/auth.ts";
+import { EMAIL_MAX_LENGTH, PASSWORD_MAX_LENGTH } from "../../shared/limits.ts";
+import { check, parse } from "../http/validate.ts";
 import { findUserByIdentifier, isEmailTaken, isUsernameTaken } from "../utils/userLookup.ts";
 import {
 	clearSessionCookies,
@@ -23,7 +25,9 @@ import {
 	tokenFromRequest,
 } from "../auth/sessions.ts";
 import { log } from "../utils/logger.ts";
+import { meOf } from "../utils/wire.ts";
 import { codeOf, messageOf } from "../utils/errors.ts";
+import { reply } from "../http/reply.ts";
 
 const router = Router();
 
@@ -98,28 +102,15 @@ async function sendEmail({ to, subject, text, html }: { to: string; subject: str
 	}
 }
 
-function publicUser(u: User) {
-	return {
-		id: u.id,
-		name: u.name,
-		username: u.username,
-		email: u.email,
-		bio: u.bio || "",
-		profilePics: u.profilePics || [],
-		privacyOnline: u.privacyOnline,
-		privacyEmail: u.privacyEmail,
-		privacyProfile: u.privacyProfile,
-	};
-}
 
 // ─── Email verification (sign-up) ─────────────────────────────────────────
 // The form answers the same way whether or not the address already has an
 // account (that one gets a "you already have an account" email instead of a
 // code), so sign-up cannot be used to find out who uses Rivo.
 router.post("/send-code", async (req, res) => {
-	const { email } = req.body || {};
-	if (!isEmail(email)) return void res.status(400).json({ error: "Please enter a valid email address" });
-	const to = email.trim();
+	const body = parse(res, SendCode, req.body);
+	if (!body) return;
+	const to = body.email;
 	const key = normEmail(to);
 	try {
 		if (countSend(`ip:${req.ip}`) > SEND_LIMIT * 3 || countSend(key) > SEND_LIMIT) {
@@ -136,7 +127,7 @@ router.post("/send-code", async (req, res) => {
 				log.error("account-exists email failed", messageOf(e) || e);
 				return void res.status(500).json({ error: "Failed to send email" });
 			}
-			return void res.json({ success: true });
+			return void reply(res, "POST /api/auth/send-code", { success: true });
 		}
 
 		const code = crypto.randomInt(100000, 1000000);
@@ -151,7 +142,7 @@ router.post("/send-code", async (req, res) => {
 			await prisma.emailVerification.deleteMany({ where: { email: key, verifiedAt: null } });
 			return void res.status(500).json({ error: "Failed to send email" });
 		}
-		return void res.json({ success: true });
+		return void reply(res, "POST /api/auth/send-code", { success: true });
 	} catch (e) {
 		log.error("send-code failed", messageOf(e) || e);
 		return void res.status(500).json({ error: "Server error" });
@@ -159,12 +150,11 @@ router.post("/send-code", async (req, res) => {
 });
 
 router.post("/verify-code", async (req, res) => {
-	const { email, code } = req.body || {};
-	if (!isEmail(email) || (typeof code !== "string" && typeof code !== "number") || !/^\d{6}$/.test(String(code).trim())) {
-		return void res.status(400).json({ error: "Invalid or expired code" });
-	}
+	const body = parse(res, VerifyCode, req.body);
+	if (!body) return;
+	const { code } = body;
 	try {
-		const key = normEmail(email);
+		const key = normEmail(body.email);
 		const entry = await prisma.emailVerification.findFirst({
 			where: { email: key, verifiedAt: null, expiresAt: { gt: new Date() } },
 			orderBy: { id: "desc" },
@@ -180,13 +170,13 @@ router.post("/verify-code", async (req, res) => {
 			await prisma.emailVerification.deleteMany({ where: { email: key, verifiedAt: null } });
 			return void res.status(429).json({ error: "Too many attempts. Request a new verification code." });
 		}
-		const ok = crypto.timingSafeEqual(Buffer.from(entry.codeHash), Buffer.from(hashCode(String(code).trim())));
+		const ok = crypto.timingSafeEqual(Buffer.from(entry.codeHash), Buffer.from(hashCode(code)));
 		if (!ok) return void res.status(400).json({ error: "Invalid code" });
 		await prisma.emailVerification.update({
 			where: { id: entry.id },
 			data: { verifiedAt: new Date(), expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS) },
 		});
-		return void res.json({ success: true });
+		return void reply(res, "POST /api/auth/verify-code", { success: true });
 	} catch (e) {
 		log.error("verify-code failed", messageOf(e) || e);
 		return void res.status(500).json({ error: "Server error" });
@@ -196,12 +186,14 @@ router.post("/verify-code", async (req, res) => {
 // The sign-up form says a username is taken before a code is sent (usernames
 // are public anyway). Email addresses are never checked here: see send-code.
 router.post("/check-availability", async (req, res) => {
-	const { username } = req.body || {};
+	// (anything that is not a username is simply not taken)
+	const body = check(CheckAvailability, req.body);
+	const username = body.ok ? body.data.username : null;
 	try {
 		if (countSend(`avail:${req.ip}`) > 60) return void res.status(429).json({ error: "Too many attempts. Try later." });
 		const result = { usernameTaken: false };
-		if (typeof username === "string" && USERNAME_RE.test(username.trim())) result.usernameTaken = await isUsernameTaken(username);
-		return void res.json(result);
+		if (username) result.usernameTaken = await isUsernameTaken(username);
+		return void reply(res, "POST /api/auth/check-availability", result);
 	} catch (e) {
 		log.error("check-availability failed", messageOf(e) || e);
 		return void res.status(500).json({ error: "Server error" });
@@ -210,19 +202,12 @@ router.post("/check-availability", async (req, res) => {
 
 // ─── Register ─────────────────────────────────────────────────────────────
 router.post("/register", async (req, res) => {
-	const { name, email, username, password } = req.body || {};
-	if (!name || !email || !username || !password) return void res.status(400).json({ error: "All fields are required" });
-	if ([name, email, username, password].some((v) => typeof v !== "string")) return void res.status(400).json({ error: "Invalid fields" });
-	const cleanName = name.trim();
-	const cleanUsername = username.trim();
-	if (cleanName.length < 2 || cleanName.length > 100) return void res.status(400).json({ error: "Name must be between 2 and 100 characters" });
-	if (!isEmail(email)) return void res.status(400).json({ error: "Please enter a valid email address" });
-	if (!USERNAME_RE.test(cleanUsername)) return void res.status(400).json({ error: "Username must be 3-30 letters, numbers or underscores" });
-	if (password.length < 8) return void res.status(400).json({ error: "Password must be at least 8 characters" });
-	if (password.length > config.maxPasswordLength) return void res.status(400).json({ error: "Password is too long" });
+	const body = parse(res, Register, req.body);
+	if (!body) return;
+	const { name: cleanName, username: cleanUsername, password } = body;
 
 	try {
-		const key = normEmail(email);
+		const key = normEmail(body.email);
 		const verification = await prisma.emailVerification.findFirst({
 			where: { email: key, verifiedAt: { not: null }, consumedAt: null, expiresAt: { gt: new Date() } },
 			orderBy: { id: "desc" },
@@ -248,7 +233,7 @@ router.post("/register", async (req, res) => {
 		await prisma.emailVerification
 			.update({ where: { id: verification.id }, data: { consumedAt: new Date() } })
 			.catch((e) => log.warn("failed to consume verification", messageOf(e) || e));
-		return void res.status(201).json({ success: true, userId: user.id });
+		return void reply(res, "POST /api/auth/register", { success: true, userId: user.id }, 201);
 	} catch (e) {
 		log.error("register failed", e);
 		return void res.status(500).json({ error: "Server error" });
@@ -257,20 +242,19 @@ router.post("/register", async (req, res) => {
 
 // ─── Login / logout ───────────────────────────────────────────────────────
 router.post("/login", async (req, res) => {
-	const { identifier, password } = req.body || {};
-	if (!identifier || !password || typeof identifier !== "string" || typeof password !== "string") {
-		return void res.status(400).json({ error: "All fields are required" });
-	}
+	const body = parse(res, Login, req.body);
+	if (!body) return;
+	const { identifier, password } = body;
 	try {
-		const user = password.length <= config.maxPasswordLength ? await findUserByIdentifier(identifier, { isDeleted: false }) : null;
+		const user = password.length <= PASSWORD_MAX_LENGTH ? await findUserByIdentifier(identifier, { isDeleted: false }) : null;
 		if (!user) {
 			// the same work as a real check, so timing does not reveal accounts
-			await bcrypt.hash(password.slice(0, config.maxPasswordLength), config.bcryptRounds).catch(() => {});
+			await bcrypt.hash(password.slice(0, PASSWORD_MAX_LENGTH), config.bcryptRounds).catch(() => {});
 			return void res.status(401).json({ error: "Invalid credentials" });
 		}
 		if (!(await bcrypt.compare(password, user.passwordHash))) return void res.status(401).json({ error: "Invalid credentials" });
 		await startSession(res, user.id, req.get("user-agent"));
-		return void res.json({ success: true, user: publicUser(user) });
+		return void reply(res, "POST /api/auth/login", { success: true, user: meOf(user) });
 	} catch (e) {
 		log.error("login failed", e);
 		return void res.status(500).json({ error: "Server error" });
@@ -284,7 +268,8 @@ router.post("/logout", async (req, res) => {
 		if (session) {
 			// this device's notifications stop (they belong to its session; an
 			// endpoint from before sessions existed is removed by its address)
-			const endpoint = typeof req.body?.endpoint === "string" ? req.body.endpoint : null;
+			const body = check(Logout, req.body);
+			const endpoint = body.ok ? body.data.endpoint : null;
 			if (endpoint) await push.removeSubscriptionByEndpoint(session.userId, endpoint);
 			await revokeSession(session.id);
 		}
@@ -292,7 +277,7 @@ router.post("/logout", async (req, res) => {
 		log.warn("logout cleanup failed", messageOf(e) || e);
 	}
 	clearSessionCookies(res);
-	return void res.json({ success: true });
+	return void reply(res, "POST /api/auth/logout", { success: true });
 });
 
 // ─── Password reset by email ──────────────────────────────────────────────
@@ -316,7 +301,6 @@ async function issueResetLink(user: Pick<User, "id" | "email">): Promise<void> {
 }
 
 router.post("/request-password-reset", async (req, res) => {
-	const { identifier } = req.body || {};
 	try {
 		// signed in (Settings → "Send reset email"): the session says who it is,
 		// and a failure to send can be reported
@@ -326,15 +310,16 @@ router.post("/request-password-reset", async (req, res) => {
 			if (!me || me.isDeleted) return void res.status(401).json({ error: "Unauthorized" });
 			if (countSend(`reset:${me.id}`) > SEND_LIMIT) return void res.status(429).json({ error: "Too many reset emails. Try later." });
 			await issueResetLink(me);
-			return void res.json({ success: true });
+			return void reply(res, "POST /api/auth/request-password-reset", { success: true });
 		}
 
-		const raw = typeof identifier === "string" ? identifier.trim() : "";
-		if (!raw || raw.length > 254) return void res.status(400).json({ error: "Missing identifier" });
+		const body = check(RequestPasswordReset, req.body);
+		const raw = body.ok ? body.data.identifier : "";
+		if (!raw || raw.length > EMAIL_MAX_LENGTH) return void res.status(400).json({ error: "Missing identifier" });
 		const user = await findUserByIdentifier(raw);
 		// The answer never reveals whether the account exists, not even by how
 		// long it takes: it is sent before any of the work for a real account.
-		res.json({ success: true });
+		reply(res, "POST /api/auth/request-password-reset", { success: true });
 		if (!user || user.isDeleted) return;
 		if (countSend(`reset:${user.id}`) > SEND_LIMIT || countSend(`reset-ip:${req.ip}`) > SEND_LIMIT * 3) {
 			log.warn(`password reset limited: user=${user.id} ip=${req.ip}`);
@@ -348,11 +333,9 @@ router.post("/request-password-reset", async (req, res) => {
 });
 
 router.post("/reset-password-with-token", async (req, res) => {
-	const { token, newPassword } = req.body || {};
-	if (typeof token !== "string" || !token || typeof newPassword !== "string" || newPassword.length < 8) {
-		return void res.status(400).json({ error: "Missing or invalid fields" });
-	}
-	if (newPassword.length > config.maxPasswordLength) return void res.status(400).json({ error: "Password is too long" });
+	const body = parse(res, ResetPassword, req.body);
+	if (!body) return;
+	const { token, newPassword } = body;
 	try {
 		const tokenHash = crypto.createHash("sha256").update(token.trim()).digest("hex");
 		const reset = await prisma.passwordResetToken.findFirst({
@@ -368,7 +351,7 @@ router.post("/reset-password-with-token", async (req, res) => {
 		// every device signs in again with the new password
 		await revokeAllSessions(reset.user.id);
 		clearSessionCookies(res);
-		return void res.json({ success: true });
+		return void reply(res, "POST /api/auth/reset-password-with-token", { success: true });
 	} catch (e) {
 		log.error("reset-password-with-token failed", messageOf(e) || e);
 		return void res.status(500).json({ error: "Server error" });

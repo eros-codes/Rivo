@@ -40,7 +40,7 @@ export async function openDueCapsules(): Promise<void> {
 						conversationId: msg.conversationId,
 						senderId: msg.senderId,
 						// (never a deleted one here: the query skips them)
-						text: view.isDeleted ? undefined : view.text,
+						text: view.isDeleted ? null : view.text,
 						openedAt: now.toISOString(),
 						message: view,
 					};

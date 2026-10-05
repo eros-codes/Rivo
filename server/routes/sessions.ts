@@ -3,6 +3,10 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/auth.ts";
 import { listSessions, revokeOtherSessions, revokeSession } from "../auth/sessions.ts";
 import { log } from "../utils/logger.ts";
+import { iso } from "../utils/wire.ts";
+import { SessionParam } from "../../shared/schemas/account.ts";
+import { parse } from "../http/validate.ts";
+import { reply } from "../http/reply.ts";
 
 const router = Router();
 
@@ -13,13 +17,13 @@ router.get("/", requireAuth, async (req, res) => {
 			.map((s) => ({
 				id: s.id,
 				current: s.id === req.sessionId,
-				createdAt: s.createdAt,
-				lastSeenAt: s.lastSeenAt,
+				createdAt: iso(s.createdAt),
+				lastSeenAt: iso(s.lastSeenAt),
 				userAgent: s.userAgent || "",
 			}))
 			// this device first
 			.sort((a, b) => Number(b.current) - Number(a.current));
-		return void res.json({ sessions });
+		return void reply(res, "GET /api/sessions", { sessions });
 	} catch (e) {
 		log.error("listing sessions failed", e);
 		return void res.status(500).json({ error: "Server error" });
@@ -29,7 +33,7 @@ router.get("/", requireAuth, async (req, res) => {
 router.post("/revoke-others", requireAuth, async (req, res) => {
 	try {
 		const revoked = await revokeOtherSessions(req.userId, req.sessionId);
-		return void res.json({ success: true, revoked });
+		return void reply(res, "POST /api/sessions/revoke-others", { success: true, revoked });
 	} catch (e) {
 		log.error("revoking sessions failed", e);
 		return void res.status(500).json({ error: "Server error" });
@@ -37,14 +41,15 @@ router.post("/revoke-others", requireAuth, async (req, res) => {
 });
 
 router.delete("/:id", requireAuth, async (req, res) => {
-	const id = String(req.params.id || "");
-	if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) return void res.status(400).json({ error: "Invalid session id" });
+	const params = parse(res, SessionParam, req.params);
+	if (!params) return;
+	const { id } = params;
 	if (id === req.sessionId) return void res.status(400).json({ error: "Use log out to end this device's session" });
 	try {
 		const own = (await listSessions(req.userId)).some((s) => s.id === id);
 		if (!own) return void res.status(404).json({ error: "Session not found" });
 		await revokeSession(id);
-		return void res.json({ success: true });
+		return void reply(res, "DELETE /api/sessions/:id", { success: true });
 	} catch (e) {
 		log.error("revoking a session failed", e);
 		return void res.status(500).json({ error: "Server error" });

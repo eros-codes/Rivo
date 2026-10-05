@@ -1,6 +1,9 @@
 // Who is connected: userId → socket ids, and helpers to reach a user's
 // devices. Routes, jobs and the socket layer all send through here.
+// Every event goes out typed against the contract (shared/events.ts): a
+// payload that does not match what the app expects is a type error here.
 import { getMembersCached } from "../services/caches.ts";
+import type { ServerEvents } from "../../shared/events.ts";
 
 /** What the socket layer keeps on each connection (socket.data). */
 export interface SocketData {
@@ -86,7 +89,7 @@ export function isUserViewing(userId: number, convId: number): boolean {
 	return socketsOfUser(userId).some((s) => !s.data?.hidden && s.data?.joined?.has(convId));
 }
 
-export function emitToUser(userId: number, event: string, payload: unknown, { exceptSocketId = null }: { exceptSocketId?: string | null } = {}): void {
+export function emitToUser<E extends keyof ServerEvents>(userId: number, event: E, payload: ServerEvents[E], { exceptSocketId = null }: { exceptSocketId?: string | null } = {}): void {
 	for (const s of socketsOfUser(userId)) {
 		if (exceptSocketId && s.id === exceptSocketId) continue;
 		try {
@@ -102,18 +105,23 @@ export function emitToUser(userId: number, event: string, payload: unknown, { ex
  * `perUser(userId)` may return a different payload per member, or undefined
  * to skip that member.
  */
-export interface DeliverOptions {
+export interface DeliverOptions<P> {
 	/** the device that made the change (it shows it already) */
 	exceptSocketId?: string | null;
 	/** a payload per member, or undefined to skip that member */
-	perUser?: ((userId: number) => unknown) | null;
+	perUser?: ((userId: number) => P | undefined) | null;
 }
 
-export async function deliverToConversation(convId: number, event: string, payload: unknown, { exceptSocketId = null, perUser = null }: DeliverOptions = {}): Promise<void> {
+export async function deliverToConversation<E extends keyof ServerEvents>(
+	convId: number,
+	event: E,
+	payload: ServerEvents[E] | null,
+	{ exceptSocketId = null, perUser = null }: DeliverOptions<ServerEvents[E]> = {},
+): Promise<void> {
 	const members = await getMembersCached(convId);
 	for (const { userId } of members) {
 		const p = perUser ? perUser(userId) : payload;
-		if (p === undefined) continue;
+		if (p === undefined || p === null) continue;
 		emitToUser(userId, event, p, { exceptSocketId });
 	}
 }

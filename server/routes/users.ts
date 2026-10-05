@@ -9,7 +9,8 @@ import sharp from "sharp";
 import prisma from "../prisma.ts";
 import { config } from "../config.ts";
 import { requireAuth } from "../middleware/auth.ts";
-import { PRIVACY_VALUES, USERNAME_RE } from "../utils/validators.ts";
+import { ChangePassword, DeleteAccount, SearchUsers, UpdateProfile } from "../../shared/schemas/account.ts";
+import { parse } from "../http/validate.ts";
 import { applyPrivacy, relationsFor } from "../utils/privacy.ts";
 import { isUsernameTaken } from "../utils/userLookup.ts";
 import { clearSessionCookies, revokeAllSessions, revokeOtherSessions } from "../auth/sessions.ts";
@@ -19,7 +20,9 @@ import { isOnline } from "../realtime/registry.ts";
 import { DELETED as DELETED_MESSAGE } from "../services/messages.ts";
 import { RATE_LIMITED, spendBudget } from "../services/actionLimit.ts";
 import { log } from "../utils/logger.ts";
+import { meOf } from "../utils/wire.ts";
 import { codeOf } from "../utils/errors.ts";
+import { reply } from "../http/reply.ts";
 
 const router = Router();
 
@@ -88,7 +91,7 @@ router.get("/me", requireAuth, async (req, res) => {
 	try {
 		const user = await prisma.user.findUnique({ where: { id: req.userId }, select: ME_SELECT });
 		if (!user) return void res.status(404).json({ error: "User not found" });
-		return void res.json({ ...user, bio: user.bio || "" });
+		return void reply(res, "GET /api/users/me", meOf(user));
 	} catch (e) {
 		log.error("GET /me failed", e);
 		return void res.status(500).json({ error: "Server error" });
@@ -96,38 +99,14 @@ router.get("/me", requireAuth, async (req, res) => {
 });
 
 router.patch("/me", requireAuth, async (req, res) => {
-	const { name, username, bio, profilePics, privacyOnline, privacyEmail, privacyProfile } = req.body || {};
-	const data: Prisma.UserUpdateInput = {};
-	if (name !== undefined) {
-		const v = typeof name === "string" ? name.trim() : "";
-		if (v.length < 2 || v.length > 100) return void res.status(400).json({ error: "Name must be between 2 and 100 characters" });
-		data.name = v;
-	}
-	if (username !== undefined) {
-		const v = typeof username === "string" ? username.trim().replace(/^@/, "") : "";
-		if (!USERNAME_RE.test(v)) return void res.status(400).json({ error: "Username must be 3-30 letters, numbers or underscores" });
-		data.username = v;
-	}
-	if (bio !== undefined) {
-		if (bio !== null && typeof bio !== "string") return void res.status(400).json({ error: "Invalid bio" });
-		const v = (bio || "").trim();
-		if (v.length > 300) return void res.status(400).json({ error: "Bio must be 300 characters or fewer" });
-		data.bio = v;
-	}
-	for (const [key, value] of Object.entries({ privacyOnline, privacyEmail, privacyProfile })) {
-		if (value === undefined) continue;
-		if (!PRIVACY_VALUES.has(value)) return void res.status(400).json({ error: `Invalid value for ${key}` });
-		data[key as "privacyOnline" | "privacyEmail" | "privacyProfile"] = value;
-	}
-	// only removing the picture is done here; uploads go through /me/avatar
-	if (profilePics !== undefined) {
-		if (!Array.isArray(profilePics) || profilePics.length !== 0) return void res.status(400).json({ error: "Upload pictures through /me/avatar" });
-		data.profilePics = [];
-	}
-	if (Object.keys(data).length === 0) return void res.status(400).json({ error: "Nothing to change" });
+	const body = parse(res, UpdateProfile, req.body);
+	if (!body) return;
+	// what was not sent is undefined, and Prisma leaves it as it is
+	// (profilePics can only be []: uploads go through /me/avatar)
+	const data: Prisma.UserUpdateInput = body;
 
 	try {
-		if (data.username && (await isUsernameTaken(data.username, req.userId))) return void res.status(409).json({ error: "Username already taken" });
+		if (body.username && (await isUsernameTaken(body.username, req.userId))) return void res.status(409).json({ error: "Username already taken" });
 		const before = await prisma.user.findUnique({ where: { id: req.userId }, select: ME_SELECT });
 		let user;
 		try {
@@ -136,7 +115,7 @@ router.patch("/me", requireAuth, async (req, res) => {
 			if (codeOf(e) === "P2002") return void res.status(409).json({ error: "Username already taken" });
 			throw e;
 		}
-		if (data.profilePics) await removeAvatarFiles(req.userId);
+		if (body.profilePics) await removeAvatarFiles(req.userId);
 
 		// (the account cannot be gone: it was just updated)
 		if (!before) throw new Error("user not found");
@@ -151,7 +130,7 @@ router.patch("/me", requireAuth, async (req, res) => {
 		if (before.privacyOnline !== user.privacyOnline) {
 			await broadcastPresence(req.userId, { online: isOnline(req.userId), lastSeen: user.lastSeen, notifyHidden: true });
 		}
-		return void res.json({ ...user, bio: user.bio || "" });
+		return void reply(res, "PATCH /api/users/me", meOf(user));
 	} catch (e) {
 		log.error("PATCH /me failed", e);
 		return void res.status(500).json({ error: "Server error" });
@@ -160,9 +139,9 @@ router.patch("/me", requireAuth, async (req, res) => {
 
 // ─── Search users by username ─────────────────────────────────────────────
 router.get("/search", requireAuth, async (req, res) => {
-	const q = typeof req.query.q === "string" ? req.query.q.trim().replace(/^@/, "") : "";
-	if (q.length < 2) return void res.status(400).json({ error: "Query too short" });
-	if (q.length > 50) return void res.status(400).json({ error: "Query too long" });
+	const query = parse(res, SearchUsers, req.query);
+	if (!query) return;
+	const { q } = query;
 	try {
 		const users = await prisma.user.findMany({
 			where: { username: { contains: q, mode: "insensitive" }, isDeleted: false, NOT: { id: req.userId } },
@@ -170,7 +149,7 @@ router.get("/search", requireAuth, async (req, res) => {
 			take: 10,
 		});
 		const rel = await relationsFor(req.userId, users.map((u) => u.id));
-		return void res.json(users.map((u) => applyPrivacy(u, rel.get(u.id))));
+		return void reply(res, "GET /api/users/search", users.map((u) => applyPrivacy(u, rel.get(u.id))));
 	} catch (e) {
 		log.error("user search failed", e);
 		return void res.status(500).json({ error: "Server error" });
@@ -179,8 +158,9 @@ router.get("/search", requireAuth, async (req, res) => {
 
 // ─── Delete account ───────────────────────────────────────────────────────
 router.delete("/me", requireAuth, async (req, res) => {
-	const { password } = req.body || {};
-	if (typeof password !== "string" || !password) return void res.status(400).json({ error: "Password is required" });
+	const body = parse(res, DeleteAccount, req.body);
+	if (!body) return;
+	const { password } = body;
 	try {
 		const user = await prisma.user.findUnique({ where: { id: req.userId } });
 		if (!user) return void res.status(404).json({ error: "User not found" });
@@ -224,7 +204,7 @@ router.delete("/me", requireAuth, async (req, res) => {
 		// the other people see "Deleted account" right away
 		await broadcastUserUpdate(req.userId);
 		clearSessionCookies(res);
-		return void res.json({ success: true });
+		return void reply(res, "DELETE /api/users/me", { success: true });
 	} catch (e) {
 		log.error("account deletion failed", e);
 		return void res.status(500).json({ error: "Server error" });
@@ -234,12 +214,9 @@ router.delete("/me", requireAuth, async (req, res) => {
 // ─── Change password ──────────────────────────────────────────────────────
 // This device stays signed in; every other device is signed out.
 router.patch("/me/password", requireAuth, async (req, res) => {
-	const { currentPassword, newPassword } = req.body || {};
-	if (typeof currentPassword !== "string" || !currentPassword || typeof newPassword !== "string" || !newPassword) {
-		return void res.status(400).json({ error: "Missing fields" });
-	}
-	if (newPassword.length < 8) return void res.status(400).json({ error: "New password must be at least 8 characters" });
-	if (newPassword.length > config.maxPasswordLength) return void res.status(400).json({ error: "New password is too long" });
+	const body = parse(res, ChangePassword, req.body);
+	if (!body) return;
+	const { currentPassword, newPassword } = body;
 	try {
 		const user = await prisma.user.findUnique({ where: { id: req.userId } });
 		if (!user) return void res.status(404).json({ error: "User not found" });
@@ -249,7 +226,7 @@ router.patch("/me/password", requireAuth, async (req, res) => {
 		const signedOut = await revokeOtherSessions(req.userId, req.sessionId);
 		// a reset link that is still in an inbox must not work anymore
 		await prisma.passwordResetToken.deleteMany({ where: { userId: req.userId } });
-		return void res.json({ success: true, signedOut });
+		return void reply(res, "PATCH /api/users/me/password", { success: true, signedOut });
 	} catch (e) {
 		log.error("password change failed", e);
 		return void res.status(500).json({ error: "Server error" });
@@ -319,7 +296,7 @@ router.post("/me/avatar", requireAuth, avatarBudget, receiveAvatar, async (req, 
 		await prisma.user.update({ where: { id: req.userId }, data: { profilePics: [url] } });
 		await removeAvatarFiles(req.userId, outName);
 		await broadcastUserUpdate(req.userId);
-		return void res.json({ url });
+		return void reply(res, "POST /api/users/me/avatar", { url });
 	} catch (e) {
 		log.error("avatar processing failed", e);
 		await drop();

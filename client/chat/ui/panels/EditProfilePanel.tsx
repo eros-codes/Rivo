@@ -12,11 +12,8 @@ import { session } from "../../state/stores";
 import { useUi } from "../selectors";
 import { AvatarCropper } from "./AvatarCropper";
 import { ResponsivePanel } from "./ResponsivePanel";
+import { BIO_MAX_LENGTH as BIO_MAX, NAME_MAX_LENGTH as NAME_MAX, NAME_MIN_LENGTH as NAME_MIN, USERNAME_PATTERN as USERNAME_RE } from "../../../../shared/limits.ts";
 
-const NAME_MIN = 2;
-const NAME_MAX = 100;
-const BIO_MAX = 300;
-const USERNAME_RE = /^[a-zA-Z0-9_]{3,30}$/;
 
 function EditProfile() {
 	const me = useStore(session, (s) => s.me);

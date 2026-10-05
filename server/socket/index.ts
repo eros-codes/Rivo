@@ -1,12 +1,16 @@
 // Real-time connection: authentication, presence and the socket events.
-// The actions themselves live in services/messages.js (shared with REST).
+// The actions themselves live in services/messages.ts (shared with REST).
+// The events are the contract of shared/events.ts: each payload is checked
+// against its schema there (ClientEventSchemas), each answer is type-checked
+// against its ack (ClientAcks), each event sent against ServerEvents.
 import type { Server as HttpServer } from "node:http";
 import { Server, type Socket } from "socket.io";
 import prisma from "../prisma.ts";
 import { config } from "../config.ts";
 import { bus } from "../events.ts";
 import { loadSession, parseCookies, readToken, touchSession, type LiveSession } from "../auth/sessions.ts";
-import { parseId } from "../utils/validators.ts";
+import { ClientEventSchemas, type ClientAcks, type ClientEventName, type ClientPayload } from "../../shared/events.ts";
+import { check, type Checked } from "../http/validate.ts";
 import { batchCost, RATE_LIMITED, spendBudget } from "../services/actionLimit.ts";
 import { blockState, getRecipientsCached, isMember } from "../services/caches.ts";
 import { broadcastPresence } from "../services/presence.ts";
@@ -35,12 +39,18 @@ import { messageOf } from "../utils/errors.ts";
 
 export { userSockets };
 
-// The events are not typed one by one yet: each handler checks what it gets.
+// (Socket.IO's own event maps stay loose: every payload arrives unchecked
+// and goes through its schema first; what is sent goes through the typed
+// helpers of realtime/registry.ts.)
 type Events = { [event: string]: (...args: any[]) => void };
 export type RivoServer = Server<Events, Events, Events, SocketData>;
 type RivoSocket = Socket<Events, Events, Events, SocketData>;
-/** What a client sends with an event (nothing in it is trusted). */
-type Incoming = { [key: string]: unknown } | null | undefined;
+
+/** How many items a batch payload names (its cost is counted before it is checked). */
+function sizeOf(payload: unknown, key: string): number {
+	const list = payload && typeof payload === "object" ? (payload as Record<string, unknown>)[key] : undefined;
+	return Array.isArray(list) ? list.length : 1;
+}
 
 /**
  * The client's address the same way Express reads it with "trust proxy" 1:
@@ -126,7 +136,7 @@ export function initSocket(httpServer: HttpServer): RivoServer {
 	io.on("connection", (socket) => {
 		const userId = socket.data.userId;
 		// log lines written while handling this socket's events say whose they are
-		const on = (event: string, handler: (...args: any[]) => unknown) =>
+		const on = (event: ClientEventName | "disconnect", handler: (...args: any[]) => unknown) =>
 			socket.on(event, (...args: unknown[]) => withLogContext({ userId, socket: socket.id }, () => handler(...args)));
 		addSocket(userId, socket.id);
 		if (offlineTimers.has(userId)) {
@@ -144,65 +154,67 @@ export function initSocket(httpServer: HttpServer): RivoServer {
 		})();
 
 		const actor = (): Actor => ({ userId, socketId: socket.id });
-		const answer = (cb: unknown): ((result: unknown) => void) => (typeof cb === "function" ? (cb as (result: unknown) => void) : () => {});
+		/** The client's callback for an event's answer (a no-op when it sent none). */
+		const answer = <E extends keyof ClientAcks>(cb: unknown): ((result: ClientAcks[E]) => void) =>
+			typeof cb === "function" ? (cb as (result: ClientAcks[E]) => void) : () => {};
 		const limited = (cb: unknown, cost = 1): boolean => {
 			if (spendBudget(userId, cost)) return false;
 			answer(cb)(RATE_LIMITED);
 			return true;
 		};
 
-		on("presence:visibility", (p: Incoming) => {
-			socket.data.hidden = p?.visible === false;
+		/** An event's payload after its schema, or why it was refused. */
+		const read = <E extends ClientEventName>(event: E, payload: unknown): Checked<ClientPayload<E>> =>
+			check(ClientEventSchemas[event], payload) as Checked<ClientPayload<E>>;
+
+		/**
+		 * An action event: its cost comes out of the action budget first (a
+		 * flood of bad payloads is not free), then the payload is checked; a
+		 * bad one is answered { error } and goes no further. `run` must answer
+		 * what the app expects (ClientAcks).
+		 */
+		function action<E extends keyof ClientAcks>(event: E, cost: number | ((payload: unknown) => number), run: (data: ClientPayload<E>) => Promise<ClientAcks[E]>): void {
+			on(event, async (payload: unknown, cb: unknown) => {
+				if (limited(cb, typeof cost === "function" ? cost(payload) : cost)) return;
+				const input = read(event, payload);
+				if (!input.ok) return answer<E>(cb)({ error: input.error });
+				answer<E>(cb)(await run(input.data));
+			});
+		}
+
+		on("presence:visibility", (payload: unknown) => {
+			// only an explicit "not visible" hides the device
+			const input = read("presence:visibility", payload);
+			socket.data.hidden = input.ok && !input.data.visible;
 		});
 
-		on("message:send", async (data: Incoming, cb: unknown) => {
-			if (!data || typeof data !== "object") return answer(cb)({ error: "Invalid data" });
-			if (limited(cb)) return;
-			answer(cb)(await sendMessageAs(actor(), data));
-		});
+		action("message:send", 1, (data) => sendMessageAs(actor(), data));
+		action("messages:forward", (p) => batchCost(sizeOf(p, "items"), 5), (data) => forwardMessagesAs(actor(), data));
+		action("message:edit", 1, (data) => editMessageAs(actor(), data));
+		action("message:delete", 1, (data) => deleteMessagesAs(actor(), { messageIds: [data.messageId] }));
+		action("messages:delete", (p) => batchCost(sizeOf(p, "messageIds"), 10), (data) => deleteMessagesAs(actor(), data));
+		action("message:pin", 1, (data) => togglePinAs(actor(), data));
+		action("reaction:add", 1, (data) => reactAs(actor(), data));
 
-		on("messages:forward", async (data: Incoming, cb: unknown) => {
-			if (limited(cb, batchCost(Array.isArray(data?.items) ? data.items.length : 1, 5))) return;
-			answer(cb)(await forwardMessagesAs(actor(), data || {}));
-		});
-
-		on("message:edit", async (data: Incoming, cb: unknown) => {
-			if (limited(cb)) return;
-			answer(cb)(await editMessageAs(actor(), data || {}));
-		});
-
-		on("message:delete", async (data: Incoming, cb: unknown) => {
-			if (limited(cb)) return;
-			answer(cb)(await deleteMessagesAs(actor(), { messageIds: [data?.messageId] }));
-		});
-
-		on("messages:delete", async (data: Incoming, cb: unknown) => {
-			if (limited(cb, batchCost(Array.isArray(data?.messageIds) ? data.messageIds.length : 1, 10))) return;
-			answer(cb)(await deleteMessagesAs(actor(), data || {}));
-		});
-
-		on("message:pin", async (data: Incoming, cb: unknown) => {
-			if (limited(cb)) return;
-			answer(cb)(await togglePinAs(actor(), data || {}));
-		});
-
-		on("reaction:add", async (data: Incoming, cb: unknown) => {
-			if (limited(cb)) return;
-			answer(cb)(await reactAs(actor(), data || {}));
-		});
-
-		on("message:seen", async (data: Incoming, cb: unknown) => {
-			const reply = answer(cb);
-			const convId = parseId(data?.conversationId);
+		on("message:seen", async (payload: unknown, cb: unknown) => {
+			const reply = answer<"message:seen">(cb);
+			const input = read("message:seen", payload);
+			if (!input.ok) return reply({ error: input.error });
 			// a "join" sent just before is still being checked: wait for it
 			await socket.data.joining;
 			// only the device that shows the chat, while visible, marks it read
-			if (!convId || !socket.data.joined.has(convId) || socket.data.hidden) return reply({ success: true, marked: [] });
-			reply(await markSeenAs(actor(), { conversationId: convId, upToId: data?.upToId }));
+			if (!socket.data.joined.has(input.data.conversationId) || socket.data.hidden) return reply({ success: true, marked: [] });
+			reply(await markSeenAs(actor(), input.data));
 		});
 
-		function relayTyping(event: string, data: Incoming): void {
-			const convId = parseId(data?.conversationId);
+		/** The chat a typing / join / leave event names, or null (then it is ignored). */
+		const chatOf = (payload: unknown): number | null => {
+			const input = read("conversation:join", payload);
+			return input.ok ? input.data.conversationId : null;
+		};
+
+		function relayTyping(event: "typing:start" | "typing:stop", payload: unknown): void {
+			const convId = chatOf(payload);
 			// only in the chat this device shows (no lookups for made-up ids)
 			if (!convId || !socket.data.joined.has(convId)) return;
 			const key = `${convId}:${event}`;
@@ -213,15 +225,15 @@ export function initSocket(httpServer: HttpServer): RivoServer {
 				if (!(await isMember(convId, userId))) return;
 				const { blockedByMe, blockedByOther } = blockState(await getRecipientsCached(convId), userId);
 				if (blockedByMe || blockedByOther) return;
-				const payload = { userId, conversationId: convId };
-				await deliverToConversation(convId, event, null, { perUser: (uid) => (uid === userId ? undefined : payload) });
+				const out = { userId, conversationId: convId };
+				await deliverToConversation(convId, event, null, { perUser: (uid) => (uid === userId ? undefined : out) });
 			})().catch((e: unknown) => log.error(`${event} relay failed`, messageOf(e) || e));
 		}
-		on("typing:start", (d: Incoming) => relayTyping("typing:start", d));
-		on("typing:stop", (d: Incoming) => relayTyping("typing:stop", d));
+		on("typing:start", (payload: unknown) => relayTyping("typing:start", payload));
+		on("typing:stop", (payload: unknown) => relayTyping("typing:stop", payload));
 
-		on("conversation:join", (data: Incoming) => {
-			const convId = parseId(data?.conversationId);
+		on("conversation:join", (payload: unknown) => {
+			const convId = chatOf(payload);
 			// cheap, but each one is a lookup: part of the same budget
 			if (!convId || !spendBudget(userId, 0.25)) return;
 			// joins are applied in the order they were sent, and anything that
@@ -235,7 +247,7 @@ export function initSocket(httpServer: HttpServer): RivoServer {
 						socket.data.joined.delete(old);
 						socket.data.typingAt.clear();
 						socket.leave(`conversation:${old}`);
-						cleanupSeenOneTime(userId, old);
+						void cleanupSeenOneTime(userId, old);
 					}
 					socket.join(`conversation:${convId}`);
 					socket.data.joined.add(convId);
@@ -245,8 +257,8 @@ export function initSocket(httpServer: HttpServer): RivoServer {
 			});
 		});
 
-		on("conversation:leave", (data: Incoming) => {
-			const convId = parseId(data?.conversationId);
+		on("conversation:leave", (payload: unknown) => {
+			const convId = chatOf(payload);
 			if (!convId) return;
 			// after any join sent before it
 			socket.data.joining = socket.data.joining.then(async () => {

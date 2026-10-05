@@ -3,7 +3,9 @@ import type { Prisma } from "@prisma/client";
 import prisma from "../prisma.ts";
 import { config } from "../config.ts";
 import { requireAuth } from "../middleware/auth.ts";
-import { parseId } from "../utils/validators.ts";
+import { AddContact, ContactParam, contactsPage, UpdateContact } from "../../shared/schemas/contacts.ts";
+import { parse } from "../http/validate.ts";
+import { reply } from "../http/reply.ts";
 import { findUserByUsername } from "../utils/userLookup.ts";
 import { invalidateConversation } from "../services/caches.ts";
 import {
@@ -28,10 +30,12 @@ const actingSocket = (req: Request): string | null => {
 };
 
 // ─── List ─────────────────────────────────────────────────────────────────
+const ContactsPage = contactsPage(config.pages.contactsDefault, config.pages.contactsMax);
+
 router.get("/", requireAuth, async (req, res) => {
-	const { contactsDefault, contactsMax } = config.pages;
-	const limit = Math.min(Math.max(parseId(String(req.query.limit ?? "")) || contactsDefault, 1), contactsMax);
-	const skip = parseId(String(req.query.skip ?? "")) || 0;
+	const page = parse(res, ContactsPage, req.query);
+	if (!page) return;
+	const { limit, skip } = page;
 	try {
 		if (skip === 0) await ensureSavedContact(req.userId);
 		const rows = await prisma.contact.findMany({
@@ -41,7 +45,7 @@ router.get("/", requireAuth, async (req, res) => {
 			take: limit,
 			skip,
 		});
-		return void res.json(await serializeContacts(rows, req.userId));
+		return void reply(res, "GET /api/contacts", await serializeContacts(rows, req.userId));
 	} catch (e) {
 		log.error("GET /contacts failed", e);
 		return void res.status(500).json({ error: "Server error" });
@@ -49,12 +53,13 @@ router.get("/", requireAuth, async (req, res) => {
 });
 
 router.get("/:id", requireAuth, async (req, res) => {
-	const id = parseId(req.params.id);
-	if (!id) return void res.status(400).json({ error: "Invalid contact id" });
+	const params = parse(res, ContactParam, req.params);
+	if (!params) return;
+	const { id } = params;
 	try {
 		const row = await contactRowFor(req.userId, id);
 		if (!row) return void res.status(404).json({ error: "Contact not found" });
-		return void res.json(row);
+		return void reply(res, "GET /api/contacts/:id", row);
 	} catch (e) {
 		log.error("GET /contacts/:id failed", e);
 		return void res.status(500).json({ error: "Server error" });
@@ -80,10 +85,10 @@ async function lockPair(a: number, b: number): Promise<() => void> {
 }
 
 router.post("/", requireAuth, async (req, res) => {
-	const { username, name } = req.body || {};
-	if (typeof username !== "string" || !username.trim()) return void res.status(400).json({ error: "Username is required" });
-	if (name !== undefined && name !== null && typeof name !== "string") return void res.status(400).json({ error: "Name must be a string" });
-	const nickname = typeof name === "string" && name.trim() ? name.trim().slice(0, 100) : null;
+	const body = parse(res, AddContact, req.body);
+	if (!body) return;
+	const { username } = body;
+	const nickname = body.name ?? null;
 
 	try {
 		const target = await findUserByUsername(username);
@@ -166,15 +171,18 @@ router.post("/", requireAuth, async (req, res) => {
 			// what they may see of this user can have changed
 			const theirs = await prisma.contact.findFirst({ where: { ownerId: target.id, conversationId: row.conversationId }, select: { id: true } });
 			if (theirs) await emitContactUpsert(target.id, theirs.id);
-			return void res.status(200).json(row);
+			return void reply(res, "POST /api/contacts", row);
 		}
 		// (set above whenever no existing row was adopted)
 		if (!created) throw new Error("contact row not created");
-		const row = await contactRowFor(req.userId, created.id);
-		// this user's other devices, and the other person's list
-		emitToUser(req.userId, "contact:upsert", row, { exceptSocketId: actingSocket(req) });
+		// the other person's list gets its new row in any case
 		if (theirRowId) await emitContactUpsert(target.id, theirRowId);
-		return void res.status(201).json(row);
+		const row = await contactRowFor(req.userId, created.id);
+		// (removed again by another request in the meantime)
+		if (!row) return void res.status(404).json({ error: "Contact not found" });
+		// this user's other devices
+		emitToUser(req.userId, "contact:upsert", row, { exceptSocketId: actingSocket(req) });
+		return void reply(res, "POST /api/contacts", row, 201);
 	} catch (e) {
 		// the database's own guarantee (one row per person in a list): another
 		// request (or server process) added the same contact a moment earlier
@@ -186,40 +194,30 @@ router.post("/", requireAuth, async (req, res) => {
 
 // ─── Update (pin, mute, block, archive, nickname) ─────────────────────────
 router.patch("/:id", requireAuth, async (req, res) => {
-	const id = parseId(req.params.id);
-	if (!id) return void res.status(400).json({ error: "Invalid contact id" });
-	const { isPinned, pinOrder, isMuted, isBlocked, nickname, isArchived } = req.body || {};
-	if (nickname !== undefined && nickname !== null && typeof nickname !== "string") return void res.status(400).json({ error: "nickname must be a string" });
-	for (const [key, value] of Object.entries({ isPinned, isMuted, isBlocked, isArchived })) {
-		if (value !== undefined && typeof value !== "boolean") return void res.status(400).json({ error: `${key} must be a boolean` });
-	}
-	if (pinOrder !== undefined && pinOrder !== null && (!Number.isInteger(pinOrder) || pinOrder < 0 || pinOrder > 9999)) {
-		return void res.status(400).json({ error: "pinOrder must be an integer between 0 and 9999" });
-	}
-	const data: Prisma.ContactUncheckedUpdateInput = {};
-	if (isPinned !== undefined) data.isPinned = isPinned;
-	if (pinOrder !== undefined) data.pinOrder = pinOrder;
-	if (isMuted !== undefined) data.isMuted = isMuted;
-	if (isBlocked !== undefined) data.isBlocked = isBlocked;
-	if (isArchived !== undefined) data.isArchived = isArchived;
-	// "" clears the nickname; naming someone makes them one of this user's contacts
-	if (nickname !== undefined) data.nickname = typeof nickname === "string" && nickname.trim() ? nickname.trim().slice(0, 100) : null;
-	if (data.nickname) data.addedByOwner = true;
-	if (Object.keys(data).length === 0) return void res.status(400).json({ error: "Nothing to change" });
+	const params = parse(res, ContactParam, req.params);
+	if (!params) return;
+	const { id } = params;
+	const body = parse(res, UpdateContact, req.body);
+	if (!body) return;
+	// what was not sent is undefined (Prisma leaves it); "" or null took the
+	// nickname away; naming someone makes them one of this user's contacts
+	const data: Prisma.ContactUncheckedUpdateInput = { ...body, ...(body.nickname ? { addedByOwner: true } : {}) };
 
 	try {
 		const contact = await prisma.contact.findFirst({ where: { id, ownerId: req.userId }, select: { id: true, conversationId: true, isSaved: true } });
 		if (!contact) return void res.status(404).json({ error: "Contact not found" });
 		// Saved Messages can be pinned or muted, nothing else
-		if (contact.isSaved && (data.isBlocked !== undefined || data.isArchived !== undefined || data.nickname !== undefined)) {
+		if (contact.isSaved && (body.isBlocked !== undefined || body.isArchived !== undefined || body.nickname !== undefined)) {
 			return void res.status(400).json({ error: "Saved Messages cannot be changed this way" });
 		}
 		await prisma.contact.update({ where: { id }, data });
 		// mute and block decide who gets messages and notifications
 		invalidateConversation(contact.conversationId);
 		const row = await contactRowFor(req.userId, id);
+		// (removed by another request in the meantime)
+		if (!row) return void res.status(404).json({ error: "Contact not found" });
 		emitToUser(req.userId, "contact:upsert", row, { exceptSocketId: actingSocket(req) });
-		return void res.json(row);
+		return void reply(res, "PATCH /api/contacts/:id", row);
 	} catch (e) {
 		log.error("PATCH /contacts/:id failed", e);
 		return void res.status(500).json({ error: "Server error" });
@@ -229,8 +227,9 @@ router.patch("/:id", requireAuth, async (req, res) => {
 // ─── Remove ───────────────────────────────────────────────────────────────
 // Only this user's own row goes; the other person keeps theirs (and the chat).
 router.delete("/:id", requireAuth, async (req, res) => {
-	const id = parseId(req.params.id);
-	if (!id) return void res.status(400).json({ error: "Invalid contact id" });
+	const params = parse(res, ContactParam, req.params);
+	if (!params) return;
+	const { id } = params;
 	try {
 		const contact = await prisma.contact.findFirst({ where: { id, ownerId: req.userId } });
 		if (!contact) return void res.status(404).json({ error: "Contact not found" });
@@ -252,7 +251,7 @@ router.delete("/:id", requireAuth, async (req, res) => {
 			contactRowId: contact.id,
 			conversationId: contact.conversationId,
 		});
-		return void res.json({ success: true });
+		return void reply(res, "DELETE /api/contacts/:id", { success: true });
 	} catch (e) {
 		log.error("DELETE /contacts/:id failed", e);
 		return void res.status(500).json({ error: "Server error" });

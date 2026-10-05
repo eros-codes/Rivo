@@ -3,9 +3,8 @@ import { useId, useState } from "react";
 import { fromLocalInputValue, toLocalInputValue } from "../../../shared/lib/time";
 import { Dialog } from "../../../shared/ui/Dialog";
 import { showToast } from "../../services/feedback";
+import { CAPSULE_MAX_DELAY_MS as MAX_MS, CAPSULE_MIN_DELAY_MS as MIN_MS } from "../../../../shared/limits.ts";
 
-const MIN_MS = 5 * 60_000;
-const MAX_MS = 365 * 24 * 60 * 60_000;
 
 const toMinute = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), 0, 0);
 

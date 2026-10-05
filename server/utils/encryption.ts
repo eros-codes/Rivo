@@ -39,12 +39,11 @@ function _decodeKey(str: string): Buffer {
 }
 
 function _getKekBuffer(keyId = "v1"): Buffer {
-  // Accept env names like KEK_V1, KEK_v1 or fallback to KEK
-  const candidateNames: string[] = [];
+  // key id "v1" → KEK_V1 (an id given as "KEK_V1" works too). There is no
+  // catch-all: a shared fallback would quietly wrap "v2" with some other key
+  // when KEK_V2 is missing, and those messages would break the day KEK_V2 is set.
   const normalized = String(keyId);
-  if (/^KEK_/i.test(normalized)) candidateNames.push(normalized.toUpperCase());
-  else candidateNames.push(`KEK_${normalized.toUpperCase()}`);
-  candidateNames.push("KEK");
+  const candidateNames = [/^KEK_/i.test(normalized) ? normalized.toUpperCase() : `KEK_${normalized.toUpperCase()}`];
 
   // First: check in-memory vault cache populated by initKeyStore()
   if (_vaultCache && Date.now() - _vaultCacheTs < _vaultCacheTtl) {
@@ -142,6 +141,30 @@ function decryptMessage(ciphertextB64: string, ivB64: string, authTagB64: string
     // GCM authentication failures will throw here
     throw new Error(`decryption failed: ${messageOf(err)}`, { cause: err });
   }
+}
+
+/**
+ * A short text that belongs to a message (its quote, its forwarded copy),
+ * sealed with the message's DEK and stored as JSON {c, iv, t}.
+ */
+function sealText(plain: string, dek: Buffer): string {
+  const r = encryptMessage(plain, dek);
+  return JSON.stringify({ c: r.ciphertext, iv: r.iv, t: r.authTag });
+}
+
+/** The text sealText stored. Throws when the value is not one or `dek` does not open it. */
+function openText(value: string, dek: Buffer): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("not a sealed text");
+  }
+  const s = parsed as { c?: unknown; iv?: unknown; t?: unknown } | null;
+  if (!s || typeof s !== "object" || typeof s.c !== "string" || typeof s.iv !== "string" || typeof s.t !== "string") {
+    throw new Error("not a sealed text");
+  }
+  return decryptMessage(s.c, s.iv, s.t, dek);
 }
 
 // Wrap a DEK with the KEK. KEK may come from env or from a previously-initialized vault cache.
@@ -277,6 +300,9 @@ async function initKeyStore(): Promise<void> {
             log.error('vault refresh failed', messageOf(e) || e);
           });
         }, refreshMs);
+        // the refresh alone does not keep a process running (a script that
+        // is done would otherwise never exit; the server has its listener)
+        _vaultRefreshInterval.unref();
       } catch (e) {
         // ignore interval setup failures
       }
@@ -302,4 +328,4 @@ async function refreshKeyStore(): Promise<void> {
   }
 }
 
-export { generateDEK, encryptMessage, wrapDEK, unwrapDEK, decryptMessage, initKeyStore, refreshKeyStore };
+export { generateDEK, encryptMessage, wrapDEK, unwrapDEK, decryptMessage, sealText, openText, initKeyStore, refreshKeyStore };

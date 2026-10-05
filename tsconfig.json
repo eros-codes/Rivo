@@ -17,6 +17,8 @@
 		"forceConsistentCasingInFileNames": true,
 		"skipLibCheck": true,
 		"noEmit": true,
+		// (shared/ is also run by Node, which needs the real file names)
+		"allowImportingTsExtensions": true,
 		"types": []
 	},
 	"include": ["client"],

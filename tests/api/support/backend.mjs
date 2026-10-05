@@ -5,7 +5,7 @@
 //   TEST_DATABASE_URL  a database only for tests (its name must contain
 //                      "test": the tests write to it). `npm run test:api`
 //                      brings its migrations up to date first.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -103,6 +103,21 @@ export async function startServer(extraEnv = {}) {
 				proc.kill("SIGTERM");
 			}),
 	};
+}
+
+/**
+ * Runs one of the command-line tools (server/scripts/…) on the test
+ * database, with a test server's settings plus `env`.
+ * @returns {{ code: number | null, out: string }} exit code and everything it printed
+ */
+export function runScript(file, args = [], env = {}) {
+	const r = spawnSync(process.execPath, [file, ...args], {
+		cwd: ROOT,
+		env: { ...process.env, ...testEnv(0, join(tmpdir(), "rivo-script-mails.jsonl")), DATABASE_URL: testDatabaseUrl(), ...env },
+		encoding: "utf8",
+		timeout: 120_000,
+	});
+	return { code: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 }
 
 /** The emails a test server has "sent", oldest first. */

@@ -5,17 +5,11 @@ import { authApi, type PublicUser } from "../shared/api/endpoints";
 import { ApiError, errorText } from "../shared/api/http";
 import { keys, read, write, writeJson } from "../shared/lib/storage";
 import { PasswordInput } from "../shared/ui/PasswordInput";
+import { CODE_LENGTH, isEmail, NAME_MAX_LENGTH, PASSWORD_MAX_LENGTH as PASSWORD_MAX, PASSWORD_MIN_LENGTH as PASSWORD_MIN, USERNAME_PATTERN as USERNAME_RE } from "../../shared/limits.ts";
 
 type Step = "login" | "signup" | "verify" | "password" | "forgot";
 type Errors = Partial<Record<string, string>>;
 
-// (the same check as the server's: it cannot backtrack on long input)
-const EMAIL_RE = /^[^\s@.]+(\.[^\s@.]+)*@[^\s@.]+(\.[^\s@.]+)+$/;
-const isEmail = (v: string) => v.length <= 254 && EMAIL_RE.test(v);
-const USERNAME_RE = /^[a-zA-Z0-9_]{3,30}$/;
-const PASSWORD_MIN = 8;
-const PASSWORD_MAX = 128;
-const CODE_LENGTH = 6;
 const RESEND_MS = 60_000;
 const REMEMBERED = "rememberedUser";
 const RESEND_KEY = "resendCooldown";
@@ -301,7 +295,7 @@ function SignUpForm({ data, setData, onCodeSent, onLogin }: { data: SignUp; setD
 
 	return (
 		<Form className="signup" title="Sign Up" onSubmit={() => void submit()} busy={busy}>
-			<TextField id="name" label="Name" inputRef={refs.name} value={data.name} onChange={set("name")} error={errors.name} autoComplete="name" placeholder="Your name" maxLength={100} dir="auto" autoFocus />
+			<TextField id="name" label="Name" inputRef={refs.name} value={data.name} onChange={set("name")} error={errors.name} autoComplete="name" placeholder="Your name" maxLength={NAME_MAX_LENGTH} dir="auto" autoFocus />
 			<TextField
 				id="email"
 				label="Email"

@@ -5,6 +5,7 @@ import { audienceOf, canSee } from "../utils/privacy.ts";
 import { emitToUser } from "../realtime/registry.ts";
 import { log } from "../utils/logger.ts";
 import { messageOf } from "../utils/errors.ts";
+import { isoOrNull, privacyOf } from "../utils/wire.ts";
 
 async function ownersOf(userId: number): Promise<number[]> {
 	const rows = await prisma.contact.findMany({ where: { contactId: userId, ownerId: { not: userId } }, select: { ownerId: true } });
@@ -25,12 +26,12 @@ export async function broadcastPresence(
 		const owners = await ownersOf(userId);
 		if (owners.length === 0) return;
 		const rel = await audienceOf(userId, owners);
-		const seen = lastSeen ? new Date(lastSeen).toISOString() : null;
+		const seen = isoOrNull(lastSeen);
 		for (const ownerId of owners) {
 			const allowed = !me.isDeleted && canSee(me.privacyOnline, rel.get(ownerId));
 			if (allowed) {
 				if (online) emitToUser(ownerId, "user:online", { userId });
-				else emitToUser(ownerId, "user:offline", { userId, lastSeen: seen, privacyOnline: me.privacyOnline });
+				else emitToUser(ownerId, "user:offline", { userId, lastSeen: seen, privacyOnline: privacyOf(me.privacyOnline) });
 			} else if (notifyHidden) {
 				emitToUser(ownerId, "user:offline", { userId, lastSeen: null, privacyOnline: "nobody" });
 			}

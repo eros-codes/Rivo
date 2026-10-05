@@ -1,72 +1,91 @@
-Encryption at rest (DEK/KEK) — Rivo
-=================================
+رمزنگاری پیام‌ها در دیتابیس (DEK/KEK) — Rivo
+==============================================
 
 خلاصه
 ------
-- معماری: هر پیام با یک DEK (256-bit) با `AES-256-GCM` رمز می‌شود. DEK سپس با یک KEK سروری (Envelope Encryption) با همان الگوریتم بسته‌بندی می‌شود.
-- رکوردهای پیام در دیتابیس ستون‌های `ciphertext`, `iv`, `auth_tag`, `wrapped_dek`, `key_id` را نگه می‌دارند. فیلد `text` به‌صورت legacy/nullable است.
+- هر پیام با یک کلید تصادفی مخصوص خودش (DEK، ۲۵۶ بیت) با `AES-256-GCM` رمز می‌شود.
+  خود DEK با کلید سرور (KEK) با همان الگوریتم بسته‌بندی (wrap) می‌شود: Envelope Encryption.
+- ستون‌های پیام: `ciphertext`، `iv`، `auth_tag` (متن رمزشده)، `wrapped_dek` (DEK بسته‌بندی‌شده)
+  و `key_id` (با کدام KEK، مثلاً `v1`). متن رمزنشده هیچ‌جا ذخیره نمی‌شود (ستون قدیمی `text`
+  با migration `20261008090000_drop_legacy_columns` حذف شد).
+- متن نقل‌قول (`replyToText`) و متن فوروارد (`forwardedText`) با DEK همان پیام مهر می‌شوند
+  (`sealText` / `openText` در `server/utils/encryption.ts`، به شکل JSON `{c, iv, t}`).
+- پیام حذف‌شده هیچ‌کدام از این‌ها را نگه نمی‌دارد.
 
-فایل‌های مرتبط
-----------------
-- `server/utils/encryption.ts` — توابع اصلی رمزنگاری و `initKeyStore()` برای خواندن KEK از Vault یا fallback به env: [server/utils/encryption.ts](server/utils/encryption.ts)
-- اسکریپت‌ها:
-  - `server/scripts/push_keks_to_vault.js` — آپلود KEK‌ها به Vault (interactive + dry‑run): [server/scripts/push_keks_to_vault.js](server/scripts/push_keks_to_vault.js)
-  - `server/scripts/mock_vault_server.js` — mock Vault محلی برای تست: [server/scripts/mock_vault_server.js](server/scripts/mock_vault_server.js)
-  - `server/scripts/rotate_keys.js` — چرخش کلیدها (dry‑run و batch): [server/scripts/rotate_keys.js](server/scripts/rotate_keys.js)
-  - `server/scripts/insert_persistent_message.js` — درج پیام تست برای چرخش: [server/scripts/insert_persistent_message.js](server/scripts/insert_persistent_message.js)
-  - `server/scripts/verify_decrypted_after_rotation.js` — بررسی بازگشایی پیام پس از چرخش: [server/scripts/verify_decrypted_after_rotation.js](server/scripts/verify_decrypted_after_rotation.js)
-  - `server/scripts/test_message_encryption.js` — تست E2E رمز/بازگشایی: [server/scripts/test_message_encryption.js](server/scripts/test_message_encryption.js)
-- مسیرهای API/socket: `server/routes/messages.ts`, `server/socket/index.ts` (رمزنگاری قبل از ذخیره؛ بازگشایی در خواندن): [server/routes/messages.ts](server/routes/messages.ts) — [server/socket/index.ts](server/socket/index.ts)
+کلیدها
+------
+- اسم هر KEK در `.env`: `KEK_V1`، `KEK_V2`، … (۳۲ بایت، base64 یا hex). شناسه‌ی `v2` یعنی `KEK_V2`.
+- `ACTIVE_KEY_ID` (پیش‌فرض `v1`): پیام‌های جدید با کدام کلید بسته‌بندی شوند.
+- دیگر هیچ کلید «همه‌کاره»ای (`KEK`) وجود ندارد: قبلاً اگر `KEK_V2` تنظیم نبود، `KEK` جایش
+  استفاده می‌شد و پیام‌ها بی‌صدا با کلید دیگری بسته‌بندی می‌شدند؛ روزی که `KEK_V2` تنظیم
+  می‌شد، آن پیام‌ها دیگر باز نمی‌شدند.
+- **یک KEK را هیچ‌وقت عوض نکن.** پیام‌هایی که با آن بسته‌بندی شده‌اند فقط با همان باز می‌شوند.
+  رفتن به کلید جدید یعنی «چرخش» (پایین‌تر).
 
-راه‌اندازی Vault (نمونه HashiCorp Vault KV v2)
-----------------------------------------------
-1. Vault را آماده کن (production: از managed KMS یا یک Vault امن استفاده کن). در مثال محلی از mount=`secret`, path=`rivo` استفاده می‌کنیم.
-2. KEKها را تولید کن (32 بایت، base64 یا hex):
-   ```powershell
-   node -p "require('crypto').randomBytes(32).toString('base64')"
-   ```
-3. KEKها را داخل Vault قرار بده (روش‌ها):
-   - با Vault CLI:
-     ```bash
-     vault kv put secret/rivo KEK_V1=<base64_KekV1> KEK_V2=<base64_KekV2>
-     ```
-   - یا از helper داخل repo استفاده کن (interactive):
-     ```powershell
-     $env:VAULT_ADDR='http://127.0.0.1:8200'
-     $env:VAULT_TOKEN='s.xxxxx'
-     node server/scripts/push_keks_to_vault.js
-     ```
+فایل‌ها و دستورها
+-----------------
+- `server/utils/encryption.ts` — رمز/بازکردن، wrap/unwrap، `initKeyStore()` (خواندن کلیدها از Vault)
+- `server/utils/messageView.ts` — پیام ذخیره‌شده ← آنچه هر کاربر می‌بیند (تنها مسیر خواندن)
 
-راه‌اندازی و چک‌کردن محلی (گام‌های پیشنهادی)
----------------------------------------------
-1. (اختیاری) برای تست لوکال یک mock Vault اجرا کن:
-   ```powershell
-   node server/scripts/mock_vault_server.js
-   ```
-2. KEKها را در Vault قرار بده (یا از env برای dev استفاده کن).
-3. سرور را بالا بیاور:
-   ```powershell
-   npm run server
-   ```
-4. اسکریپت تست رمزنگاری را اجرا کن:
-   ```powershell
-   node server/scripts/test_message_encryption.js
-   ```
-5. چرخش کلید (همیشه ابتدا dry‑run):
-   ```powershell
-   node server/scripts/rotate_keys.js --from v1 --to v2 --batch 100 --dry-run
-   # پس از بازبینی و گرفتن backup:
-   node server/scripts/rotate_keys.js --from v1 --to v2 --batch 100
-   ```
-6. صحت پیام‌های چرخش‌شده را بررسی کن:
-   ```powershell
-   node server/scripts/verify_decrypted_after_rotation.js
-   ```
+| دستور | کار |
+|---|---|
+| `npm run gen-kek` | یک کلید تازه چاپ می‌کند |
+| `npm run check-kek` | کلید فعال و هر `KEK_V…` تنظیم‌شده واقعاً کار می‌کنند؟ (بدون دیتابیس) |
+| `npm run verify-messages` | همه‌ی پیام‌ها (متن، نقل‌قول، فوروارد) با کلیدهای فعلی باز می‌شوند؟ چیزی را عوض نمی‌کند. `-- --key v2`: فقط پیام‌های یک کلید؛ `-- --limit 500`: فقط جدیدترین‌ها |
+| `npm run rotate-keys` | چرخش کلید (پایین‌تر) |
+| `npm run test:enc` | یک پیام مثل خود سرور می‌نویسد، از مسیر خواندن سرور می‌خواند و مقایسه می‌کند، بعد پاکش می‌کند |
+| `npm run insert-test-message` | یک پیام تستی در یک حساب پنهان (حذف‌شده) می‌گذارد؛ برای تمرین چرخش روی دیتابیس خالی. `-- --key v1` |
+| `npm run mock-vault` | یک Vault ساختگی در حافظه، برای تست محلی |
+| `npm run push-keks` | کلیدهای `KEK_V…` را در Vault می‌گذارد (`-- --dry-run` اول) |
 
-نکات عملی و ایمنی (مهم)
-------------------------
-- در production KEKها را هرگز در `.env` یا repository قرار نده. از Vault یا managed KMS استفاده کن.
-- قبل از اجرای هر چرخش واقعی، گرفتن backup کامل از دیتابیس اجباری است.
-- ابتدا همیشه `--dry-run` را اجرا کن و خروجی را بررسی کن تا از بی‌خطر بودن چرخش مطمئن شوی.
-- دسترسی به Vault باید محدود و audit شده باشد؛ توکن Vault را در CI/Secrets store امن نگهدار.
-- نگه داشتن `mock_vault_server.js` برای توسعه محلی مفید است، اما آن را در محیط production اجرا نکن.
+`test:enc` و `insert-test-message` روی `NODE_ENV=production` اجرا نمی‌شوند.
+
+Vault (اختیاری)
+---------------
+با `SECRET_PROVIDER=vault` کلیدها به جای `.env` از Vault (KV نسخه‌ی ۲، `VAULT_KV_MOUNT` /
+`VAULT_KV_PATH`) خوانده می‌شوند و سرور اگر Vault در دسترس نباشد به `.env` برنمی‌گردد.
+
+```bash
+npm run mock-vault              # (فقط برای تست، در یک ترمینال جدا)
+npm run push-keks -- --dry-run  # چه چیزی نوشته می‌شود (فقط اسم‌ها)
+npm run push-keks
+```
+
+`push-keks` چیزهای دیگری را که در همان مسیر Vault هست نگه می‌دارد، و کلیدی را که در Vault با
+مقدار **دیگری** هست بدون `--force` عوض نمی‌کند (همان دلیل: پیام‌های قبلی دیگر باز نمی‌شوند).
+اگر Vault جواب ندهد یا توکن اشتباه باشد، قبل از نوشتن متوقف می‌شود. در production آدرس Vault
+باید `https` باشد.
+
+چرخش کلید (v1 → v2)
+-------------------
+چرخش هیچ پیامی را رمزگشایی نمی‌کند: فقط DEK هر پیام با کلید قدیم باز و با کلید جدید دوباره
+بسته‌بندی می‌شود.
+
+1. بکاپ: `npm run db:backup`. **`KEK_V1` را هم کنار بکاپ نگه دار:** هر بکاپی که قبل از چرخش
+   گرفته شده فقط با `KEK_V1` خوانده می‌شود.
+2. کلید جدید: `npm run gen-kek` ← در `.env` به اسم `KEK_V2` (یا در Vault با `push-keks`).
+   `KEK_V1` سر جایش می‌ماند. بعد `npm run check-kek`.
+3. `ACTIVE_KEY_ID=v2` و سرور را ری‌استارت کن: از این لحظه پیام‌های جدید با `v2` هستند.
+4. اول ببین چه می‌شود، بعد انجامش بده:
+   ```bash
+   npm run rotate-keys -- --from v1 --to v2 --dry-run
+   npm run rotate-keys -- --from v1 --to v2
+   ```
+5. `npm run verify-messages` باید بگوید همه باز می‌شوند (و هیچ پیامی با `v1` نمانده).
+6. فقط بعد از این، `KEK_V1` را می‌شود از `.env` سرور برداشت (نه از کنار بکاپ‌ها).
+
+جزئیاتی که اسکریپت رعایت می‌کند:
+- قبل از هر تغییر، مقدار قبلی هر ردیف در `backups/rotation-v1-to-v2-<زمان>.jsonl` نوشته می‌شود
+  (پوشه‌ی `backups/` در git نمی‌رود؛ `--backup <پوشه>` جای دیگری می‌گذاردش).
+- هر بسته‌بندی جدید قبل از ذخیره یک بار باز می‌شود؛ اگر کلید قدیم اشتباه باشد (۱۰ خطا بدون
+  هیچ موفقیت) متوقف می‌شود.
+- پیامی که وسط چرخش ویرایش شود (و DEK تازه بگیرد) دست نمی‌خورد و شمرده می‌شود؛ یک اجرای
+  دوباره آن را هم منتقل می‌کند.
+- `updatedAt` پیام‌ها عوض نمی‌شود: چیزی که کاربر می‌بیند عوض نشده، پس هیچ دستگاهی لازم نیست
+  همه‌ی پیام‌ها را دوباره بگیرد.
+
+نکته‌های امنیتی
+---------------
+- در production کلیدها را در repository نگذار؛ Vault یا یک KMS مدیریت‌شده بهتر از `.env` است.
+- دسترسی به Vault محدود و ثبت‌شده باشد؛ توکنش را در secret store نگه دار.
+- `mock-vault` کلیدها را بدون هیچ محافظتی در حافظه نگه می‌دارد و با `NODE_ENV=production` اجرا نمی‌شود.

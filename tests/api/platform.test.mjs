@@ -93,3 +93,44 @@ test("a stopping server says so on /api/health, then exits cleanly", async () =>
 	await stopped;
 	assert.match(s.log(), /shutting down[\s\S]*stopped/);
 });
+
+test("every input is checked against its schema: bad ones get the schema's words and change nothing", async () => {
+	const a = await newUser(srv.base, "Vic");
+	const sa = await a.socket().ready;
+	const saved = (await a.get("/api/contacts")).data.find((c) => c.isSaved);
+	const kept = (await sa.request("message:send", { conversationId: saved.conversationId, text: "keep me", clientId: "keepme0001" })).message;
+
+	// over the socket
+	assert.equal((await sa.request("message:send", "hello")).error, "Invalid data");
+	assert.equal((await sa.request("message:send", { conversationId: saved.conversationId, text: "x", isOneTime: "yes" })).error, "Invalid data");
+	assert.equal((await sa.request("message:edit", { messageId: kept.id, text: "   " })).error, "Invalid data");
+	assert.equal((await sa.request("messages:delete", { messageIds: [kept.id, "x"] })).error, "Invalid data");
+	assert.equal((await sa.request("messages:forward", { conversationId: saved.conversationId, items: [] })).error, "Invalid data");
+	assert.equal((await sa.request("reaction:add", { messageId: kept.id, emoji: "a b" })).error, "Invalid data");
+	assert.equal((await sa.request("message:seen", { conversationId: "x" })).error, "Invalid conversationId");
+
+	// over REST
+	const bad = async (method, path, body, error) => {
+		const r = await a.req(method, path, body);
+		assert.equal(r.status, 400, `${method} ${path}: ${r.status} ${JSON.stringify(r.data)}`);
+		assert.equal(r.data.error, error, `${method} ${path}`);
+	};
+	await bad("PATCH", "/api/users/me", {}, "Nothing to change");
+	await bad("PATCH", "/api/users/me", { privacyOnline: "friends" }, "Invalid value for privacyOnline");
+	await bad("POST", "/api/contacts", { username: "   " }, "Username is required");
+	await bad("PATCH", `/api/contacts/${saved.id}`, { isMuted: "true" }, "isMuted must be a boolean");
+	await bad("GET", "/api/users/search?q=a", undefined, "Query too short");
+	await bad("POST", "/api/messages", { conversationId: saved.conversationId, text: "x", clientId: "no!" }, "Invalid clientId");
+	await bad("PATCH", `/api/messages/${kept.id}`, { text: "" }, "Invalid data");
+	await bad("GET", `/api/conversations/${saved.conversationId}/messages?before=yesterday`, undefined, "Invalid before date");
+	// a blank upToId must not mean "clear everything"
+	await bad("DELETE", `/api/conversations/${saved.conversationId}/messages?upToId=`, undefined, "Invalid upToId");
+	await bad("POST", "/api/push/subscribe", { endpoint: "https://fcm.googleapis.com/x", keys: { p256dh: 1, auth: "a" } }, "Invalid subscription");
+	await bad("DELETE", "/api/sessions/short", undefined, "Invalid session id");
+
+	const page = (await a.get(`/api/conversations/${saved.conversationId}/messages`)).data;
+	const still = page.messages.find((m) => m.id === kept.id);
+	assert.equal(still?.text, "keep me");
+	assert.equal(still?.isDeleted, false);
+	sa.close();
+});

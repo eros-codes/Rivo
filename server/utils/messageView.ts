@@ -3,14 +3,16 @@
 // decryption and time-capsule rules live in one place.
 import type { Message } from "@prisma/client";
 import prisma from "../prisma.ts";
-import { unwrapDEK, decryptMessage } from "./encryption.ts";
+import { unwrapDEK, decryptMessage, openText } from "./encryption.ts";
 import { log } from "./logger.ts";
 import { messageOf } from "./errors.ts";
+import { iso, isoOrNull } from "./wire.ts";
+import type { LiveMessage, MessagePreview, Tombstone } from "../../shared/api.ts";
 
 /** A stored message, with its reactions when they were loaded. */
 export type StoredMessage = Message & { reactions?: { userId: number; emoji: string }[] };
 type CapsuleFields = Pick<Message, "isTimeCapsule" | "openedAt" | "scheduledFor">;
-type BodyFields = Pick<Message, "id" | "text" | "ciphertext" | "iv" | "auth_tag" | "wrapped_dek" | "key_id">;
+type BodyFields = Pick<Message, "id" | "ciphertext" | "iv" | "auth_tag" | "wrapped_dek" | "key_id">;
 /** The decrypted body; `dek` decrypts the message's quote and forwarded text. */
 export interface Body {
 	text: string;
@@ -20,57 +22,34 @@ export interface Body {
 
 const UNAVAILABLE = "Message unavailable";
 
-function toIso(d: Date | string | null | undefined): string | null {
-	if (!d) return null;
-	const date = d instanceof Date ? d : new Date(d);
-	return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
 /** A time capsule is locked until it is opened or its time has passed. */
 export function isCapsuleLocked(m: CapsuleFields | null | undefined, now = new Date()): boolean {
 	return !!(m && m.isTimeCapsule && !m.openedAt && m.scheduledFor && new Date(m.scheduledFor) > now);
 }
 
-/**
- * Decrypts the message body.
- * @returns {{ text: string, dek: Buffer|null, ok: boolean }}
- */
+/** Decrypts the message body ("Message unavailable" when it cannot be read, e.g. a deleted message). */
 export function decryptBody(m: BodyFields | null | undefined): Body {
-	if (m && m.ciphertext && m.wrapped_dek) {
-		try {
-			const dek = unwrapDEK(m.wrapped_dek, m.key_id || "v1");
-			// (a row without iv / tag fails here, like any other damaged row)
-			return { text: decryptMessage(m.ciphertext, m.iv ?? "", m.auth_tag ?? "", dek), dek, ok: true };
-		} catch (e) {
-			log.error("decrypt failed for message", m.id, messageOf(e) || e);
-			return { text: UNAVAILABLE, dek: null, ok: false };
-		}
+	if (!m || !m.ciphertext || !m.wrapped_dek) return { text: UNAVAILABLE, dek: null, ok: false };
+	try {
+		const dek = unwrapDEK(m.wrapped_dek, m.key_id || "v1");
+		// (a row without iv / tag fails here, like any other damaged row)
+		return { text: decryptMessage(m.ciphertext, m.iv ?? "", m.auth_tag ?? "", dek), dek, ok: true };
+	} catch (e) {
+		log.error("decrypt failed for message", m.id, messageOf(e) || e);
+		return { text: UNAVAILABLE, dek: null, ok: false };
 	}
-	// legacy rows stored plaintext
-	if (m && typeof m.text === "string" && m.text) return { text: m.text, dek: null, ok: true };
-	return { text: UNAVAILABLE, dek: null, ok: false };
 }
 
-/** replyToText / forwardedText: encrypted JSON {c, iv, t} or legacy plaintext. */
+/** replyToText / forwardedText: sealed with the message's own key (sealText). */
 export function decryptAux(value: string | null | undefined, dek: Buffer | null, msgId: number): string | null {
 	if (!value) return null;
-	let parsed: unknown;
+	if (!dek) return UNAVAILABLE;
 	try {
-		parsed = JSON.parse(value);
-	} catch {
-		return value;
+		return openText(value, dek);
+	} catch (e) {
+		log.error("failed to decrypt quoted text", msgId, messageOf(e) || e);
+		return UNAVAILABLE;
 	}
-	const p = parsed as { c?: unknown; iv?: unknown; t?: unknown } | null;
-	if (p && typeof p === "object" && p.c && p.iv && p.t) {
-		if (!dek) return UNAVAILABLE;
-		try {
-			return decryptMessage(String(p.c), String(p.iv), String(p.t), dek);
-		} catch (e) {
-			log.error("failed to decrypt quoted text", msgId, messageOf(e) || e);
-			return UNAVAILABLE;
-		}
-	}
-	return value;
 }
 
 /**
@@ -91,32 +70,6 @@ export async function loadReplySenders(msgs: readonly (Pick<Message, "replyToId"
 	return map;
 }
 
-/** A live message as one user sees it. */
-export interface MessageViewFields {
-	id: number;
-	conversationId: number;
-	senderId: number;
-	text: string | null;
-	isSeen: boolean;
-	isEdited: boolean;
-	isPinned: boolean;
-	isDeleted: false;
-	isOneTime: boolean;
-	isTimeCapsule: boolean;
-	scheduledFor: string | null;
-	openedAt: string | null;
-	isLocked: boolean;
-	replyToId: number | null;
-	replyToName: string | null;
-	replyToSenderId: number | null;
-	replyToText: string | null;
-	forwardedText: string | null;
-	forwardedFrom: string | null;
-	reactions: { userId: number; emoji: string }[];
-	createdAt: string | null;
-	updatedAt: string | null;
-}
-
 /** The message as `viewerId` may see it (never includes ciphertext or keys). */
 export interface SerializeOptions {
 	now?: Date;
@@ -124,7 +77,7 @@ export interface SerializeOptions {
 	replySenders?: ReadonlyMap<number, number | null> | null;
 }
 
-export function serializeMessage(m: StoredMessage, viewerId: number | null, { now = new Date(), replySenders = null }: SerializeOptions = {}) {
+export function serializeMessage(m: StoredMessage, viewerId: number | null, { now = new Date(), replySenders = null }: SerializeOptions = {}): LiveMessage | Tombstone {
 	if (m.isDeleted) return tombstone(m, viewerId);
 	const isSender = m.senderId === viewerId;
 	const hidden = isCapsuleLocked(m, now) && !isSender;
@@ -137,7 +90,7 @@ export function serializeMessage(m: StoredMessage, viewerId: number | null, { no
 		replyToText = decryptAux(m.replyToText, body.dek, m.id);
 		forwardedText = decryptAux(m.forwardedText, body.dek, m.id);
 	}
-	const out: MessageViewFields & { clientId?: string } = {
+	const out: LiveMessage = {
 		id: m.id,
 		conversationId: m.conversationId,
 		senderId: m.senderId,
@@ -148,8 +101,8 @@ export function serializeMessage(m: StoredMessage, viewerId: number | null, { no
 		isDeleted: false,
 		isOneTime: !!m.isOneTime,
 		isTimeCapsule: !!m.isTimeCapsule,
-		scheduledFor: toIso(m.scheduledFor),
-		openedAt: toIso(m.openedAt),
+		scheduledFor: isoOrNull(m.scheduledFor),
+		openedAt: isoOrNull(m.openedAt),
 		isLocked: hidden,
 		replyToId: m.replyToId ?? null,
 		replyToName: m.replyToName ?? null,
@@ -158,12 +111,40 @@ export function serializeMessage(m: StoredMessage, viewerId: number | null, { no
 		forwardedText,
 		forwardedFrom: m.forwardedFrom ?? null,
 		reactions: Array.isArray(m.reactions) ? m.reactions.map((r) => ({ userId: r.userId, emoji: r.emoji })) : [],
-		createdAt: toIso(m.createdAt),
-		updatedAt: toIso(m.updatedAt || m.createdAt),
+		createdAt: iso(m.createdAt),
+		updatedAt: iso(m.updatedAt || m.createdAt),
 	};
 	// the id the sending device gave it (lets that device match its pending copy)
 	if (isSender && m.clientId) out.clientId = m.clientId;
 	return out;
+}
+
+/** A message whose row could not be turned into a view: its place in the chat, without text. */
+export function unavailableMessage(m: StoredMessage): LiveMessage {
+	return {
+		id: m.id,
+		conversationId: m.conversationId,
+		senderId: m.senderId,
+		text: UNAVAILABLE,
+		isSeen: !!m.isSeen,
+		isEdited: false,
+		isPinned: false,
+		isDeleted: false,
+		isOneTime: false,
+		isTimeCapsule: false,
+		scheduledFor: null,
+		openedAt: null,
+		isLocked: false,
+		replyToId: null,
+		replyToName: null,
+		replyToSenderId: null,
+		replyToText: null,
+		forwardedText: null,
+		forwardedFrom: null,
+		reactions: [],
+		createdAt: iso(m.createdAt),
+		updatedAt: iso(m.updatedAt || m.createdAt),
+	};
 }
 
 /**
@@ -171,14 +152,14 @@ export function serializeMessage(m: StoredMessage, viewerId: number | null, { no
  * sender also gets its clientId back: a device re-sending a message that was
  * deleted in the meantime can then let go of its pending copy.
  */
-export function tombstone(m: Pick<Message, "id" | "conversationId" | "senderId" | "createdAt" | "updatedAt" | "clientId">, viewerId: number | null = null) {
-	const out: { id: number; conversationId: number; senderId: number; isDeleted: true; createdAt: string | null; updatedAt: string | null; clientId?: string } = {
+export function tombstone(m: Pick<Message, "id" | "conversationId" | "senderId" | "createdAt" | "updatedAt" | "clientId">, viewerId: number | null = null): Tombstone {
+	const out: Tombstone = {
 		id: m.id,
 		conversationId: m.conversationId,
 		senderId: m.senderId,
 		isDeleted: true,
-		createdAt: toIso(m.createdAt),
-		updatedAt: toIso(m.updatedAt || m.createdAt),
+		createdAt: iso(m.createdAt),
+		updatedAt: iso(m.updatedAt || m.createdAt),
 	};
 	if (viewerId !== null && m.senderId === viewerId && m.clientId) out.clientId = m.clientId;
 	return out;
@@ -188,7 +169,7 @@ export function tombstone(m: Pick<Message, "id" | "conversationId" | "senderId" 
  * Short form used for chat-list previews. Locked capsules and one-time
  * messages are never revealed to the recipient here.
  */
-export function previewMessage(m: Message, viewerId: number, now = new Date()) {
+export function previewMessage(m: Message, viewerId: number, now = new Date()): MessagePreview {
 	const isSender = m.senderId === viewerId;
 	const locked = isCapsuleLocked(m, now) && !isSender;
 	const masked = locked || (!!m.isOneTime && !isSender);
@@ -197,7 +178,7 @@ export function previewMessage(m: Message, viewerId: number, now = new Date()) {
 		conversationId: m.conversationId,
 		senderId: m.senderId,
 		text: masked ? null : decryptBody(m).text,
-		createdAt: toIso(m.createdAt),
+		createdAt: iso(m.createdAt),
 		isDeleted: !!m.isDeleted,
 		isEdited: !!m.isEdited,
 		isPinned: !!m.isPinned,
@@ -205,7 +186,7 @@ export function previewMessage(m: Message, viewerId: number, now = new Date()) {
 		isOneTime: !!m.isOneTime,
 		isTimeCapsule: !!m.isTimeCapsule,
 		isLocked: locked,
-		scheduledFor: toIso(m.scheduledFor),
-		openedAt: toIso(m.openedAt),
+		scheduledFor: isoOrNull(m.scheduledFor),
+		openedAt: isoOrNull(m.openedAt),
 	};
 }

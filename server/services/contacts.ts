@@ -7,6 +7,8 @@ import { previewMessage } from "../utils/messageView.ts";
 import { emitToUser } from "../realtime/registry.ts";
 import { log } from "../utils/logger.ts";
 import { messageOf } from "../utils/errors.ts";
+import { iso, isoOrNull } from "../utils/wire.ts";
+import type { ContactRow, MessagePreview, Person } from "../../shared/api.ts";
 
 export const CONTACT_USER_SELECT = {
 	id: true,
@@ -40,7 +42,7 @@ export const CONTACT_INCLUDE = {
 } satisfies Prisma.ContactInclude;
 
 /** A contact row as loaded with CONTACT_INCLUDE. */
-export type ContactRow = Prisma.ContactGetPayload<{ include: typeof CONTACT_INCLUDE }>;
+export type ContactRecord = Prisma.ContactGetPayload<{ include: typeof CONTACT_INCLUDE }>;
 
 // Saved Messages first, then pinned, then the latest conversations. `id` last
 // as a unique tie-breaker, so offset pages never skip or repeat a row.
@@ -53,16 +55,18 @@ export const CONTACT_ORDER = [
 ] satisfies Prisma.ContactOrderByWithRelationInput[];
 
 /** Rows (with CONTACT_INCLUDE) → what their owner may see. */
-export async function serializeContacts(rows: ContactRow[], viewerId: number) {
+export async function serializeContacts(rows: ContactRecord[], viewerId: number): Promise<ContactRow[]> {
 	const others = rows.map((r) => r.contact?.id).filter((id): id is number => Number.isInteger(id) && id !== viewerId);
 	const rel = await relationsFor(viewerId, others);
 	const now = new Date();
 	return rows.map((r) => {
 		const isSelf = r.contact?.id === viewerId;
-		const contact = r.contact
-			? applyPrivacy(r.contact, isSelf ? { hasViewer: true, blockedViewer: false } : rel.get(r.contact.id))
-			: null;
-		let lastMessage = null;
+		let contact: Person | null = null;
+		if (r.contact) {
+			const seen = applyPrivacy(r.contact, isSelf ? { hasViewer: true, blockedViewer: false } : rel.get(r.contact.id));
+			contact = { ...seen, lastSeen: isoOrNull(seen.lastSeen) };
+		}
+		let lastMessage: MessagePreview | null = null;
 		try {
 			const m = r.conversation?.messages?.[0];
 			if (m) lastMessage = previewMessage(m, viewerId, now);
@@ -88,8 +92,8 @@ export async function serializeContacts(rows: ContactRow[], viewerId: number) {
 			conversation: r.conversation
 				? {
 						id: r.conversation.id,
-						createdAt: r.conversation.createdAt,
-						lastMessageAt: r.conversation.lastMessageAt,
+						createdAt: iso(r.conversation.createdAt),
+						lastMessageAt: isoOrNull(r.conversation.lastMessageAt),
 						messages: lastMessage ? [lastMessage] : [],
 					}
 				: null,
@@ -97,10 +101,8 @@ export async function serializeContacts(rows: ContactRow[], viewerId: number) {
 	});
 }
 
-/** A contact row as its owner sees it (what the API and `contact:upsert` send). */
-export type ContactView = Awaited<ReturnType<typeof serializeContacts>>[number];
-
-export async function contactRowFor(ownerId: number, contactRowId: number): Promise<ContactView | null> {
+/** A contact row as its owner sees it (what the API and `contact:upsert` send), or null when it is gone. */
+export async function contactRowFor(ownerId: number, contactRowId: number): Promise<ContactRow | null> {
 	const row = await prisma.contact.findFirst({ where: { id: contactRowId, ownerId }, include: CONTACT_INCLUDE });
 	if (!row) return null;
 	const [out] = await serializeContacts([row], ownerId);

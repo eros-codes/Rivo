@@ -2,6 +2,7 @@ import webpush from "web-push";
 import prisma from "../prisma.ts";
 import { log } from "./logger.ts";
 import { messageOf } from "./errors.ts";
+import type { PushSubscriptionData } from "../../shared/schemas/account.ts";
 
 /** What a notification carries (the service worker shows it). */
 export interface PushPayload {
@@ -86,20 +87,11 @@ export function isPushEndpoint(endpoint: unknown): boolean {
 	return PUSH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
 }
 
-/** What a browser sends as its subscription (checked before use). */
-interface SubscriptionInput {
-	endpoint?: unknown;
-	keys?: { p256dh?: unknown; auth?: unknown } | null;
-}
-
-export async function addSubscription(userId: number, input: unknown, sessionId: string | null = null): Promise<boolean> {
+/** A browser's subscription, already checked (PushSubscriptionInput); false when push is off or it points elsewhere. */
+export async function addSubscription(userId: number, sub: PushSubscriptionData, sessionId: string | null = null): Promise<boolean> {
 	if (!pushEnabled) return false;
-	const sub = input as SubscriptionInput | null | undefined;
-	if (!userId || !sub || !isPushEndpoint(sub.endpoint)) return false;
-	if (!sub.keys || typeof sub.keys.p256dh !== "string" || typeof sub.keys.auth !== "string") return false;
-	if (sub.keys.p256dh.length > 256 || sub.keys.auth.length > 256) return false;
-	const endpoint = sub.endpoint as string;
-	const keys = { p256dh: sub.keys.p256dh, auth: sub.keys.auth };
+	if (!userId || !isPushEndpoint(sub.endpoint)) return false;
+	const { endpoint, keys } = sub;
 	try {
 		// the same browser may have been used by another account before: the
 		// subscription follows whoever is signed in on it now

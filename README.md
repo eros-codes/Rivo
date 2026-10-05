@@ -1,7 +1,8 @@
 # Rivo
 
 پیام‌رسان بلادرنگ: Express 5 + Socket.IO + Prisma (Postgres) در سرور، React 19 +
-TypeScript در مرورگر.
+TypeScript در مرورگر. هر دو TypeScript‌اند و از یک قرارداد مشترک (`shared/`: شکل
+داده‌ها، رویدادها، و schemaهای zod که سرور هر ورودی را با آن‌ها چک می‌کند) می‌خوانند.
 
 ## راه‌اندازی
 
@@ -13,7 +14,8 @@ npm run build
 npm start                      # http://localhost:3000
 ```
 
-برای توسعه: `npm run dev` (ساخت پیوسته‌ی کلاینت + ری‌استارت سرور).
+برای توسعه: `npm run dev` (ساخت پیوسته‌ی کلاینت + ری‌استارت سرور). داده‌ی تست:
+`npm run db:seed` (۱۶ نفر با چت‌هایشان؛ `-- --wipe` اول همه‌چیز را پاک می‌کند).
 
 ## تست و کیفیت
 
@@ -29,7 +31,8 @@ npm run build && npm run test:e2e  # مرورگر (یک‌بار: npx playwright
 ## عملیات
 
 `GET /api/health` برای پایش، `npm run db:backup` / `db:restore` برای بکاپ، و
-`npm run db:check` قبل از migrationها. جزئیات: بخش‌های ۷ تا ۹ مستندات.
+`npm run db:check` قبل از migrationها. جزئیات: بخش‌های ۷ تا ۹ مستندات. کلیدهای
+رمزنگاری، چرخش کلید و Vault: [`server/ENCRYPTION.md`](server/ENCRYPTION.md).
 
 ## مستندات
 

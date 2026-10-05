@@ -1,4 +1,8 @@
-// Settings read once from the environment, with their defaults.
+// Settings read once from the environment, with their defaults. (Limits the
+// app must know too, like a message's length, are not settings: they are in
+// shared/limits.ts.)
+import { BATCH_MAX, MESSAGE_MAX_LENGTH } from "../shared/limits.ts";
+
 const num = (name: string, fallback: number): number => {
 	const v = Number(process.env[name]);
 	return Number.isFinite(v) && process.env[name] !== "" ? v : fallback;
@@ -42,14 +46,13 @@ export const config = {
 		csrfCookie: isProd ? "__Host-rivo_csrf" : "rivo_csrf",
 	},
 	bcryptRounds: num("BCRYPT_ROUNDS", isProd ? 12 : 10),
-	maxPasswordLength: 128,
 	pages: {
 		defaultLimit: num("DEFAULT_FETCH_LIMIT", 50),
 		maxLimit: num("MAX_FETCH_LIMIT", 100),
-		clientDefault: num("DEFAULT_PAGE_LIMIT", 50),
-		clientMax: num("MAX_CLIENT_PAGE_LIMIT", 100),
 		contactsDefault: num("CONTACTS_DEFAULT_LIMIT", 50),
 		contactsMax: Math.max(num("MAX_FETCH_LIMIT", 100), 200),
+		conversationsDefault: num("DEFAULT_CONVERSATIONS_TAKE", 50),
+		conversationsMax: num("MAX_CONVERSATIONS_TAKE", 100),
 	},
 	sync: {
 		// changes are looked up this much earlier than the client's cursor, so
@@ -76,9 +79,9 @@ export const config = {
 		},
 	},
 	messages: {
-		maxLength: num("MAX_MESSAGE_LENGTH", 1500),
+		maxLength: MESSAGE_MAX_LENGTH,
 		pinLimit: 20,
-		batchMax: 100,
+		batchMax: BATCH_MAX,
 	},
 	sentryDsn: process.env.SENTRY_DSN || "",
 };

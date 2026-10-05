@@ -34,6 +34,7 @@ npm start
 | `20261005090000_sessions_and_sync` | جدول `Session`؛ ستون‌های `updatedAt` و `clientId` در `Message` (پیام‌های موجود `updatedAt = createdAt` می‌گیرند)؛ `sessionId` در `PushSubscription` |
 | `20261006090000_contact_privacy` | ستون `addedByOwner` در `Contact` (توضیح در بخش «حریم خصوصی»)؛ نمایش ایمیل پیش‌فرض «فقط مخاطبین» |
 | `20261007090000_integrity_constraints` | قانون‌هایی که تا حالا فقط کد رعایت می‌کرد، حالا خود دیتابیس تضمین می‌کند: هر نفر یک بار در لیست هر کس، یک Saved Messages برای هر کاربر، هر عضو یک بار در هر چت (بخش ۹) |
+| `20261008090000_drop_legacy_columns` | دو ستونی که دیگر استفاده نمی‌شدند حذف می‌شوند: `Message.text` (متن رمزنشده‌ی پیام‌های قبل از رمزنگاری) و `Conversation.participantsKey`. اگر هنوز پیامی فقط به شکل رمزنشده مانده باشد، migration قبل از هر تغییری متوقف می‌شود و می‌گوید چند تا |
 
 > ⚠️ migration دوم ایمیل کاربرانی را که روی «Everyone» بودند «Contacts» می‌کند
 > (پیش‌فرض قبلی «Everyone» بود و هر کسی با جستجوی username ایمیل همه را می‌دید).
@@ -66,7 +67,13 @@ npm start
 | `npm run test:unit` / `test:api` / `test:e2e` | هر دسته جدا |
 | `npm run test:integration` | تست دستی روی یک سرور در حال اجرا |
 | `npm run db:check` | قبل از migration: ردیف‌های تکراری‌ای که migration یکپارچگی مرتب می‌کند |
+| `npm run db:seed` | داده‌ی تست (`-- --wipe`: اول همه‌چیز پاک می‌شود؛ فقط دیتابیس محلی) |
 | `npm run db:backup` / `db:restore` | بکاپ و بازگردانی (بخش ۹) |
+| `npm run gen-kek` / `check-kek` | ساختن کلید پیام‌ها / بررسی کلیدهای `.env` (یا Vault) |
+| `npm run gen-vapid` / `check-vapid` | ساختن / بررسی کلیدهای push |
+| `npm run verify-messages` | همه‌ی پیام‌ها با کلیدهای فعلی باز می‌شوند؟ (چیزی را عوض نمی‌کند) |
+| `npm run rotate-keys` | چرخش کلید؛ روال کاملش در `server/ENCRYPTION.md` |
+| `npm run test:enc` | یک پیام رمزشده می‌نویسد، از مسیر خواندن خود سرور می‌خواند، پاکش می‌کند |
 
 ---
 
@@ -75,7 +82,7 @@ npm start
 ```
 client/                    ← همه‌ی کد مرورگر (React 19 + TypeScript strict)
   shared/                  ← مشترک بین همه‌ی صفحه‌ها
-    api/                   ← types.ts (شکل داده‌های سیم)، http.ts، endpoints.ts
+    api/                   ← types.ts (از shared/ می‌آید)، http.ts، endpoints.ts
     lib/                   ← store، زمان، متن/لینک/RTL، theme، storage، hooks، تصویر
     ui/                    ← Icons، Avatar، Dialog، PasswordInput
     styles/global.css      ← توکن‌های رنگ، فونت‌ها، helperها
@@ -98,14 +105,19 @@ scripts/
   backup-db.sh             ← بکاپ دیتابیس و عکس‌ها
   restore-db.sh            ← بازگردانی (تمرینی یا واقعی)
   db-url.mjs               ← آدرس دیتابیس برای ابزارهای Postgres
-server/                    ← Express 5 + Socket.IO + Prisma (در حال انتقال به TypeScript، بخش ۳)
-  tsconfig.json            ← چک تایپ سرور (npm run typecheck)
+server/                    ← Express 5 + Socket.IO + Prisma، همه TypeScript (بخش ۳)
+  tsconfig.json            ← چک تایپ سرور و prisma/seed (npm run typecheck)
   utils/logger.ts          ← لاگ JSON با reqId/userId
   utils/errors.ts          ← خواندن پیام/کد خطای throw شده
-  scripts/check_duplicates.js ← npm run db:check
+  scripts/                 ← ابزارهای دستی: کلیدها، چرخش، بررسی پیام‌ها، Vault (server/ENCRYPTION.md)
+shared/                    ← قرارداد اپ و سرور (بخش ۳ → قرارداد)
+  api.ts                   ← شکل جواب‌ها و هر endpoint
+  events.ts                ← رویدادهای زنده و جواب‌هایشان
+  limits.ts                ← حدها (طول پیام، اسم، رمز، …)
+  schemas/                 ← schemaهای zod برای هر ورودی (بخش ۳ → ورودی‌ها)
 public/                    ← assetها (فونت، آیکن، emoji data) + خروجی build
 prisma/                    ← schema و migrationها
-  seed/                    ← داده‌ی تست (npm run db:seed)
+  seed/                    ← داده‌ی تست (npm run db:seed؛ data.ts را آزادانه عوض کن)
 tests/
   unit/                    ← منطق کلاینت (node:test + tsx)
   api/                     ← سرور واقعی + دیتابیس تست (node:test)
@@ -122,7 +134,7 @@ eslint.config.js           ← ESLint 10 (flat config)
 
 ### TypeScript در سرور
 
-سرور در حال انتقال از JS به TypeScript است، در سه مرحله و بدون تغییر رفتار:
+سرور در سه مرحله و بدون تغییر رفتار از JS به TypeScript منتقل شد:
 
 | مرحله | فایل‌ها | وضعیت |
 |---|---|---|
@@ -144,9 +156,12 @@ eslint.config.js           ← ESLint 10 (flat config)
   `select`، یا خواندن فیلدی که select نشده، قبل از اجرا خطا می‌گیرد.
 - **چیزی که throw شده `unknown` است:** پیامش با `messageOf(e)` و کدش (مثلاً
   `P2002` در Prisma) با `codeOf(e)` از `utils/errors.ts`.
-- **همه‌ی سرور TypeScript است** به جز ابزارهای دستی `server/scripts/` و
-  `prisma/seed/` (JS؛ ماژول‌های سرور را با `.ts` import می‌کنند). سرور با
-  `node server/index.ts` بالا می‌آید.
+- **همه‌ی سرور TypeScript است**، ابزارهای دستی `server/scripts/` و داده‌ی تست
+  `prisma/seed/` هم. پس اگر امضای یک تابع سرور عوض شود، اسکریپتی که از آن استفاده
+  می‌کند (مثلاً `rotate_keys.ts`) همان موقع در typecheck خطا می‌گیرد، نه روزی که
+  رویش اجرا می‌شود. در `prisma/seed/data.ts` هم username اشتباه یا گزینه‌ی
+  غلط‌املایی (`{ raect: "❤️" }`) خطای تایپ است. سرور با `node server/index.ts`
+  بالا می‌آید.
 - **handlerهای Express چیزی برنمی‌گردانند** (تایپ‌های Express 5):
   `return void res.status(400).json(...)` یعنی «جواب بده و تمام»؛ Express مقدار
   برگشتی را به هر حال نادیده می‌گیرد.
@@ -155,8 +170,87 @@ eslint.config.js           ← ESLint 10 (flat config)
 - **`req.userId` / `req.sessionId`** را `requireAuth` می‌گذارد
   (`server/types/express.d.ts`)؛ فقط در routeهای پشت آن خوانده می‌شوند.
 - **سوکت:** هر چه به اتصال تعلق دارد در `socket.data` است (`SocketData` در
-  `realtime/registry.ts`)، از جمله `userId`. payload رویدادها هنوز تک‌تک تایپ
-  نشده‌اند (`Incoming`: شیئی با محتوای نامعلوم که هر handler خودش چک می‌کند).
+  `realtime/registry.ts`)، از جمله `userId`. payload هر رویداد قبل از استفاده با
+  schemaی خودش چک می‌شود (بخش بعد).
+
+### ورودی‌ها (zod)
+
+TypeScript فقط موقع نوشتن کد چک می‌کند؛ چیزی که از شبکه می‌آید هر شکلی می‌تواند
+داشته باشد (`{ conversationId: "12abc", text: 5 }`). برای همین هر ورودی (body،
+query و params هر route، payload هر رویداد سوکت) **قبل از هر کاری** با یک schema
+از `shared/schemas/` چک می‌شود:
+
+| فایل | چه چیزی |
+|---|---|
+| `common.ts` | تکه‌ها: id (عدد یا رقم، ۱ تا ۲³¹−۱)، id اختیاری، flag، متن trim‌شده، clientId، اندازه‌ی صفحه |
+| `messages.ts` | ارسال، فوروارد، ویرایش، حذف، پین، ری‌اکشن، seen، join/leave/typing، جستجو |
+| `auth.ts` | کد ایمیل، ثبت‌نام، ورود، خروج، فراموشی رمز |
+| `account.ts` | پروفایل، رمز، حذف حساب، جستجوی آدم‌ها، دستگاه‌ها، push |
+| `contacts.ts` / `conversations.ts` | لیست مخاطبین، صفحه‌های چت، تغییرات، پاک کردن چت |
+
+- **یک جا برای چک کردن:** `server/http/validate.ts` → `check(schema, input)` (برای
+  سوکت) و `parse(res, schema, input)` (برای route: اگر بد بود خودش `400 { error }`
+  جواب می‌دهد). جواب، **اولین** مشکل است با همان جمله‌ای که schema برایش نوشته
+  (`"Invalid clientId"`، `"Name must be between 2 and 100 characters"`)؛ مشکلی که
+  جمله‌ی خودش را ندارد `"Invalid data"` است. جمله‌ها همان‌هایی‌اند که سرور قبلاً
+  می‌گفت (اپ بعضی‌شان را به کاربر نشان می‌دهد).
+- **سرویس‌ها داده‌ی چک‌شده می‌گیرند:** `sendMessageAs(actor, data)` دیگر `unknown`
+  نمی‌گیرد؛ `data` خروجی schema است (`conversationId: number`، `text` trim‌شده،
+  `scheduledFor: Date | null`). چک‌هایی که دیتابیس یا ساعت لازم دارند (عضو چت
+  بودن، بلاک، بازه‌ی کپسول) در سرویس مانده‌اند.
+- **قبل از چک، بودجه:** هزینه‌ی یک رویداد/درخواست از بودجه‌ی اقدام‌ها کم می‌شود و
+  بعد payload چک می‌شود؛ سیل payloadهای خراب هم مجانی نیست.
+- **سخت‌گیرتر از قبل:** `isOneTime: "yes"` قبلاً بی‌صدا `false` حساب می‌شد، حالا رد
+  می‌شود؛ یک id خراب وسط لیست حذف یا فوروارد قبلاً نادیده گرفته می‌شد، حالا کل
+  درخواست رد می‌شود؛ `beforeId` خراب در لیست چت‌ها قبلاً نادیده گرفته می‌شد. اپ
+  هیچ‌کدام از این‌ها را نمی‌فرستد.
+- **حدها در `shared/limits.ts`:** طول پیام (۱۵۰۰)، اسم، بیو، رمز، الگوی
+  username، اندازه‌ی batch، بازه‌ی کپسول. این‌ها دیگر در `.env` نیستند: اپ و سرور
+  باید یک عدد را بدانند و اپ `.env` سرور را نمی‌بیند.
+- **ورودی تازه:** schemaش را در `shared/schemas/` بنویس، در route یا handler با
+  `parse`/`check` چکش کن، و به سرویس خروجی‌اش را بده. تست‌هایش در
+  `tests/unit/schemas.test.ts`.
+
+### قرارداد بین اپ و سرور (`shared/`)
+
+اپ و سرور قبلاً هر کدام تایپ‌های خودشان را داشتند: اگر سرور اسم یک فیلد را عوض
+می‌کرد، typecheck هر دو طرف سبز می‌ماند و خرابی فقط موقع اجرا معلوم می‌شد. حالا
+هر دو از **یک جا** می‌خوانند و `npm run typecheck` هر دو را در برابر همان فایل‌ها چک
+می‌کند:
+
+| فایل | چه چیزی |
+|---|---|
+| `shared/api.ts` | شکل هر چیزی که سرور می‌فرستد (`Me`، `Person`، `ContactRow`، `LiveMessage`، …) و `Endpoints`: هر endpoint چه می‌گیرد (`Body<"PATCH /api/users/me">`، از schemaی همان ورودی) و چه جواب می‌دهد (`Answer<…>`) |
+| `shared/events.ts` | `ServerEvents` (هر رویدادی که سرور می‌فرستد)، `ClientEventSchemas` (schemaی هر رویدادی که اپ می‌فرستد)، `ClientAcks` (جواب هر کدام) |
+| `shared/limits.ts` | حدها و الگوها (طول پیام، username، ایمیل، …)؛ فقط مقدار ساده |
+| `shared/schemas/` | ورودی‌ها (بخش قبل) |
+
+- **سرور:** هر جواب موفق یک route با `reply(res, "GET /api/users/me", me)` فرستاده
+  می‌شود (`server/http/reply.ts`)؛ اگر `me` آن چیزی نباشد که قرارداد می‌گوید، کامپایل
+  نمی‌شود. هر رویداد با `emitToUser` / `deliverToConversation` می‌رود که اسم رویداد و
+  payloadش را از `ServerEvents` چک می‌کنند. هر رویداد سوکت با schemaی خودش از
+  `ClientEventSchemas` خوانده می‌شود و جوابش باید `ClientAcks` همان رویداد باشد
+  (سرویس‌ها `Result<…>` برمی‌گردانند).
+- **اپ:** `client/shared/api/types.ts` فقط از `shared/` re-export می‌کند (importهای اپ
+  همان ماندند)؛ `endpoints.ts` جواب هر endpoint را `Answer<…>` و بدنه‌اش را
+  `satisfies Body<…>` می‌گیرد؛ `realtime.ts` با همان `ClientEvents` / `ServerEvents`
+  کار می‌کند. اپ zod را **bundle نمی‌کند**: از schemaها فقط type می‌گیرد و
+  `limits.ts` چیزی جز مقدار ساده ندارد.
+- **تاریخ‌ها روی سیم رشته‌ی ISO‌اند:** سرور `Date` را خودش تبدیل می‌کند
+  (`server/utils/wire.ts`: `iso`، `isoOrNull`، `meOf`). خروجی JSON مثل قبل است؛ فقط
+  حالا تایپ هم همین را می‌گوید.
+- **فیلدی که schema نمی‌شناسد:** zod آن را بی‌صدا دور می‌اندازد. برای همین
+  `shared/events.ts` برای هر رویداد یک تایپ دقیق از چیزی که اپ می‌فرستد دارد
+  (`ClientPayloads`؛ idها عدد، نه «عدد یا رشته» که سرور هم قبول می‌کند) و در زمان
+  کامپایل چک می‌کند که schemaی همان رویداد آن را بپذیرد و **همه‌ی** فیلدهایش را
+  بخواند.
+- **عوض کردن پروتکل:** فایل `shared/` را عوض کن و `npm run typecheck` بزن: هر جای
+  سرور و اپ که باید همراهش عوض شود خطا می‌گیرد. مثلاً عوض کردن اسم
+  `LiveMessage.replyToName` هم در `messageView.ts` سرور خطا می‌دهد هم در
+  `bubbleData.ts` اپ؛ جوابی که `updatedAt` نداشته باشد، یا رویدادی با فیلد اشتباه، در
+  خود سرور.
+- **بیرون از قرارداد:** `GET /api/conversations` و `GET /api/conversations/:id` (برای
+  کلاینت‌های قدیمی؛ اپ از آن‌ها استفاده نمی‌کند).
 
 ### نشست‌ها (Sessions)
 
@@ -418,6 +512,17 @@ Enter یا کلید منو = منوی پیام، Esc = بستن (Enter روی ل
   ویرایش/پین/پاک کردن چت با وجود بلاک، نقل‌قول و «Forwarded from» جعلی، Saved
   Messages باقی‌مانده بعد از حذف حساب، فیلدها/پیکسل‌های بی‌حد در آپلود آواتار،
   `X-Forwarded-For` جعلی در سوکت — جزئیات در بخش ۳.
+- ابزارهای `server/scripts` (حالا TypeScript): `rotate-keys` و `push-keks` اصلاً `.env`
+  را نمی‌خواندند (کلیدها و آدرس Vault خالی می‌ماند)؛ چرخش کلید اگر وسط کار پیامی
+  ویرایش می‌شد، DEK قدیمی را رویش می‌نوشت و آن پیام دیگر باز نمی‌شد، و `updatedAt`
+  همه‌ی پیام‌ها را عوض می‌کرد (هر دستگاه کل پیام‌ها را دوباره می‌گرفت)؛ `push-keks`
+  بقیه‌ی اسرار همان مسیر Vault را پاک می‌کرد و اگر خواندن از Vault خطا می‌داد همه را
+  بازنویسی می‌کرد؛ با `SECRET_PROVIDER=vault` بعضی اسکریپت‌ها هیچ‌وقت تمام نمی‌شدند؛
+  کلید همه‌کاره‌ی `KEK` می‌توانست بی‌صدا جای `KEK_V2` بنشیند؛ «تست» رمزنگاری با خطا هم
+  موفق تمام می‌شد.
+- چیزهایی که قرارداد مشترک پیدا کرد: `contact:upsert` اگر ردیف وسط کار پاک می‌شد
+  `null` می‌فرستاد (و جواب ۲۰۰ با بدنه‌ی خالی)؛ `message:capsule:opened` گاهی `text`
+  نداشت؛ یک `lastSeen` خراب کل اعلام آنلاین/آفلاین را متوقف می‌کرد.
 
 ---
 
@@ -427,8 +532,8 @@ Enter یا کلید منو = منوی پیام، Esc = بستن (Enter روی ل
 
 | دسته | کجا | چه چیزی | نیاز |
 |---|---|---|---|
-| **unit** | `tests/unit/*.test.ts` | منطق خالص کلاینت: ادغام پیام‌ها، جایگاه و ترتیب چت‌ها، پیش‌نمایش‌ها، لیست مخاطبینی که تغییرات زنده را پاک نکند، outbox چند تب، لینک‌ها (و اینکه `javascript:` هیچ‌وقت لینک نشود)، رنگ accent — ۲۵ تست | هیچ (چند ثانیه) |
-| **api** | `tests/api/*.test.mjs` | سرور واقعی روی یک دیتابیس تست: نشست‌ها، CSRF، دستگاه‌ها، رمز، ثبت‌نام، مخاطب‌ها و حریم خصوصی، ارسال idempotent، seen، sync، حذف/فوروارد، کپسول، یک‌بار مصرف، rate limit، push، health، قید‌های دیتابیس — ۳۲ تست | `TEST_DATABASE_URL` |
+| **unit** | `tests/unit/*.test.ts` | منطق خالص کلاینت: ادغام پیام‌ها، جایگاه و ترتیب چت‌ها، پیش‌نمایش‌ها، لیست مخاطبینی که تغییرات زنده را پاک نکند، outbox چند تب، لینک‌ها (و اینکه `javascript:` هیچ‌وقت لینک نشود)، رنگ accent؛ و schemaهای ورودی (`shared/schemas`: چه چیزی پذیرفته می‌شود، به چه شکلی، و جواب ورودی بد با چه جمله‌ای) — ۳۴ تست | هیچ (چند ثانیه) |
+| **api** | `tests/api/*.test.mjs` | سرور واقعی روی یک دیتابیس تست: نشست‌ها، CSRF، دستگاه‌ها، رمز، ثبت‌نام، مخاطب‌ها و حریم خصوصی، ارسال idempotent، seen، sync، حذف/فوروارد، کپسول، یک‌بار مصرف، rate limit، push، health، قید‌های دیتابیس، ورودی‌های بد از هر دو راه (سوکت و REST) که با جمله‌ی schema رد می‌شوند و چیزی را عوض نمی‌کنند؛ و ابزارهای `server/scripts` (چرخش کلید از اول تا آخر با کلیدهای جدای `t1`→`t2` که فقط پیام‌های خود تست را جابه‌جا می‌کند، خواندن همه‌ی پیام‌ها، `test:enc`، `check-kek`) — ۳۸ تست | `TEST_DATABASE_URL` |
 | **e2e** | `tests/e2e/*.spec.mjs` | اپ build‌شده در Chromium: ثبت‌نام با کد، چت زنده‌ی دو نفره (seen، typing، reply، edit، حذف و Undo)، فوروارد، حذف چت هم‌زمان با پیام تازه، **قطع و وصل اینترنت**، toast روی دیالوگ، کیبورد، گوشی — ۱۰ تست | `TEST_DATABASE_URL` + `npm run build` |
 
 ### اجرای محلی
@@ -584,5 +689,4 @@ RESTORE_DATABASE_URL="postgresql://USER:PASS@localhost:5432/rivo_restore_test" \
   شمارنده‌های rate limit در حافظه‌اند (یکتایی مخاطب‌ها را حالا خود دیتابیس تضمین می‌کند).
   برای اجرای چند نسخه پشت load balancer اول باید این‌ها به یک store مشترک (مثلاً Redis +
   Socket.IO Redis adapter) بروند.
-- یک schema مشترک (zod) برای پروتکل بین کلاینت و سرور، و سرور به TypeScript.
 - load test (مثلاً با k6) تا سقف فعلی معلوم شود.

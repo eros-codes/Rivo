@@ -1,6 +1,23 @@
 import { emailLayout, emailStyle, escapeHtml } from "./emailLayout.js";
 
-export function verificationEmail({ code, appName = "Rivo", expiresMinutes = 10, supportEmail = process.env.SMTP_FROM || "support@rivo.ir" } = {}) {
+/**
+ * The bare address of a sender. SMTP_FROM is often written with a name,
+ * `Rivo <support@rivo.ir>`, but a mailto: link (and the text "write to …")
+ * takes only the address.
+ */
+export function addressOf(sender) {
+	const s = String(sender || "").trim();
+	const m = /<\s*([^<>\s]+@[^<>\s]+)\s*>/.exec(s);
+	return m ? m[1] : s;
+}
+
+export function verificationEmail({
+	code,
+	appName = "Rivo",
+	expiresMinutes = 10,
+	supportEmail: sender = process.env.SMTP_FROM || "support@rivo.ir",
+} = {}) {
+	const supportEmail = addressOf(sender) || "support@rivo.ir";
 	const minutes = `${expiresMinutes} minute${expiresMinutes === 1 ? "" : "s"}`;
 	const subject = `${appName} verification code`;
 	const html = emailLayout({

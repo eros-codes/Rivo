@@ -1,10 +1,9 @@
 import { Router } from "express";
-import type { User } from "@prisma/client";
 import bcrypt from "bcrypt";
 import crypto from "node:crypto";
 import nodemailer from "nodemailer";
 import { appendFile } from "node:fs/promises";
-import prisma from "../prisma.ts";
+import prisma, { type User } from "../prisma.ts";
 import { config, envNumber } from "../config.ts";
 import push from "../utils/push.ts";
 import { verificationEmail } from "../utils/verificationEmail.ts";

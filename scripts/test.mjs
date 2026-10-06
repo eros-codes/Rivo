@@ -71,7 +71,8 @@ function migrate() {
 	if (migrated) return 0;
 	migrated = true;
 	console.log("· bringing the test database's migrations up to date");
-	return run([bin("prisma"), "migrate", "deploy"], { ...process.env, DATABASE_URL: testDatabase() });
+	// (without Prisma's "update available" box: a newer major version is not a test result)
+	return run([bin("prisma"), "migrate", "deploy"], { ...process.env, DATABASE_URL: testDatabase(), PRISMA_HIDE_UPDATE_MESSAGE: "1" });
 }
 
 const INSTALLED = { chrome: "Google Chrome", msedge: "Microsoft Edge" };

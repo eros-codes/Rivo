@@ -1,7 +1,6 @@
 // Contact rows as their owner sees them (privacy applied, latest message
 // preview), used by the contacts routes and by the live `contact:upsert` event.
-import type { Prisma } from "@prisma/client";
-import prisma from "../prisma.ts";
+import prisma, { type Prisma } from "../prisma.ts";
 import { applyPrivacy, relationsFor } from "../utils/privacy.ts";
 import { previewMessage } from "../utils/messageView.ts";
 import { emitToUser } from "../realtime/registry.ts";

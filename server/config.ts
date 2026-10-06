@@ -46,6 +46,11 @@ export const config = {
 			? process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
 			: DEFAULT_ORIGINS,
 	),
+	// the connections to PostgreSQL (server/prisma.ts)
+	db: {
+		poolMax: Math.max(1, num("DATABASE_POOL_MAX", 10)),
+		connectTimeoutMs: 10_000,
+	},
 	session: {
 		ttlMs: num("SESSION_TTL_DAYS", 30) * 24 * 60 * 60 * 1000,
 		// how often a used session gets a fresh cookie / last-seen time

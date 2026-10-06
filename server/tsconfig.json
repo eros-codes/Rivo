@@ -1,7 +1,9 @@
-// The server's TypeScript, with what it shares with the app (shared/) and the
-// test data in prisma/seed (which uses the server's modules). Node runs the .ts files as they are (it strips the
-// types; Node 22.18+), so there is no build step: this is only for checking,
-// by `npm run typecheck`.
+// The server's TypeScript, with what it shares with the app (shared/), the
+// test data in prisma/seed (which uses the server's modules) and Prisma's own
+// settings (prisma.config.ts). Node runs the .ts files as they are (it strips
+// the types; Node 22.18+), so there is no build step: this is only for
+// checking, by `npm run typecheck`. (The generated database client in
+// generated/ is not checked: Prisma marks its files @ts-nocheck.)
 {
 	"compilerOptions": {
 		"target": "es2023",
@@ -29,5 +31,5 @@
 		"forceConsistentCasingInFileNames": true,
 		"skipLibCheck": true
 	},
-	"include": ["**/*.ts", "../prisma/seed/**/*.ts", "../shared/**/*.ts"]
+	"include": ["**/*.ts", "../prisma/seed/**/*.ts", "../shared/**/*.ts", "../prisma.config.ts"]
 }

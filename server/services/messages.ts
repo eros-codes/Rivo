@@ -1,8 +1,7 @@
 // Message actions, shared by the socket handlers and the REST routes.
 // `actor` is { userId, socketId }: the device that acted gets its answer
 // through the ack / HTTP response, every other device gets an event.
-import type { Message } from "@prisma/client";
-import prisma from "../prisma.ts";
+import prisma, { type Message } from "../prisma.ts";
 import push from "../utils/push.ts";
 import { config } from "../config.ts";
 import { generateDEK, encryptMessage, sealText, wrapDEK } from "../utils/encryption.ts";

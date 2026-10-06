@@ -1,6 +1,7 @@
 // How the tests reach a real Rivo server: started here (node server/index.ts)
 // on a free port against the test database, emails written to a file instead
-// of being sent, the database inspected with Prisma.
+// of being sent, the database inspected with Prisma (the server's own client,
+// on the test database).
 //
 //   TEST_DATABASE_URL  a database only for tests (its name must contain
 //                      "test": the tests write to it). `npm run test:api`
@@ -12,7 +13,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PrismaClient } from "@prisma/client";
+import { createPrismaClient } from "../../server/prisma.ts";
 
 export const ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
@@ -162,7 +163,7 @@ export async function mails(base: string): Promise<Mail[]> {
 }
 
 type Delegates = Record<string, Record<string, (args: unknown) => Promise<unknown>>>;
-let prisma: PrismaClient | null = null;
+let prisma: ReturnType<typeof createPrismaClient> | null = null;
 
 /**
  * Runs one Prisma call on the test database, e.g.
@@ -170,7 +171,9 @@ let prisma: PrismaClient | null = null;
  * database row, not part of the app's contract: the caller says what it expects.)
  */
 export async function db<T = any>(_base: string, model: string, op: string, args?: unknown): Promise<T> {
-	prisma ??= new PrismaClient({ datasources: { db: { url: testDatabaseUrl() } } });
+	// (quiet: tests make the database refuse things on purpose, e.g. a second
+	// row for the same person, and Prisma would print each refusal)
+	prisma ??= createPrismaClient(testDatabaseUrl(), { log: [] });
 	const delegate = (prisma as unknown as Delegates)[model];
 	if (!delegate?.[op]) throw new Error(`no prisma.${model}.${op}`);
 	return (await delegate[op](args)) as T;

@@ -1,6 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import type { Prisma } from "@prisma/client";
-import prisma from "../prisma.ts";
+import prisma, { type Prisma } from "../prisma.ts";
 import { config } from "../config.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { ChangesSince, ClearChat, ConversationIdParam, messagesPage, type PageQuery } from "../../shared/schemas/conversations.ts";

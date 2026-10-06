@@ -28,9 +28,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      # (npm ci also generates the database client from prisma/schema.prisma: postinstall)
       - run: npm ci
-      # the database client's types come from prisma/schema.prisma
-      - run: npx prisma generate
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:unit
@@ -63,7 +62,6 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npx prisma generate
       # (applies the migrations to the empty database first, like a real deploy)
       - run: npm run test:api
 
@@ -94,7 +92,6 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npx prisma generate
       - run: npx playwright install --with-deps chromium
       - run: npm run build
       - run: npm run test:e2e

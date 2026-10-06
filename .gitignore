@@ -6,6 +6,9 @@ node_modules/
 .env.local
 .env.*.local
 
+# The database client, generated from prisma/schema.prisma (npm install / npx prisma generate)
+/server/generated/
+
 # Build output
 dist/
 build/

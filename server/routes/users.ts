@@ -1,12 +1,11 @@
 import { Router, type NextFunction, type Request, type RequestHandler, type Response } from "express";
-import type { Prisma } from "@prisma/client";
 import bcrypt from "bcrypt";
 import crypto from "node:crypto";
 import multer from "multer";
 import path from "node:path";
 import fs from "node:fs";
 import sharp from "sharp";
-import prisma from "../prisma.ts";
+import prisma, { type Prisma } from "../prisma.ts";
 import { config } from "../config.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { ChangePassword, DeleteAccount, SearchUsers, UpdateProfile } from "../../shared/schemas/account.ts";

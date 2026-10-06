@@ -15,6 +15,7 @@
 #    - پوشه‌ی public/assets/images/user-profiles  (عکس‌های پروفایل آپلودشده)
 # ۲) نصب وابستگی‌ها (npm install، نه npm ci: وابستگی‌ها عوض شده‌اند و
 #    package-lock.json همین‌جا با نسخه‌های جدید به‌روز می‌شود)
+#    (کلاینت دیتابیس را هم از prisma/schema.prisma می‌سازد: server/generated/prisma)
 npm install
 # ۳) migrationهای دیتابیس (فقط آن‌هایی که هنوز اجرا نشده‌اند — بخش «migrationها»)
 npx prisma migrate deploy
@@ -47,6 +48,11 @@ npm start
 
 > **قبل از `migrate deploy` روی دیتابیس واقعی:** `npm run db:check` نشان می‌دهد
 > migration سوم چیزی را مرتب می‌کند یا نه (و چه چیزی را). هیچ تغییری نمی‌دهد.
+
+**عوض کردن schema:** `npx prisma migrate dev --name <اسم>` migration تازه را می‌سازد و
+روی دیتابیس توسعه اجرا می‌کند. از Prisma 7 کلاینت را خودش دوباره نمی‌سازد، پس بعدش
+`npx prisma generate` (تا تایپ‌ها و کلاینت در `server/generated/prisma` به‌روز شوند).
+دستور `prisma` آدرس دیتابیس را از `prisma.config.ts` می‌گیرد (که `.env` را می‌خواند).
 
 ### اگر روی پوشه‌ی قبلی کپی می‌کنی
 
@@ -109,6 +115,8 @@ scripts/
 server/                    ← Express 5 + Socket.IO + Prisma، همه TypeScript (بخش ۳)
   tsconfig.json            ← چک تایپ سرور و prisma/seed (npm run typecheck)
   instrument.ts            ← گزارش خطا (Sentry)، قبل از خود سرور بارگذاری می‌شود
+  prisma.ts                ← کلاینت دیتابیس (Prisma 7 + adapter pg) و تایپ‌هایش برای بقیه‌ی سرور
+  generated/prisma/        ← کلاینت ساخته‌شده از schema (npm install / npx prisma generate؛ در git نیست)
   utils/logger.ts          ← لاگ JSON با reqId/userId
   utils/errors.ts          ← خواندن پیام/کد خطای throw شده
   scripts/                 ← ابزارهای دستی: کلیدها، چرخش، بررسی پیام‌ها، Vault (server/ENCRYPTION.md)
@@ -119,6 +127,7 @@ shared/                    ← قرارداد اپ و سرور (بخش ۳ → ق
   schemas/                 ← schemaهای zod برای هر ورودی (بخش ۳ → ورودی‌ها)
 public/                    ← assetها (فونت، آیکن، emoji data) + خروجی build
 prisma/                    ← schema و migrationها
+prisma.config.ts           ← تنظیمات دستور prisma: schema، migrationها، آدرس دیتابیس (از .env)
   seed/                    ← داده‌ی تست (npm run db:seed؛ data.ts را آزادانه عوض کن)
 tests/                     ← همه TypeScript، چک‌شده با قرارداد shared/ (بخش ۷)
   tsconfig.json            ← چک تایپ api / e2e / integration / support
@@ -155,8 +164,10 @@ eslint.config.js           ← ESLint 10 (flat config)
   ماژول‌های TS را با `.ts` import می‌کنند. تایپ‌هایی که فقط تایپ‌اند با
   `import type`.
 - **دیتابیس:** تایپ‌ها را Prisma از `schema.prisma` می‌سازد (`npx prisma
-  generate`، که `npm install` هم انجامش می‌دهد): فیلد اشتباه در `where` و
-  `select`، یا خواندن فیلدی که select نشده، قبل از اجرا خطا می‌گیرد.
+  generate`، که `npm install` هم انجامش می‌دهد، در `server/generated/prisma`):
+  فیلد اشتباه در `where` و `select`، یا خواندن فیلدی که select نشده، قبل از اجرا
+  خطا می‌گیرد. کد سرور تایپ‌ها را از `server/prisma.ts` می‌گیرد، نه از پوشه‌ی
+  generated: `import prisma, { type Prisma } from "../prisma.ts"`.
 - **چیزی که throw شده `unknown` است:** پیامش با `messageOf(e)` و کدش (مثلاً
   `P2002` در Prisma) با `codeOf(e)` از `utils/errors.ts`.
 - **همه‌ی سرور TypeScript است**، ابزارهای دستی `server/scripts/` و داده‌ی تست
@@ -559,7 +570,7 @@ Enter یا کلید منو = منوی پیام، Esc = بستن (Enter روی ل
   | @sentry/node | 7 → 11 | `Handlers` حذف شد: Sentry در `server/instrument.ts` و قبل از Express شروع می‌شود (`--import`) و خطاهای Express را خودش می‌گیرد؛ داده‌ی همراه خطا محدود شد (بخش ۹) |
   | dotenv | 17 → 18 | `quiet: true` (پیام «injected env» در لاگ نمی‌آید) |
 
-  Prisma 7 جدا انجام می‌شود (تغییرش بزرگ‌تر است).
+  Prisma 7 جدا انجام شد (پایین‌تر).
 - **باگ‌هایی که در این کار پیدا و درست شد:**
   - `npm run dev` سرور را با **ts-node** اجرا می‌کرد (nodemon برای فایل `.ts` خودش
     ts-node را صدا می‌زند، که در پروژه نیست) و با تغییر `shared/` هم ری‌استارت نمی‌کرد.
@@ -592,6 +603,35 @@ Enter یا کلید منو = منوی پیام، Esc = بستن (Enter روی ل
   می‌شدند درست شدند (سرور را قبل از رسیدن جوابش چک می‌کردند، یا یک highlight نیم‌ثانیه‌ای
   را با فاصله‌ی یک‌ثانیه‌ای می‌پاییدند)، و قطع اتصال در تست حالا راه دوم Socket.IO
   (long polling روی HTTP) را هم می‌بندد.
+
+### Prisma 7
+
+- **چرا:** Prisma 6 فقط تا ۱۹ نوامبر ۲۰۲۶ وصله‌ی امنیتی می‌گیرد. 7 نسخه‌ی پایدار فعلی است و
+  تا ۱۸ ماه بعد از انتشار Prisma 8 پشتیبانی می‌شود.
+- **کلاینت ساخته‌شده** دیگر داخل `node_modules` نیست: generator تازه‌ی `prisma-client`
+  آن را در `server/generated/prisma` می‌سازد، به TypeScript و ES module با importهای
+  `.ts`، که Node مثل بقیه‌ی سرور مستقیم اجرا می‌کند. در git نیست؛ `npm install`
+  (`postinstall`) و `npx prisma generate` آن را می‌سازند.
+- **اتصال از راه driver adapter:** `@prisma/adapter-pg` روی `pg` (node-postgres)، در
+  `server/prisma.ts`. تفاوت‌هایش با Prisma 6:
+  - اندازه‌ی pool با `DATABASE_POOL_MAX` (پیش‌فرض ۱۰). `connection_limit` در آدرس
+    دیگر اثری ندارد.
+  - صبر برای اتصال یا برای یک اتصال آزاد حداکثر ۱۰ ثانیه (pg خودش تا ابد صبر می‌کند؛
+    Prisma 6 برای وصل شدن ۵ و برای اتصال آزاد ۱۰ ثانیه صبر می‌کرد و pg یک حد برای هر دو دارد).
+  - `?schema=` آدرس هنوز رعایت می‌شود: کوئری‌های خود Prisma از adapter می‌گیرندش و SQL
+    دست‌نوشته (`$queryRaw`…) از `search_path` اتصال.
+  - **SSL:** Prisma 6 به‌طور پیش‌فرض TLS را امتحان می‌کرد و گواهی را بررسی نمی‌کرد. pg بدون
+    `sslmode` در آدرس اصلاً TLS نمی‌زند، و با `sslmode=require` گواهی را کامل بررسی می‌کند.
+    پس برای دیتابیسی روی سرور دیگر که TLS می‌خواهد: `?sslmode=require` در `DATABASE_URL`،
+    و اگر گواهی‌اش مال خودش است، CA آن با `NODE_EXTRA_CA_CERTS` (نه خاموش کردن بررسی).
+    دیتابیس روی همان سرور (localhost) TLS لازم ندارد.
+- **تنظیمات دستور `prisma`** در `prisma.config.ts`؛ آدرس دیتابیس دیگر در `schema.prisma`
+  نیست و Prisma خودش `.env` را نمی‌خواند (config می‌خواند؛ `DATABASE_URL` محیط بر `.env`
+  مقدم است، تست‌ها همین‌طور دیتابیس تست را می‌دهند).
+- `prisma migrate dev` دیگر `generate` را اجرا نمی‌کند (بخش ۱ → migrationها).
+- تست‌ها با همان `createPrismaClient` سرور به دیتابیس تست وصل می‌شوند؛ CI قدم جدای
+  `prisma generate` ندارد (`npm ci` انجامش می‌دهد).
+- خطاها همان‌اند: تکراری بودن هنوز `P2002` است (`codeOf(e)`).
 
 ---
 
@@ -681,6 +721,7 @@ npm run test:integration
 | **api** | یک PostgreSQL 16 تازه کنار کار بالا می‌آید → migrationها → تست‌های api |
 | **e2e** | همان دیتابیس + Chromium → build → تست‌های مرورگر؛ اگر چیزی رد شد، اسکرین‌شات و trace به‌عنوان artifact ذخیره می‌شود |
 
+- `npm ci` کلاینت دیتابیس را هم می‌سازد (`postinstall` → `prisma generate`).
 - `npm ci` دقیقاً نسخه‌های `package-lock.json` را نصب می‌کند، پس **lock باید با
   `package.json` هماهنگ و commit شده باشد** (بعد از هر تغییر وابستگی: `npm install` و commit lock).
 - **قفل کردن main** (یک‌بار، روی GitHub، بعد از اولین اجرای CI): Settings → Branches →

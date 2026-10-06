@@ -10,8 +10,7 @@
 // planted by someone else can never match (signed double-submit cookie).
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
-import type { Prisma } from "@prisma/client";
-import prisma from "../prisma.ts";
+import prisma, { type Prisma } from "../prisma.ts";
 import { config } from "../config.ts";
 import { bus } from "../events.ts";
 import { log } from "../utils/logger.ts";
@@ -48,13 +47,18 @@ export function newSessionId(): string {
 }
 
 export function csrfFor(sid: string): string {
-	return crypto.createHmac("sha256", config.jwtSecret).update(`csrf:${sid}`).digest("base64url");
+	return crypto
+		.createHmac("sha256", config.jwtSecret)
+		.update(`csrf:${sid}`)
+		.digest("base64url");
 }
 
 export function safeEqual(a: unknown, b: unknown): boolean {
 	const x = Buffer.from(String(a || ""));
 	const y = Buffer.from(String(b || ""));
-	return x.length === y.length && x.length > 0 && crypto.timingSafeEqual(x, y);
+	return (
+		x.length === y.length && x.length > 0 && crypto.timingSafeEqual(x, y)
+	);
 }
 
 /** Cookie header → { name: value } */
@@ -76,10 +80,20 @@ export function parseCookies(header: unknown): Record<string, string> {
 }
 
 function cookieOptions(httpOnly: boolean): CookieOptions {
-	return { httpOnly, secure: config.isProd, sameSite: "lax", path: "/", maxAge: S.ttlMs };
+	return {
+		httpOnly,
+		secure: config.isProd,
+		sameSite: "lax",
+		path: "/",
+		maxAge: S.ttlMs,
+	};
 }
 
-export function setSessionCookies(res: CookieResponse, userId: number, sid: string): void {
+export function setSessionCookies(
+	res: CookieResponse,
+	userId: number,
+	sid: string,
+): void {
 	const token = jwt.sign({ uid: userId, sid }, config.jwtSecret, {
 		algorithm: "HS256",
 		expiresIn: Math.floor(S.ttlMs / 1000),
@@ -89,7 +103,11 @@ export function setSessionCookies(res: CookieResponse, userId: number, sid: stri
 }
 
 export function clearSessionCookies(res: CookieResponse): void {
-	const base: CookieOptions = { path: "/", secure: config.isProd, sameSite: "lax" };
+	const base: CookieOptions = {
+		path: "/",
+		secure: config.isProd,
+		sameSite: "lax",
+	};
 	res.clearCookie(S.cookie, { ...base, httpOnly: true });
 	res.clearCookie(S.csrfCookie, base);
 }
@@ -98,9 +116,17 @@ export function clearSessionCookies(res: CookieResponse): void {
 export function readToken(token: unknown): TokenPayload | null {
 	if (!token || typeof token !== "string") return null;
 	try {
-		const p = jwt.verify(token, config.jwtSecret, { algorithms: ["HS256"] });
+		const p = jwt.verify(token, config.jwtSecret, {
+			algorithms: ["HS256"],
+		});
 		// (a token whose payload is a plain string has neither field)
-		if (!p || typeof p !== "object" || typeof p.sid !== "string" || !Number.isInteger(p.uid)) return null;
+		if (
+			!p ||
+			typeof p !== "object" ||
+			typeof p.sid !== "string" ||
+			!Number.isInteger(p.uid)
+		)
+			return null;
 		return p as TokenPayload;
 	} catch {
 		return null;
@@ -130,19 +156,31 @@ export async function loadSession(payload: TokenPayload | null) {
 			user: { select: { isDeleted: true } },
 		},
 	});
-	if (!s || s.userId !== payload.uid || s.revokedAt || s.expiresAt.getTime() <= Date.now() || !s.user || s.user.isDeleted) {
+	if (
+		!s ||
+		s.userId !== payload.uid ||
+		s.revokedAt ||
+		s.expiresAt.getTime() <= Date.now() ||
+		!s.user ||
+		s.user.isDeleted
+	) {
 		return null;
 	}
 	return s;
 }
 
-export async function startSession(res: CookieResponse, userId: number, userAgent: unknown): Promise<string> {
+export async function startSession(
+	res: CookieResponse,
+	userId: number,
+	userAgent: unknown,
+): Promise<string> {
 	const sid = newSessionId();
 	await prisma.session.create({
 		data: {
 			id: sid,
 			userId,
-			userAgent: typeof userAgent === "string" ? userAgent.slice(0, 300) : null,
+			userAgent:
+				typeof userAgent === "string" ? userAgent.slice(0, 300) : null,
 			expiresAt: new Date(Date.now() + S.ttlMs),
 		},
 	});
@@ -157,31 +195,60 @@ export async function startSession(res: CookieResponse, userId: number, userAgen
 /** A valid session, as loadSession returns it. */
 export type LiveSession = NonNullable<Awaited<ReturnType<typeof loadSession>>>;
 
-export function touchSession(session: Pick<LiveSession, "id" | "userId" | "lastSeenAt">, payload: TokenPayload | null, res?: CookieResponse | null): void {
+export function touchSession(
+	session: Pick<LiveSession, "id" | "userId" | "lastSeenAt">,
+	payload: TokenPayload | null,
+	res?: CookieResponse | null,
+): void {
 	const now = Date.now();
 	if (res && payload?.iat && now - payload.iat * 1000 > S.renewAfterMs) {
 		setSessionCookies(res, session.userId, session.id);
 	}
 	if (now - new Date(session.lastSeenAt).getTime() > S.touchAfterMs) {
 		prisma.session
-			.update({ where: { id: session.id }, data: { lastSeenAt: new Date(now), expiresAt: new Date(now + S.ttlMs) } })
-			.catch((e: unknown) => log.warn("session touch failed", messageOf(e) || e));
+			.update({
+				where: { id: session.id },
+				data: {
+					lastSeenAt: new Date(now),
+					expiresAt: new Date(now + S.ttlMs),
+				},
+			})
+			.catch((e: unknown) =>
+				log.warn("session touch failed", messageOf(e) || e),
+			);
 	}
 }
 
-async function _revoke(where: Prisma.SessionWhereInput, push?: (ids: string[]) => Prisma.PushSubscriptionWhereInput): Promise<number> {
-	const rows = await prisma.session.findMany({ where: { ...where, revokedAt: null }, select: { id: true, userId: true } });
+async function _revoke(
+	where: Prisma.SessionWhereInput,
+	push?: (ids: string[]) => Prisma.PushSubscriptionWhereInput,
+): Promise<number> {
+	const rows = await prisma.session.findMany({
+		where: { ...where, revokedAt: null },
+		select: { id: true, userId: true },
+	});
 	const ids = rows.map((r) => r.id);
 	if (ids.length > 0) {
-		await prisma.session.updateMany({ where: { id: { in: ids } }, data: { revokedAt: new Date() } });
+		await prisma.session.updateMany({
+			where: { id: { in: ids } },
+			data: { revokedAt: new Date() },
+		});
 	}
 	// the devices signed out stop getting notifications too
 	if (ids.length > 0 || push) {
-		await prisma.pushSubscription.deleteMany({ where: push ? push(ids) : { sessionId: { in: ids } } }).catch((e: unknown) =>
-			log.warn("removing push subscriptions failed", messageOf(e) || e),
-		);
+		await prisma.pushSubscription
+			.deleteMany({
+				where: push ? push(ids) : { sessionId: { in: ids } },
+			})
+			.catch((e: unknown) =>
+				log.warn(
+					"removing push subscriptions failed",
+					messageOf(e) || e,
+				),
+			);
 	}
-	for (const r of rows) bus.emit("session:revoked", { sid: r.id, userId: r.userId });
+	for (const r of rows)
+		bus.emit("session:revoked", { sid: r.id, userId: r.userId });
 	return rows.length;
 }
 
@@ -191,7 +258,10 @@ export function revokeSession(sid: string): Promise<number> {
 }
 
 /** Signs out every device of the user except `keepSid`. */
-export function revokeOtherSessions(userId: number, keepSid: string): Promise<number> {
+export function revokeOtherSessions(
+	userId: number,
+	keepSid: string,
+): Promise<number> {
 	return _revoke({ userId, NOT: { id: keepSid } });
 }
 
@@ -204,7 +274,12 @@ export async function listSessions(userId: number) {
 	return prisma.session.findMany({
 		where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
 		orderBy: [{ lastSeenAt: "desc" }, { createdAt: "desc" }],
-		select: { id: true, createdAt: true, lastSeenAt: true, userAgent: true },
+		select: {
+			id: true,
+			createdAt: true,
+			lastSeenAt: true,
+			userAgent: true,
+		},
 	});
 }
 
@@ -213,7 +288,12 @@ export async function cleanupSessions(): Promise<void> {
 	const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 	try {
 		await prisma.session.deleteMany({
-			where: { OR: [{ revokedAt: { lt: cutoff } }, { expiresAt: { lt: cutoff } }] },
+			where: {
+				OR: [
+					{ revokedAt: { lt: cutoff } },
+					{ expiresAt: { lt: cutoff } },
+				],
+			},
 		});
 	} catch (e) {
 		log.warn("session cleanup failed", messageOf(e) || e);
@@ -221,7 +301,9 @@ export async function cleanupSessions(): Promise<void> {
 }
 
 /** Session of a request, when signed in (no response written). */
-export async function sessionOfRequest(req: CookieRequest): Promise<LiveSession | null> {
+export async function sessionOfRequest(
+	req: CookieRequest,
+): Promise<LiveSession | null> {
 	const payload = readToken(tokenFromRequest(req));
 	if (!payload) return null;
 	try {

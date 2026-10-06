@@ -1,10 +1,19 @@
+// The database client is generated into server/generated/prisma (by
+// `npx prisma generate`, which `npm install` runs too). Node runs it as it
+// is, like the rest of the server: ES modules, imports with their real ".ts"
+// file names.
 generator client {
-  provider = "prisma-client-js"
+  provider               = "prisma-client"
+  output                 = "../server/generated/prisma"
+  moduleFormat           = "esm"
+  generatedFileExtension = "ts"
+  importFileExtension    = "ts"
 }
 
+// (the address of the database is not here: prisma.config.ts for the prisma
+// command, server/prisma.ts for the server)
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model User {

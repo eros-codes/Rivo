@@ -1,8 +1,7 @@
 // Turning stored (encrypted) messages into what a given user may see.
 // Used by every route and socket handler that returns messages, so the
 // decryption and time-capsule rules live in one place.
-import type { Message } from "@prisma/client";
-import prisma from "../prisma.ts";
+import prisma, { type Message } from "../prisma.ts";
 import { unwrapDEK, decryptMessage, openText } from "./encryption.ts";
 import { log } from "./logger.ts";
 import { messageOf } from "./errors.ts";

@@ -1,8 +1,7 @@
 // Finding users by what people type. Usernames and emails are compared
 // without regard to letter case ("Arvin" and "arvin" are the same person),
 // preferring an exact match for accounts created before this rule existed.
-import type { Prisma } from "@prisma/client";
-import prisma from "../prisma.ts";
+import prisma, { type Prisma } from "../prisma.ts";
 
 export function normalizeEmail(email: unknown): string {
 	return String(email || "").toLowerCase().trim();

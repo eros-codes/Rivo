@@ -6,7 +6,7 @@
 const name = process.argv[2] || "DATABASE_URL";
 if (!process.env[name]) {
 	try {
-		(await import("dotenv")).config();
+		(await import("dotenv")).default.config({ quiet: true });
 	} catch {
 		/* no dotenv: the environment only */
 	}

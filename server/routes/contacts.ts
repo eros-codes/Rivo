@@ -13,7 +13,6 @@ import {
 	CONTACT_ORDER,
 	contactRowFor,
 	emitContactUpsert,
-	ensureSavedContact,
 	serializeContacts,
 } from "../services/contacts.ts";
 import { emitToUser } from "../realtime/registry.ts";
@@ -37,7 +36,6 @@ router.get("/", requireAuth, async (req, res) => {
 	if (!page) return;
 	const { limit, skip } = page;
 	try {
-		if (skip === 0) await ensureSavedContact(req.userId);
 		const rows = await prisma.contact.findMany({
 			where: { ownerId: req.userId },
 			include: CONTACT_INCLUDE,

@@ -1,6 +1,7 @@
 // Settings read once from the environment, with their defaults. (Limits the
 // app must know too, like a message's length, are not settings: they are in
 // shared/limits.ts.)
+import { readFileSync } from "node:fs";
 import { BATCH_MAX, MESSAGE_MAX_LENGTH } from "../shared/limits.ts";
 
 const num = (name: string, fallback: number): number => {
@@ -15,6 +16,15 @@ const flag = (name: string, fallback = false): boolean => {
 
 const isProd = process.env.NODE_ENV === "production";
 
+/** The running version: APP_VERSION (a deploy may set it) or package.json's. */
+const version = (() => {
+	try {
+		return process.env.APP_VERSION || String(JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
+	} catch {
+		return "unknown";
+	}
+})();
+
 const DEFAULT_ORIGINS = [
 	"http://localhost:3000",
 	"http://127.0.0.1:3000",
@@ -28,6 +38,7 @@ export const config = {
 	port: num("PORT", 3000),
 	jwtSecret: process.env.JWT_SECRET || "",
 	appName: process.env.APP_NAME || "Rivo",
+	version,
 	appUrl: (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, ""),
 	trustProxy: isProd && flag("ENABLE_TRUST_PROXY"),
 	allowedOrigins: new Set(
@@ -51,8 +62,6 @@ export const config = {
 		maxLimit: num("MAX_FETCH_LIMIT", 100),
 		contactsDefault: num("CONTACTS_DEFAULT_LIMIT", 50),
 		contactsMax: Math.max(num("MAX_FETCH_LIMIT", 100), 200),
-		conversationsDefault: num("DEFAULT_CONVERSATIONS_TAKE", 50),
-		conversationsMax: num("MAX_CONVERSATIONS_TAKE", 100),
 	},
 	sync: {
 		// changes are looked up this much earlier than the client's cursor, so
@@ -61,8 +70,9 @@ export const config = {
 		maxChanges: 500,
 	},
 	rate: {
-		http: { enabled: flag("ENABLE_HTTP_RATE_LIMITER", true), windowMs: num("HTTP_RATE_WINDOW_MS", 60_000), max: num("HTTP_RATE_MAX", 600) },
-		auth: { windowMs: num("AUTH_RATE_WINDOW_MINUTES", 15) * 60_000, max: num("AUTH_RATE_MAX", 10) },
+		// (at least 1: a limit of 0 would refuse every request; ENABLE_HTTP_RATE_LIMITER=0 turns it off)
+		http: { enabled: flag("ENABLE_HTTP_RATE_LIMITER", true), windowMs: num("HTTP_RATE_WINDOW_MS", 60_000), max: Math.max(1, num("HTTP_RATE_MAX", 600)) },
+		auth: { windowMs: num("AUTH_RATE_WINDOW_MINUTES", 15) * 60_000, max: Math.max(1, num("AUTH_RATE_MAX", 10)) },
 		socket: { windowMs: num("SOCKET_RATE_WINDOW_MS", 10_000), max: num("SOCKET_RATE_MAX", 20) },
 		search: { perMinute: num("SEARCH_MAX_PER_MINUTE", 40), maxScan: num("SEARCH_MAX_SCAN", 5000) },
 	},

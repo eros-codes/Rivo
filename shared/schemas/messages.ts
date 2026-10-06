@@ -2,7 +2,7 @@
 // the same schema and the same service).
 import { z } from "zod";
 import { BATCH_MAX, EMOJI_MAX_LENGTH, MESSAGE_MAX_LENGTH, MESSAGE_SEARCH_MAX } from "../limits.ts";
-import { CLIENT_ID_PATTERN, clientId, flag, id, nullableId, optionalId, toId, trimmed } from "./common.ts";
+import { clientId, flag, id, nullableId, optionalId, toId, trimmed } from "./common.ts";
 
 const INVALID = "Invalid data";
 
@@ -32,8 +32,6 @@ export const SendMessage = z
 		isOneTime: flag,
 		isTimeCapsule: flag,
 		clientId,
-		/** (the older name of clientId, read only when clientId is not given) */
-		clientMessageId: z.string({ error: "Invalid clientId" }).nullish(),
 		replyToId: optionalId("Invalid replyToId"),
 		scheduledFor: capsuleTime,
 	})
@@ -42,16 +40,15 @@ export const SendMessage = z
 		if (!m.forwardOf && (!m.text || m.text.length > MESSAGE_MAX_LENGTH)) return fail(INVALID);
 		if (m.isOneTime && m.isTimeCapsule) return fail(INVALID);
 		if (m.forwardOf && (m.isOneTime || m.isTimeCapsule)) return fail(INVALID);
-		if (!m.clientId && m.clientMessageId && !CLIENT_ID_PATTERN.test(m.clientMessageId)) return fail("Invalid clientId");
 		if (m.isTimeCapsule) {
 			const at = capsuleDate(m.scheduledFor);
 			if (at === null) return fail("scheduledFor required");
 			if (at === undefined) return fail("scheduledFor invalid");
 		}
 	})
-	.transform(({ clientMessageId, ...m }) => ({
+	.transform((m) => ({
 		...m,
-		clientId: m.clientId ?? clientMessageId ?? null,
+		clientId: m.clientId ?? null,
 		// (a date without the capsule means nothing)
 		scheduledFor: m.isTimeCapsule ? (capsuleDate(m.scheduledFor) ?? null) : null,
 	}));
@@ -83,9 +80,6 @@ export const DeleteMessages = z.object({
 		.refine((ids) => ids.length <= BATCH_MAX, { error: INVALID }),
 });
 export type DeleteMessagesData = z.output<typeof DeleteMessages>;
-
-/** The socket's single delete (`message:delete`). */
-export const DeleteMessage = z.object({ messageId: id(INVALID) });
 
 export const MessageRef = z.object({ messageId: id("Invalid messageId") });
 
@@ -121,6 +115,5 @@ export const SearchMessages = z.object({
 
 // (the REST routes name the message in the address: /api/messages/:id)
 export const MessageParam = z.object({ id: id("Invalid messageId") });
-export const ConversationParam = z.object({ conversationId: id("Invalid conversationId") });
 
 export { toId };

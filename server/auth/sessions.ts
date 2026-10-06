@@ -92,9 +92,6 @@ export function clearSessionCookies(res: CookieResponse): void {
 	const base: CookieOptions = { path: "/", secure: config.isProd, sameSite: "lax" };
 	res.clearCookie(S.cookie, { ...base, httpOnly: true });
 	res.clearCookie(S.csrfCookie, base);
-	// cookies of the server before sessions existed
-	res.clearCookie("token", { path: "/" });
-	res.clearCookie("csrfToken", { path: "/" });
 }
 
 /** The verified token payload { uid, sid, iat }, or null. */
@@ -193,15 +190,9 @@ export function revokeSession(sid: string): Promise<number> {
 	return _revoke({ id: sid });
 }
 
-/**
- * Signs out every device of the user except `keepSid`. Push subscriptions
- * that belong to no session (made before sessions existed) go as well.
- */
+/** Signs out every device of the user except `keepSid`. */
 export function revokeOtherSessions(userId: number, keepSid: string): Promise<number> {
-	return _revoke({ userId, NOT: { id: keepSid } }, (ids) => ({
-		userId,
-		OR: [{ sessionId: null }, { sessionId: { in: ids } }],
-	}));
+	return _revoke({ userId, NOT: { id: keepSid } });
 }
 
 /** Signs out every device of the user (password reset, account deletion). */

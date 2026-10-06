@@ -170,7 +170,7 @@ export function forwardSource(convId: number, m: LiveMessage): ForwardSource {
 	const me = session.get().me;
 	const row = getRow(convId);
 	let author: string;
-	if (m.forwardedFrom) author = m.forwardedFrom === "You" ? (m.senderId === me?.id ? me?.name ?? "" : realName(row)) : m.forwardedFrom;
+	if (m.forwardedFrom) author = m.forwardedFrom;
 	else if (m.senderId === me?.id || row?.isSaved) author = me?.name ?? "";
 	else author = realName(row);
 	return { sourceId: m.id, text: m.text ?? "", forwardedFrom: author || "Unknown" };

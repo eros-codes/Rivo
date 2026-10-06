@@ -33,16 +33,17 @@ export function contentSecurityPolicy(): RequestHandler {
 	};
 }
 
+/**
+ * Helmet's headers. The Content-Security-Policy is set above (one policy for
+ * development and production); HSTS only over https, in production.
+ * (Cross-Origin-Embedder-Policy stays off, as is Helmet's default: nothing
+ * here is embedded from another origin.)
+ */
 export function securityHeaders(): RequestHandler {
-	const h = helmet({
+	return helmet({
 		contentSecurityPolicy: false,
-		hsts: false,
-		// the emoji picker data and avatars are same-origin; nothing is embedded cross-origin
-		crossOriginEmbedderPolicy: false,
+		strictTransportSecurity: config.isProd ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
 	});
-	if (!config.isProd) return h;
-	const hsts = helmet.hsts({ maxAge: 31536000, includeSubDomains: true, preload: true });
-	return (req, res, next) => h(req, res, (err) => (err ? next(err) : hsts(req, res, next)));
 }
 
 export function corsPolicy() {

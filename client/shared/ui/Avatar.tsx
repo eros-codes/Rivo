@@ -15,8 +15,6 @@ function accentOf(name: string): number {
 export function safePicture(url: string | null | undefined): string | null {
 	if (!url) return null;
 	const u = url.trim();
-	// the old placeholder files never existed
-	if (/\/profile(?:-light|-dark)?\.(?:jpe?g|png|webp)(?:[#?].*)?$/i.test(u)) return null;
 	if (/^data:image\/(?:png|jpe?g|gif|webp);/i.test(u)) return u;
 	if (/^https:\/\//i.test(u) || (u.startsWith("/") && !u.startsWith("//"))) return u;
 	return null;

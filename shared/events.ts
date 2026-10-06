@@ -6,7 +6,6 @@
 import type { z } from "zod";
 import {
 	ConversationRef,
-	DeleteMessage,
 	DeleteMessages,
 	EditMessage,
 	ForwardMessages,
@@ -72,7 +71,6 @@ export const ClientEventSchemas = {
 	"message:send": SendMessage,
 	"messages:forward": ForwardMessages,
 	"message:edit": EditMessage,
-	"message:delete": DeleteMessage,
 	"messages:delete": DeleteMessages,
 	"message:pin": MessageRef,
 	"reaction:add": React,
@@ -94,7 +92,6 @@ export interface ClientAcks {
 	/** (a forward stopped half way answers what it did and why it stopped) */
 	"messages:forward": Ack<Forwarded> | (Forwarded & { success: true; error: string });
 	"message:edit": Ack<Edited>;
-	"message:delete": Ack<Deleted>;
 	"messages:delete": Ack<Deleted>;
 	"message:pin": Ack<Pinned>;
 	"reaction:add": Ack<Reacted>;
@@ -134,7 +131,6 @@ export interface ClientPayloads {
 	"message:send": SendPayload;
 	"messages:forward": { conversationId: number; items: ForwardItem[] };
 	"message:edit": { messageId: number; text: string };
-	"message:delete": { messageId: number };
 	"messages:delete": { messageIds: number[] };
 	"message:pin": { messageId: number };
 	"reaction:add": { messageId: number; emoji: string };
@@ -162,7 +158,6 @@ export type PayloadsFitTheSchemas = [
 	Check<Fits<"message:send">>,
 	Check<Fits<"messages:forward">>,
 	Check<Fits<"message:edit">>,
-	Check<Fits<"message:delete">>,
 	Check<Fits<"messages:delete">>,
 	Check<Fits<"message:pin">>,
 	Check<Fits<"reaction:add">>,

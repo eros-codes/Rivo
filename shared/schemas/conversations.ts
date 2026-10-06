@@ -1,4 +1,4 @@
-// Chats and their pages (/api/conversations/…, and the older /api/messages/:conversationId).
+// Chats and their pages (/api/conversations/…).
 import { z } from "zod";
 import { id, nullableId, optionalId, pageSize, queryDate } from "./common.ts";
 
@@ -12,14 +12,6 @@ export const messagesPage = (fallback: number, max: number) =>
 		beforeId: optionalId("Invalid beforeId"),
 	});
 export type PageQuery = z.output<ReturnType<typeof messagesPage>>;
-
-/** A page of the chat list, latest first: up to `take` chats older than (before, beforeId). */
-export const conversationsPage = (fallback: number, max: number) =>
-	z.object({
-		take: pageSize(fallback, max),
-		before: queryDate("Invalid before date"),
-		beforeId: optionalId("Invalid beforeId"),
-	});
 
 /** What changed in a chat since a moment (the cursor of an earlier answer). */
 export const ChangesSince = z.object({

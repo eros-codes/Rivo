@@ -265,9 +265,6 @@ export interface Endpoints {
 	"PATCH /api/messages/:id": { body: Omit<In<typeof EditMessage>, "messageId">; response: Done & Edited };
 	"DELETE /api/messages/:id": { response: Done };
 	"POST /api/messages/:id/pin": { response: Pinned };
-	/** (the pages of a chat, as older clients asked for them) */
-	"GET /api/messages/:conversationId": { response: WireMessage[] };
-	"GET /api/messages/:conversationId/pinned": { response: { pinned: PinnedItem[] } };
 
 	"GET /api/push/publicKey": { response: { publicKey: string } };
 	"POST /api/push/subscribe": { body: In<typeof PushSubscriptionInput>; response: Done };

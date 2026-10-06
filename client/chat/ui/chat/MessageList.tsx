@@ -172,6 +172,8 @@ export function MessageList({ convId, row, composer, onPinnedInView, pinnedIds, 
 			}
 			positioned.current = true;
 			positionedAt.current = Date.now();
+			// (opened at the top: what is above loads without a scroll)
+			olderIfNearTop(false);
 		} else {
 			const prev = snap.current;
 			if (prev.lastKey !== lastKey && lastMine) {
@@ -253,14 +255,43 @@ export function MessageList({ convId, row, composer, onPinnedInView, pinnedIds, 
 		next.scrollIntoView({ block: "nearest" });
 	};
 
+	// ─── Older pages ─────────────────────────────────────────────────────
+	// Loaded when the list is near its top. Not in the moment right after
+	// opening (the list is still being placed): a scroll then is looked at
+	// again once that moment is over. A list that is at its top gets no scroll
+	// event at all (it opened there, or got there during that moment, or a
+	// page loaded and it is still near the top), so this also runs after each
+	// change of the list.
+	// A page that failed to load (offline, a server error) is tried again on
+	// the user's next scroll, not straight away by itself (that would repeat
+	// the failing request as fast as it fails).
+	const olderTimer = useRef<number | undefined>(undefined);
+	const olderFailed = useRef(false);
+	const olderIfNearTop = useEvent((byScroll: boolean) => {
+		const el = scroller.current;
+		if (!el || !positioned.current || el.scrollTop >= Math.min(200, el.scrollHeight * 0.15)) return;
+		if (byScroll) olderFailed.current = false;
+		else if (olderFailed.current) return;
+		const wait = 400 - (Date.now() - positionedAt.current);
+		if (wait > 0) {
+			window.clearTimeout(olderTimer.current);
+			olderTimer.current = window.setTimeout(() => olderIfNearTop(byScroll), wait + 20);
+			return;
+		}
+		// (nothing to do while a page is loading or when nothing older exists)
+		if (!ready || !cache?.hasMore || cache.loadingOlder) return;
+		void loadOlder(convId).then((ok) => {
+			if (!ok) olderFailed.current = true;
+		});
+	});
+	useEffect(() => olderIfNearTop(false), [ready, cache?.hasMore, cache?.loadingOlder, items.length, olderIfNearTop]);
+	useEffect(() => () => window.clearTimeout(olderTimer.current), []);
+
 	const onScroll = () => {
 		const el = scroller.current;
 		if (!el) return;
 		measure();
-		// older messages when near the top (not right after opening)
-		if (positioned.current && Date.now() - positionedAt.current > 400 && el.scrollTop < Math.min(200, el.scrollHeight * 0.15)) {
-			void loadOlder(convId);
-		}
+		olderIfNearTop(true);
 		reportPinned();
 	};
 

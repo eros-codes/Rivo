@@ -1,0 +1,10 @@
+// The unit tests import the app's own modules, so they are checked with the
+// app's settings (../../tsconfig.json), plus Node's types for node:test.
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"types": ["node"]
+	},
+	"include": ["."],
+	"exclude": []
+}

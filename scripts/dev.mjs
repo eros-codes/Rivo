@@ -11,9 +11,13 @@ const require = createRequire(import.meta.url);
 
 await watchAll();
 
-// nodemon's own script, run with this Node (works the same on Windows)
+// nodemon's own script, run with this Node (works the same on Windows). The
+// command is given (--exec): left to itself nodemon runs a .ts file with
+// ts-node, not with Node, which runs TypeScript itself. instrument.ts starts
+// error reporting first, as `npm start` does (it does nothing without SENTRY_DSN).
 const nodemon = require.resolve("nodemon/bin/nodemon.js");
-const server = spawn(process.execPath, [nodemon, "--watch", "server", "--watch", ".env", "--ext", "js,ts,json", "server/index.ts"], {
+const watch = ["--watch", "server", "--watch", "shared", "--watch", ".env", "--ext", "js,ts,json"];
+const server = spawn(process.execPath, [nodemon, ...watch, "--exec", "node --import ./server/instrument.ts", "server/index.ts"], {
 	cwd: ROOT,
 	stdio: "inherit",
 });

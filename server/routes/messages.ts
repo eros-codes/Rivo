@@ -2,11 +2,10 @@ import { Router, type Request, type Response } from "express";
 import prisma from "../prisma.ts";
 import { config } from "../config.ts";
 import { requireAuth } from "../middleware/auth.ts";
-import { ConversationParam, DeleteMessages, EditMessage, ForwardMessages, MessageParam, SearchMessages, SendMessage } from "../../shared/schemas/messages.ts";
+import { DeleteMessages, EditMessage, ForwardMessages, MessageParam, SearchMessages, SendMessage } from "../../shared/schemas/messages.ts";
 import { MESSAGE_SEARCH_MIN } from "../../shared/limits.ts";
 import { parse } from "../http/validate.ts";
 import { decryptBody, isCapsuleLocked } from "../utils/messageView.ts";
-import { isMember } from "../services/caches.ts";
 import {
 	deleteMessagesAs,
 	editMessageAs,
@@ -16,7 +15,6 @@ import {
 	statusFor,
 	togglePinAs,
 } from "../services/messages.ts";
-import { loadPage, MessagesPage, pinnedOf } from "./conversations.ts";
 import { batchCost, RATE_LIMITED, spendBudget } from "../services/actionLimit.ts";
 import { log } from "../utils/logger.ts";
 import { iso, isoOrNull } from "../utils/wire.ts";
@@ -133,36 +131,6 @@ router.get("/search", requireAuth, async (req, res) => {
 	} catch (e) {
 		log.error("search failed", e);
 		return void res.status(500).json({ error: "Search failed" });
-	}
-});
-
-// ─── Older clients: pinned list and pages by conversation id ──────────────
-router.get("/:conversationId/pinned", requireAuth, async (req, res) => {
-	const params = parse(res, ConversationParam, req.params);
-	if (!params) return;
-	const convId = params.conversationId;
-	try {
-		if (!(await isMember(convId, req.userId))) return void res.status(403).json({ error: "Not a member" });
-		return void reply(res, "GET /api/messages/:conversationId/pinned", { pinned: await pinnedOf(convId, req.userId) });
-	} catch (e) {
-		log.error("pinned failed", e);
-		return void res.status(500).json({ error: "Server error" });
-	}
-});
-
-router.get("/:conversationId", requireAuth, async (req, res) => {
-	const params = parse(res, ConversationParam, req.params);
-	if (!params) return;
-	const convId = params.conversationId;
-	const page = parse(res, MessagesPage, req.query);
-	if (!page) return;
-	try {
-		if (!(await isMember(convId, req.userId))) return void res.status(403).json({ error: "Forbidden" });
-		const { messages } = await loadPage(convId, req.userId, page);
-		return void reply(res, "GET /api/messages/:conversationId", messages);
-	} catch (e) {
-		log.error("messages page failed", e);
-		return void res.status(500).json({ error: "Server error" });
 	}
 });
 

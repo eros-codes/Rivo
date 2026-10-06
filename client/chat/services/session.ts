@@ -56,22 +56,35 @@ export function meId(): number | null {
 	return session.get().me?.id ?? null;
 }
 
-/** Forgets everything of this account on the device and opens the sign-in page. */
-function leave(): void {
-	const uid = meId();
-	write(keys.user, null);
-	if (uid !== null) clearPersistedOutbox(uid);
-	window.location.replace(SIGN_IN_PAGE);
-}
+let finishing: Promise<void> | null = null;
 
-let ending = false;
+/**
+ * Ends the account's time on this device: the live connection closed, its
+ * notifications off, everything of it forgotten, the sign-in page opened.
+ * Once, however many ways the end is noticed: a logout also reaches this
+ * device as "session:ended" over the live connection, often before the
+ * logout's own answer, and two page loads one after the other would cut the
+ * first one off.
+ */
+function finish(): Promise<void> {
+	finishing ??= (async () => {
+		realtime.disconnect();
+		// (the server already dropped this device's notifications with the session)
+		await withTimeout(disablePush(false), 2000, undefined);
+		const uid = meId();
+		write(keys.user, null);
+		if (uid !== null) clearPersistedOutbox(uid);
+		window.location.replace(SIGN_IN_PAGE);
+	})();
+	return finishing;
+}
 
 /**
  * The server stopped accepting this device. When `certain` is false (a
  * refused connection), the session is checked first: it may be fine.
  */
 export async function sessionEnded(certain: boolean): Promise<void> {
-	if (ending) return;
+	if (finishing) return;
 	if (!certain) {
 		try {
 			await usersApi.me();
@@ -84,12 +97,7 @@ export async function sessionEnded(certain: boolean): Promise<void> {
 			}
 		}
 	}
-	if (ending) return;
-	ending = true;
-	realtime.disconnect();
-	// the server already dropped this device's notifications with the session
-	await withTimeout(disablePush(false), 2000, undefined);
-	leave();
+	await finish();
 }
 
 let loggingOut = false;
@@ -106,16 +114,10 @@ export async function logout(): Promise<void> {
 		loggingOut = false;
 		throw e;
 	}
-	ending = true;
-	realtime.disconnect();
-	await withTimeout(disablePush(false), 2000, undefined);
-	leave();
+	await finish();
 }
 
 /** After the account was deleted. */
-export async function accountDeleted(): Promise<void> {
-	ending = true;
-	realtime.disconnect();
-	await withTimeout(disablePush(false), 2000, undefined);
-	leave();
+export function accountDeleted(): Promise<void> {
+	return finish();
 }

@@ -6,8 +6,8 @@ import { contactsApi } from "../../shared/api/endpoints";
 import type { LiveMessage, SendPayload, WireMessage } from "../../shared/api/types";
 import { randomId } from "../../shared/lib/ids";
 import { applyWire, updateExisting } from "../state/chatModel";
-import { getRow, patchRow, realName, toPreview } from "../state/contactModel";
-import { outbox, session } from "../state/stores";
+import { getRow, patchRow, toPreview } from "../state/contactModel";
+import { outbox } from "../state/stores";
 import type { ForwardSource, Pending, ReplyRef } from "../state/types";
 import { showToast } from "./feedback";
 import { serverNow } from "./clock";
@@ -205,17 +205,10 @@ export function sendText(convId: number, rawText: string, opts: SendOptions = {}
 		showToast(`Messages can be at most ${MAX_LENGTH} characters.`, { icon: "error" });
 		return false;
 	}
-	const me = session.get().me;
-	const row = getRow(convId);
 	let replyTo: ReplyRef | null = null;
 	if (opts.replyTo && opts.replyTo.text !== null) {
 		const q = opts.replyTo;
-		replyTo = {
-			id: q.id,
-			senderId: q.senderId,
-			text: q.text ?? "",
-			name: q.senderId === me?.id ? (me?.name ?? "") : realName(row),
-		};
+		replyTo = { id: q.id, senderId: q.senderId, text: q.text ?? "" };
 	}
 	const p: Pending = {
 		clientId: randomId(),

@@ -4,4 +4,5 @@
 // the values from .env.
 import dotenv from "dotenv";
 
-dotenv.config();
+// (quiet: the server's own log says what it needs to; dotenv would add a line)
+dotenv.config({ quiet: true });

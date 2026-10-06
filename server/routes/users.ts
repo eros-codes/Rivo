@@ -31,7 +31,6 @@ const router = Router();
 // per upload means no stale browser cache.
 const AVATAR_DIR = path.join(process.cwd(), "public", "assets", "images", "user-profiles");
 const AVATAR_URL_PREFIX = "/assets/images/user-profiles/";
-const LEGACY_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".gif"];
 
 const ME_SELECT = {
 	id: true,
@@ -50,40 +49,30 @@ const ME_SELECT = {
 
 /** Removes a user's avatar files, except `keep`. */
 async function removeAvatarFiles(userId: number, keep: string | null = null): Promise<void> {
-	for (const ext of LEGACY_EXTS) {
-		const name = `${userId}${ext}`;
-		if (name !== keep) await fs.promises.unlink(path.join(AVATAR_DIR, name)).catch(() => {});
-	}
 	let files;
 	try {
 		files = await fs.promises.readdir(AVATAR_DIR);
 	} catch {
 		return;
 	}
-	const now = Date.now();
 	for (const f of files) {
-		const full = path.join(AVATAR_DIR, f);
-		if (f.startsWith(`av-${userId}-`) && f !== keep) {
-			await fs.promises.unlink(full).catch(() => {});
-		} else if (f.startsWith(`up-${userId}-`)) {
-			// an upload left behind by a failed request
-			const st = await fs.promises.stat(full).catch(() => null);
-			if (st && now - st.mtimeMs > 60 * 60 * 1000) await fs.promises.unlink(full).catch(() => {});
-		}
+		if (f.startsWith(`av-${userId}-`) && f !== keep) await fs.promises.unlink(path.join(AVATAR_DIR, f)).catch(() => {});
 	}
 }
 
+const NOT_AN_IMAGE = "NOT_AN_IMAGE";
+
+// The upload is kept in memory (at most 5 MB, and it costs from the action
+// budget), never as a file: an unprocessed picture (with its location data)
+// never sits in the public folder, and there is no temporary file to clean up
+// (on Windows one can stay locked by the image decoder for a while).
 const upload = multer({
-	storage: multer.diskStorage({
-		destination: (_req, _file, cb) => {
-			fs.mkdir(AVATAR_DIR, { recursive: true }, () => cb(null, AVATAR_DIR));
-		},
-		// a temporary name; the stored avatar is re-encoded under its own name
-		filename: (req, _file, cb) => cb(null, `up-${req.userId}-${crypto.randomBytes(8).toString("hex")}.tmp`),
-	}),
-	// one file and nothing else (no other fields piling up in memory)
-	limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 0, parts: 1 },
-	fileFilter: (_req, file, cb) => (String(file.mimetype).startsWith("image/") ? cb(null, true) : cb(new Error("Only images allowed"))),
+	storage: multer.memoryStorage(),
+	// one file and no other field. (Not `parts`: busboy reports that limit as
+	// soon as the count is reached, so `parts: 1` refused every upload; files
+	// and fields bound the parts anyway.)
+	limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 0 },
+	fileFilter: (_req, file, cb) => (String(file.mimetype).startsWith("image/") ? cb(null, true) : cb(new Error(NOT_AN_IMAGE))),
 });
 
 // ─── Current user ─────────────────────────────────────────────────────────
@@ -235,10 +224,16 @@ router.patch("/me/password", requireAuth, async (req, res) => {
 
 // ─── Avatar ───────────────────────────────────────────────────────────────
 function receiveAvatar(req: Request, res: Response, next: NextFunction): void {
-	upload.single("avatar")(req, res, (err) => {
+	upload.single("avatar")(req, res, (err: unknown) => {
 		if (!err) return next();
-		const tooBig = err.code === "LIMIT_FILE_SIZE";
-		return void res.status(tooBig ? 413 : 400).json({ error: tooBig ? "Image is too large (max 5 MB)" : "Only images are allowed" });
+		const code = (err as { code?: unknown }).code;
+		const message = (err as { message?: unknown }).message;
+		if (code === "LIMIT_FILE_SIZE") return void res.status(413).json({ error: "Image is too large (max 5 MB)" });
+		if (message === NOT_AN_IMAGE) return void res.status(400).json({ error: "Only images are allowed" });
+		// more files, other fields, another field name
+		if (typeof code === "string" && code.startsWith("LIMIT_")) return void res.status(400).json({ error: 'Send one picture, as the field "avatar"' });
+		// not readable as a form (cut off, no boundary)
+		return void res.status(400).json({ error: "Malformed upload" });
 	});
 }
 
@@ -257,41 +252,26 @@ const MAX_INPUT_PIXELS = 25_000_000;
 const avatarBudget: RequestHandler = (req, res, next) => (spendBudget(req.userId, 5) ? next() : void res.status(429).json(RATE_LIMITED));
 
 router.post("/me/avatar", requireAuth, avatarBudget, receiveAvatar, async (req, res) => {
-	if (!req.file) return void res.status(400).json({ error: "No file uploaded" });
-	const tmp = req.file.path;
-	const drop = () => fs.promises.unlink(tmp).catch(() => {});
+	const input = req.file?.buffer;
+	if (!input) return void res.status(400).json({ error: "No file uploaded" });
 	try {
-		const head = Buffer.alloc(12);
-		const fd = await fs.promises.open(tmp, "r");
-		await fd.read(head, 0, 12, 0);
-		await fd.close();
 		// trust the bytes and the decoder, never the declared type
-		if (!MAGIC.some((ok) => ok(head))) {
-			await drop();
-			return void res.status(400).json({ error: "Invalid image file" });
-		}
-		const meta = await sharp(tmp, { limitInputPixels: MAX_INPUT_PIXELS }).metadata();
-		if (!meta?.width || !meta?.height || meta.width * meta.height > MAX_INPUT_PIXELS) {
-			await drop();
-			return void res.status(400).json({ error: "Image is too large" });
-		}
-		if (!["jpeg", "png", "gif", "webp"].includes(String(meta?.format || "").toLowerCase())) {
-			await drop();
-			return void res.status(400).json({ error: "Invalid image file" });
-		}
+		if (!MAGIC.some((ok) => ok(input))) return void res.status(400).json({ error: "Invalid image file" });
+		const meta = await sharp(input, { limitInputPixels: MAX_INPUT_PIXELS }).metadata();
+		if (!meta.width || !meta.height || meta.width * meta.height > MAX_INPUT_PIXELS) return void res.status(400).json({ error: "Image is too large" });
+		if (!["jpeg", "png", "gif", "webp"].includes(String(meta.format || "").toLowerCase())) return void res.status(400).json({ error: "Invalid image file" });
 	} catch {
-		await drop();
 		return void res.status(400).json({ error: "Invalid image file" });
 	}
 
-	// re-encoded as JPEG: strips metadata (location!) and bounds the size
+	// re-encoded as JPEG: strips metadata (location!) and bounds the size.
+	// Written under its final name at once (no rename): nobody knows the name
+	// before this answer, so a half-written file is never asked for.
 	const outName = `av-${req.userId}-${crypto.randomBytes(12).toString("hex")}.jpg`;
 	const outPath = path.join(AVATAR_DIR, outName);
-	const partial = `${outPath}.part`;
 	try {
-		await sharp(tmp, { limitInputPixels: MAX_INPUT_PIXELS }).rotate().resize({ width: 1024, height: 1024, fit: "inside" }).jpeg({ quality: 80 }).toFile(partial);
-		await fs.promises.rename(partial, outPath);
-		await drop();
+		await fs.promises.mkdir(AVATAR_DIR, { recursive: true });
+		await sharp(input, { limitInputPixels: MAX_INPUT_PIXELS }).autoOrient().resize({ width: 1024, height: 1024, fit: "inside" }).jpeg({ quality: 80 }).toFile(outPath);
 		const url = `${AVATAR_URL_PREFIX}${outName}`;
 		await prisma.user.update({ where: { id: req.userId }, data: { profilePics: [url] } });
 		await removeAvatarFiles(req.userId, outName);
@@ -299,8 +279,6 @@ router.post("/me/avatar", requireAuth, avatarBudget, receiveAvatar, async (req, 
 		return void reply(res, "POST /api/users/me/avatar", { url });
 	} catch (e) {
 		log.error("avatar processing failed", e);
-		await drop();
-		await fs.promises.unlink(partial).catch(() => {});
 		await fs.promises.unlink(outPath).catch(() => {});
 		return void res.status(500).json({ error: "Failed to process image" });
 	}

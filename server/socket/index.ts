@@ -191,7 +191,6 @@ export function initSocket(httpServer: HttpServer): RivoServer {
 		action("message:send", 1, (data) => sendMessageAs(actor(), data));
 		action("messages:forward", (p) => batchCost(sizeOf(p, "items"), 5), (data) => forwardMessagesAs(actor(), data));
 		action("message:edit", 1, (data) => editMessageAs(actor(), data));
-		action("message:delete", 1, (data) => deleteMessagesAs(actor(), { messageIds: [data.messageId] }));
 		action("messages:delete", (p) => batchCost(sizeOf(p, "messageIds"), 10), (data) => deleteMessagesAs(actor(), data));
 		action("message:pin", 1, (data) => togglePinAs(actor(), data));
 		action("reaction:add", 1, (data) => reactAs(actor(), data));

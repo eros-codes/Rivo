@@ -21,7 +21,7 @@ umask 077 # the dumps hold user data: readable by this user only
 
 # a setting from the environment, else from .env
 setting() {
-	node --input-type=module -e 'const n = process.argv[1]; if (!process.env[n]) { try { (await import("dotenv")).config(); } catch {} } console.log(process.env[n] ?? "");' "$1"
+	node --input-type=module -e 'const n = process.argv[1]; if (!process.env[n]) { try { (await import("dotenv")).default.config({ quiet: true }); } catch {} } console.log(process.env[n] ?? "");' "$1"
 }
 DIR="${BACKUP_DIR:-$(setting BACKUP_DIR)}"
 DIR="${DIR:-backups}"

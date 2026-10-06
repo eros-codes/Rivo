@@ -69,7 +69,7 @@ export const trimmed = (error: string) =>
 		.transform((v) => (v ?? "").trim());
 
 /** The id a sending device gives a message, so a retry is stored once. */
-export const CLIENT_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
+const CLIENT_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 export const clientId = z.string({ error: "Invalid clientId" }).regex(CLIENT_ID_PATTERN, { error: "Invalid clientId" }).nullish();
 
 /** A username as typed: spaces around it and a leading @ are ignored. */

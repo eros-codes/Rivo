@@ -33,16 +33,13 @@ export interface BubbleData {
  */
 function replyLabel(m: LiveMessage, meId: number | null, otherName: string): string {
 	if (m.replyToSenderId !== null) return m.replyToSenderId === meId ? "You" : otherName || m.replyToName || "";
-	// older messages stored "You" from the sender's point of view
-	if (m.replyToName === "You") return m.senderId === meId ? "You" : otherName || "You";
+	// (the quoted message is gone: the name stored with the reply)
 	return m.replyToName || otherName || "";
 }
 
 /** `saved`: Saved Messages, where nobody else could see a message (no ticks). */
 export function fromMessage(m: LiveMessage, meId: number | null, otherName: string, saved = false): BubbleData {
 	const mine = m.senderId === meId;
-	let forwardedFrom = m.forwardedFrom;
-	if (forwardedFrom === "You" && !mine && otherName) forwardedFrom = otherName;
 	return {
 		key: `m${m.id}`,
 		id: m.id,
@@ -58,7 +55,7 @@ export function fromMessage(m: LiveMessage, meId: number | null, otherName: stri
 		scheduledFor: m.scheduledFor,
 		openedAt: m.openedAt,
 		reply: m.replyToId !== null ? { id: m.replyToId, label: replyLabel(m, meId, otherName), text: m.replyToText ?? "" } : null,
-		forwardedFrom,
+		forwardedFrom: m.forwardedFrom,
 		reactions: m.reactions,
 		status: mine && !saved ? (m.isSeen ? "seen" : "sent") : null,
 		error: null,

@@ -7,7 +7,9 @@
 // api and e2e need TEST_DATABASE_URL (in the environment or in .env): a
 // PostgreSQL database used only for tests (its name must contain "test").
 // Its migrations are brought up to date first. e2e also needs
-// `npm run build` and the browser (`npx playwright install chromium`, once).
+// `npm run build` and a browser: Playwright's own (`npx playwright install
+// chromium`: once, and again after an npm install that updates Playwright),
+// or else a Chrome or Edge installed on the computer (see pickBrowser).
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -20,7 +22,7 @@ const require = createRequire(import.meta.url);
 if (!process.env.TEST_DATABASE_URL) {
 	try {
 		// (only TEST_DATABASE_URL is used from it: the test servers get their own settings)
-		const parsed = (await import("dotenv")).parse(readFileSync(join(ROOT, ".env")));
+		const parsed = (await import("dotenv")).default.parse(readFileSync(join(ROOT, ".env")));
 		if (parsed.TEST_DATABASE_URL) process.env.TEST_DATABASE_URL = parsed.TEST_DATABASE_URL;
 	} catch {
 		/* no .env (or no dotenv): the environment only */
@@ -72,6 +74,52 @@ function migrate() {
 	return run([bin("prisma"), "migrate", "deploy"], { ...process.env, DATABASE_URL: testDatabase() });
 }
 
+const INSTALLED = { chrome: "Google Chrome", msedge: "Microsoft Edge" };
+
+/**
+ * The browser the e2e tests run in, as a Playwright channel ("" for
+ * Playwright's own Chromium), or null if there is none.
+ *
+ * Playwright's own Chromium is what CI uses. Each Playwright version needs its
+ * own build of it, so after an npm install that updated Playwright it is
+ * missing until `npx playwright install chromium`. Where that download does
+ * not get through, a Chrome or Edge installed on this computer does the same
+ * job (the same engine, driven the same way; Windows always has Edge).
+ * E2E_CHANNEL (chrome, msedge, …) chooses one.
+ */
+async function pickBrowser() {
+	const { chromium } = await import("@playwright/test");
+	/** true, or why it did not start */
+	const starts = async (channel) => {
+		try {
+			await (await chromium.launch(channel ? { channel } : {})).close();
+			return true;
+		} catch (e) {
+			return String(e?.message ?? e);
+		}
+	};
+	const asked = process.env.E2E_CHANNEL;
+	if (asked) {
+		const r = await starts(asked);
+		if (r === true) return asked;
+		console.error(`E2E_CHANNEL=${asked}: that browser does not start:\n${r}`);
+		return null;
+	}
+	const own = await starts("");
+	// (a problem other than it not being there: the tests show it)
+	if (own === true || !/Executable doesn't exist/i.test(own)) return "";
+	for (const channel of Object.keys(INSTALLED)) {
+		if ((await starts(channel)) === true) {
+			console.log(`· Playwright's own browser is not installed (npx playwright install chromium): using ${INSTALLED[channel]} from this computer`);
+			return channel;
+		}
+	}
+	console.error(
+		"Playwright's browser is not installed (each Playwright version needs its own, so also after an npm install that updated Playwright), and there is no Chrome or Edge on this computer to use instead. Install it, once:\n  npx playwright install chromium",
+	);
+	return null;
+}
+
 const suites = {
 	unit() {
 		return run(["--import", "tsx", "--test", ...find(join(ROOT, "tests", "unit"), ".test.ts")]);
@@ -80,17 +128,21 @@ const suites = {
 		testDatabase();
 		const m = migrate();
 		if (m !== 0) return m;
-		return run(["--test", "--test-concurrency=4", ...find(join(ROOT, "tests", "api"), ".test.mjs")]);
+		// (TypeScript: Node runs it as it is, stripping the types)
+		return run(["--test", "--test-concurrency=4", ...find(join(ROOT, "tests", "api"), ".test.ts")]);
 	},
-	e2e() {
+	async e2e() {
 		testDatabase();
 		if (!existsSync(join(ROOT, "public", "chat", "index.html"))) {
 			console.error("The app is not built: run `npm run build` first.");
 			return 2;
 		}
+		const channel = await pickBrowser();
+		if (channel === null) return 2;
 		const m = migrate();
 		if (m !== 0) return m;
-		return run([bin("@playwright/test"), "test", "-c", "tests/e2e/playwright.config.mjs", ...process.argv.slice(3)]);
+		// (the config reads E2E_CHANNEL)
+		return run([bin("@playwright/test"), "test", "-c", "tests/e2e/playwright.config.ts", ...process.argv.slice(3)], { ...process.env, E2E_CHANNEL: channel });
 	},
 };
 
@@ -102,6 +154,6 @@ for (const name of order) {
 		process.exit(2);
 	}
 	console.log(`\n━━ ${name} tests ━━`);
-	const code = suites[name]();
+	const code = await suites[name]();
 	if (code !== 0) process.exit(code);
 }

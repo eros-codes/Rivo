@@ -266,8 +266,8 @@ router.post("/logout", async (req, res) => {
 		const payload = readToken(tokenFromRequest(req));
 		const session = payload ? await loadSession(payload).catch(() => null) : null;
 		if (session) {
-			// this device's notifications stop (they belong to its session; an
-			// endpoint from before sessions existed is removed by its address)
+			// this device's notifications stop: they belong to its session, and
+			// its address goes too (in case it is still filed under another one)
 			const body = check(Logout, req.body);
 			const endpoint = body.ok ? body.data.endpoint : null;
 			if (endpoint) await push.removeSubscriptionByEndpoint(session.userId, endpoint);

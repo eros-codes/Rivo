@@ -91,7 +91,9 @@ export const ActiveChatCard = memo(function ActiveChatCard({ row, pending, meId,
 		drag.current = null;
 		const el = cardRef.current;
 		if (!d || d.id !== e.pointerId || !el || !d.horizontal) return;
-		if (Math.abs(d.moved) > 5) suppressClick.arm();
+		// a mouse drag ends in a click on the card, which is not a tap; a finger
+		// that moved causes none (and the user's next real tap must count)
+		if (Math.abs(d.moved) > 5 && e.pointerType !== "touch") suppressClick.arm();
 		const total = d.base + d.moved;
 		let side: SwipeSide = "closed";
 		if (total < -SNAP_PX && !saved) side = "left";

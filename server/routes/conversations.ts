@@ -3,10 +3,9 @@ import type { Prisma } from "@prisma/client";
 import prisma from "../prisma.ts";
 import { config } from "../config.ts";
 import { requireAuth } from "../middleware/auth.ts";
-import { ChangesSince, ClearChat, ConversationIdParam, conversationsPage, messagesPage, type PageQuery } from "../../shared/schemas/conversations.ts";
+import { ChangesSince, ClearChat, ConversationIdParam, messagesPage, type PageQuery } from "../../shared/schemas/conversations.ts";
 import { check, parse } from "../http/validate.ts";
-import { applyPrivacy, relationsFor } from "../utils/privacy.ts";
-import { decryptBody, isCapsuleLocked, loadReplySenders, previewMessage, serializeMessage, unavailableMessage } from "../utils/messageView.ts";
+import { decryptBody, isCapsuleLocked, loadReplySenders, serializeMessage, unavailableMessage } from "../utils/messageView.ts";
 import { isMember } from "../services/caches.ts";
 import { clearConversation, statusFor } from "../services/messages.ts";
 import { RATE_LIMITED, spendBudget } from "../services/actionLimit.ts";
@@ -18,42 +17,13 @@ import { reply } from "../http/reply.ts";
 
 const router = Router();
 
-const MEMBER_USER_SELECT = {
-	id: true,
-	name: true,
-	username: true,
-	profilePics: true,
-	isOnline: true,
-	lastSeen: true,
-	isDeleted: true,
-	privacyOnline: true,
-	privacyProfile: true,
-} satisfies Prisma.UserSelect;
-
 const MESSAGE_INCLUDE = { reactions: { select: { userId: true, emoji: true }, orderBy: { id: "asc" } } } satisfies Prisma.MessageInclude;
 
-type MemberRow = Prisma.ConversationMemberGetPayload<{ include: { user: { select: typeof MEMBER_USER_SELECT } } }>;
-
-/** The conversations with each member's details as the viewer may see them. */
-async function sanitizeMembers<C extends { members: MemberRow[] }>(conversations: C[], viewerId: number) {
-	const ids = conversations.flatMap((c) => (c.members || []).map((m) => m.user?.id)).filter((id): id is number => Number.isInteger(id));
-	const rel = await relationsFor(viewerId, ids);
-	return conversations.map((c) => ({
-		...c,
-		members: (c.members || []).map((m) => ({
-			...m,
-			user: m.user ? applyPrivacy(m.user, m.user.id === viewerId ? { hasViewer: true, blockedViewer: false } : rel.get(m.user.id)) : m.user,
-		})),
-	}));
-}
-
 /** Which page of a chat: how many messages, older than which one. */
-export const MessagesPage = messagesPage(config.pages.defaultLimit, config.pages.maxLimit);
-export type PageParams = PageQuery;
-const ConversationsPage = conversationsPage(config.pages.conversationsDefault, config.pages.conversationsMax);
+const MessagesPage = messagesPage(config.pages.defaultLimit, config.pages.maxLimit);
 
 /** Messages older than (before, beforeId), newest first then reversed. */
-export async function loadPage(convId: number, viewerId: number, { limit, before, beforeId }: PageParams): Promise<{ messages: WireMessage[]; hasMore: boolean }> {
+async function loadPage(convId: number, viewerId: number, { limit, before, beforeId }: PageQuery): Promise<{ messages: WireMessage[]; hasMore: boolean }> {
 	const where: Prisma.MessageWhereInput = { conversationId: convId, isDeleted: false };
 	if (before && beforeId) where.OR = [{ createdAt: { lt: before } }, { createdAt: before, id: { lt: beforeId } }];
 	else if (before) where.createdAt = { lt: before };
@@ -92,32 +62,6 @@ async function memberOr403(req: Request, res: Response): Promise<number | null> 
 	}
 	return convId;
 }
-
-// ─── List (latest first) ──────────────────────────────────────────────────
-router.get("/", requireAuth, async (req, res) => {
-	const page = parse(res, ConversationsPage, req.query);
-	if (!page) return;
-	const { take, before, beforeId } = page;
-	try {
-		const where: Prisma.ConversationWhereInput = { members: { some: { userId: req.userId } } };
-		if (before) where.OR = [{ lastMessageAt: { lt: before } }, { lastMessageAt: before, id: { lt: beforeId || 2147483647 } }];
-		const conversations = await prisma.conversation.findMany({
-			where,
-			take,
-			orderBy: [{ lastMessageAt: "desc" }, { id: "desc" }],
-			include: {
-				members: { include: { user: { select: MEMBER_USER_SELECT } } },
-				messages: { where: { isDeleted: false }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 1 },
-			},
-		});
-		const now = new Date();
-		const out = (await sanitizeMembers(conversations, req.userId)).map((c) => ({ ...c, messages: c.messages.map((m) => previewMessage(m, req.userId, now)) }));
-		return void res.json(out);
-	} catch (e) {
-		log.error("GET /conversations failed", e);
-		return void res.status(500).json({ error: "Server error" });
-	}
-});
 
 // ─── A page of messages ───────────────────────────────────────────────────
 // { messages (oldest first), hasMore, cursor }: `cursor` is the moment this
@@ -170,7 +114,7 @@ router.get("/:id/changes", requireAuth, async (req, res) => {
 });
 
 // ─── Pinned messages (oldest first) ───────────────────────────────────────
-export async function pinnedOf(convId: number, viewerId: number): Promise<PinnedItem[]> {
+async function pinnedOf(convId: number, viewerId: number): Promise<PinnedItem[]> {
 	const pinned = await prisma.message.findMany({
 		where: { conversationId: convId, isPinned: true, isDeleted: false },
 		orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -204,26 +148,6 @@ router.get("/:id/pinned", requireAuth, async (req, res) => {
 		return void reply(res, "GET /api/conversations/:id/pinned", { pinned: await pinnedOf(convId, req.userId) });
 	} catch (e) {
 		log.error("GET /conversations/:id/pinned failed", e);
-		return void res.status(500).json({ error: "Server error" });
-	}
-});
-
-// ─── Conversation with its newest messages (older clients) ────────────────
-router.get("/:id", requireAuth, async (req, res) => {
-	try {
-		const convId = await memberOr403(req, res);
-		if (!convId) return;
-		const p = parse(res, MessagesPage, req.query);
-		if (!p) return;
-		const conversation = await prisma.conversation.findUnique({
-			where: { id: convId },
-			include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
-		});
-		if (!conversation) return void res.status(404).json({ error: "Conversation not found" });
-		const [withMembers] = await sanitizeMembers([conversation], req.userId);
-		return void res.json({ ...withMembers, messages: (await loadPage(convId, req.userId, p)).messages });
-	} catch (e) {
-		log.error("GET /conversations/:id failed", e);
 		return void res.status(500).json({ error: "Server error" });
 	}
 });

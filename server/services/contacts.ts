@@ -88,14 +88,8 @@ export async function serializeContacts(rows: ContactRecord[], viewerId: number)
 			unreadCount: r.unreadCount,
 			contact,
 			lastMessage,
-			// the shape older clients read
 			conversation: r.conversation
-				? {
-						id: r.conversation.id,
-						createdAt: iso(r.conversation.createdAt),
-						lastMessageAt: isoOrNull(r.conversation.lastMessageAt),
-						messages: lastMessage ? [lastMessage] : [],
-					}
+				? { id: r.conversation.id, createdAt: iso(r.conversation.createdAt), lastMessageAt: isoOrNull(r.conversation.lastMessageAt) }
 				: null,
 		};
 	});
@@ -117,15 +111,4 @@ export async function emitContactUpsert(ownerId: number, contactRowId: number, {
 	} catch (e) {
 		log.error("contact:upsert failed", messageOf(e) || e);
 	}
-}
-
-/** Every user has a Saved Messages chat (accounts made before it existed get one). */
-export async function ensureSavedContact(userId: number): Promise<boolean> {
-	const count = await prisma.contact.count({ where: { ownerId: userId, isSaved: true } });
-	if (count > 0) return false;
-	await prisma.$transaction(async (tx) => {
-		const conv = await tx.conversation.create({ data: { members: { create: [{ userId }] } } });
-		await tx.contact.create({ data: { ownerId: userId, contactId: userId, conversationId: conv.id, isSaved: true } });
-	});
-	return true;
 }

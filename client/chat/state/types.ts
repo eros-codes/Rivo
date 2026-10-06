@@ -8,8 +8,6 @@ export interface ReplyRef {
 	id: number;
 	senderId: number;
 	text: string;
-	/** the quoted author's name as stored with the message (older clients) */
-	name: string;
 }
 
 /** A message this device is sending (or failed to send). */

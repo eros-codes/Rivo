@@ -1,5 +1,6 @@
-// ESLint for the server, the scripts and the tests. (The browser code is
-// TypeScript: `npm run typecheck` checks it.)
+// ESLint for the JavaScript that is left: the build, dev and test runner
+// scripts (scripts/*.mjs) and this file. Everything else (the server, the
+// app, shared/, the tests) is TypeScript, checked by `npm run typecheck`.
 //   npm run lint
 import js from "@eslint/js";
 

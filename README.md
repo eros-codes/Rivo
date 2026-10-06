@@ -26,7 +26,8 @@ npm run test:api                   # نیاز: TEST_DATABASE_URL (دیتابیس
 npm run build && npm run test:e2e  # مرورگر (یک‌بار: npx playwright install chromium)
 ```
 
-همین‌ها با هر push روی GitHub Actions هم اجرا می‌شوند (`.github/workflows/ci.yml`).
+تست‌ها هم TypeScript‌اند و با همان قرارداد `shared/` چک می‌شوند (unit ۳۴، api ۴۲،
+مرورگر ۳۷). همین‌ها با هر push روی GitHub Actions هم اجرا می‌شوند (`.github/workflows/ci.yml`).
 
 ## عملیات
 

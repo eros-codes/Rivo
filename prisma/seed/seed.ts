@@ -173,7 +173,7 @@ async function storeAvatar(sharp: Sharp, userId: number, source: string): Promis
 	fs.mkdirSync(AVATAR_DIR, { recursive: true });
 	// the same processing as an upload: upright, at most 1024px, JPEG without metadata
 	await sharp(source, { limitInputPixels: 25_000_000 })
-		.rotate()
+		.autoOrient()
 		.resize({ width: 1024, height: 1024, fit: "inside" })
 		.jpeg({ quality: 80 })
 		.toFile(path.join(AVATAR_DIR, outName));

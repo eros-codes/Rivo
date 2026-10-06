@@ -188,9 +188,8 @@ async function prepareSend(actor: Actor, data: SendInput): Promise<Prepared | Fa
 		const body = unavailable ? null : decryptBody(src);
 		if (!src || !body?.ok || !body.text.trim()) return { error: "This message can't be forwarded" };
 		text = body.text.trim().slice(0, MAX_LEN);
-		// a forward of a forward still names the original author ("You" in
-		// older rows meant the one who sent that row)
-		forwardedFrom = (src.forwardedFrom && src.forwardedFrom !== "You" ? src.forwardedFrom : src.sender?.name || "Unknown").slice(0, 100);
+		// a forward of a forward still names the original author
+		forwardedFrom = (src.forwardedFrom || src.sender?.name || "Unknown").slice(0, 100);
 	}
 
 	// The quote is taken from the message itself, never from the client (a

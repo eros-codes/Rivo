@@ -253,7 +253,8 @@ export const MessageBubble = memo(function MessageBubble({
 		gesture.current = null;
 		if (g.menuOpened) swallowNextClick();
 		if (g.swiping) {
-			suppressClick.arm();
+			// (a mouse drag ends in a click; a finger that moved causes none)
+			if (e.pointerType !== "touch") suppressClick.arm();
 			const dx = e.clientX - g.x;
 			setSwipeX(0);
 			if (dx >= SWIPE_REPLY_PX && e.type === "pointerup") handlers.onReply(data);

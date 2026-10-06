@@ -2,11 +2,10 @@
 import "./env.ts";
 import express, { type ErrorRequestHandler, type Request, type RequestHandler } from "express";
 import cookieParser from "cookie-parser";
-import rateLimit from "express-rate-limit";
+import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import { createServer } from "node:http";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import * as Sentry from "@sentry/node";
 import { config } from "./config.ts";
 import prisma from "./prisma.ts";
 import { initKeyStore, wrapDEK, generateDEK } from "./utils/encryption.ts";
@@ -54,24 +53,17 @@ if (config.isProd) {
 	}
 }
 
-if (config.sentryDsn) {
-	try {
-		Sentry.init({ dsn: config.sentryDsn });
-	} catch (e) {
-		log.warn("Sentry init failed", e);
-	}
+// Error reporting is started by server/instrument.ts, before this file runs
+// (see there). Without it, a SENTRY_DSN would quietly report nothing.
+const sentry = config.sentryDsn ? await import("@sentry/node") : null;
+if (sentry && !sentry.isInitialized()) {
+	log.warn("⚠️  SENTRY_DSN is set but errors are not reported: start the server with `node --import ./server/instrument.ts server/index.ts` (npm start does).");
 }
 
 const app = express();
 const httpServer = createServer(app);
 const PUBLIC = resolve("public");
-const VERSION = (() => {
-	try {
-		return process.env.APP_VERSION || JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
-	} catch {
-		return "unknown";
-	}
-})();
+const VERSION = config.version;
 let stopping = false;
 
 if (config.trustProxy) app.set("trust proxy", 1);
@@ -114,14 +106,13 @@ app.get("/api/health", async (_req, res) => {
 
 app.use(express.json({ limit: "64kb" }));
 app.use(cookieParser());
-if (config.sentryDsn) app.use(Sentry.Handlers.requestHandler());
 app.use(csrfProtection);
 
 if (config.rate.http.enabled) {
 	app.use(
 		rateLimit({
 			windowMs: config.rate.http.windowMs,
-			max: config.rate.http.max,
+			limit: config.rate.http.max,
 			standardHeaders: true,
 			legacyHeaders: false,
 			// only the API: a page load fetches many files, and many people can
@@ -146,18 +137,20 @@ const AUTH_ACCOUNT_FIELD: Record<string, string | undefined> = {
 };
 const authLimiter = rateLimit({
 	windowMs: config.rate.auth.windowMs,
-	max: config.rate.auth.max,
+	limit: config.rate.auth.max,
 	standardHeaders: true,
 	legacyHeaders: false,
 	// only failed attempts count: a normal sign-up never hits it, guessing a
 	// password or a code does, and one person's typos do not lock out
 	// everyone behind the same address
 	skipSuccessfulRequests: true,
+	// (an IPv6 address counts by its /56 network: one connection gets a whole
+	// range of addresses, any of which would otherwise be a fresh allowance)
 	keyGenerator: (req) => {
 		const route = req.path.toLowerCase().replace(/\/+$/, "");
 		const field = AUTH_ACCOUNT_FIELD[route];
 		const value = field ? req.body?.[field] : "";
-		return `${req.ip}|${route}|${typeof value === "string" ? value.trim().toLowerCase().slice(0, 254) : ""}`;
+		return `${ipKeyGenerator(req.ip ?? "")}|${route}|${typeof value === "string" ? value.trim().toLowerCase().slice(0, 254) : ""}`;
 	},
 	skip: (req) => req.path.toLowerCase().replace(/\/+$/, "") === "/logout",
 	handler: (_req, res) => res.status(429).json({ error: "Too many attempts, try again later" }),
@@ -167,12 +160,12 @@ const authLimiter = rateLimit({
 // accounts from one place (credential stuffing) runs into this one.
 const authAddressLimiter = rateLimit({
 	windowMs: config.rate.auth.windowMs,
-	max: config.rate.auth.max * 10,
+	limit: config.rate.auth.max * 10,
 	standardHeaders: false,
 	legacyHeaders: false,
 	skipSuccessfulRequests: true,
-	// (as the limiter stores it: an unknown address is the key "undefined")
-	keyGenerator: (req) => String(req.ip),
+	// (an unknown address, a connection already gone, is the key "")
+	keyGenerator: (req) => ipKeyGenerator(req.ip ?? ""),
 	skip: (req) => req.path.toLowerCase().replace(/\/+$/, "") === "/logout",
 	handler: (_req, res) => res.status(429).json({ error: "Too many attempts, try again later" }),
 });
@@ -197,11 +190,6 @@ const page = (file: string): RequestHandler => {
 	};
 };
 const withQuery = (req: Request, path: string): string => path + (req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : "");
-
-// addresses of the previous version (bookmarks, notifications, emails)
-app.get("/chat/main.html", (req, res) => res.redirect(301, withQuery(req, "/chat/")));
-app.get("/auth/auth.html", (req, res) => res.redirect(301, withQuery(req, "/auth/")));
-app.get("/reset-password", (req, res) => res.redirect(301, withQuery(req, "/reset-password.html")));
 
 app.get("/", (req, res, next) => {
 	// the app's own host opens the app
@@ -242,8 +230,6 @@ app.use((req, res) => {
 	}
 	return void res.type("text/plain").send("Not found");
 });
-
-if (config.sentryDsn) app.use(Sentry.Handlers.errorHandler());
 
 // (four parameters: that is how Express tells an error handler apart)
 const onError: ErrorRequestHandler = (err, req, res, _next) => {
@@ -309,6 +295,8 @@ async function shutdown(signal: string, code = 0): Promise<void> {
 		httpServer.closeIdleConnections?.();
 		if (wasListening) await closed;
 		await prisma.$disconnect();
+		// (what is still waiting to be reported, e.g. the error that stopped it)
+		if (sentry?.isInitialized()) await sentry.flush(2000);
 		log.info("stopped");
 	} catch (e) {
 		log.error("shutdown error", e);
@@ -317,6 +305,12 @@ async function shutdown(signal: string, code = 0): Promise<void> {
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
+// Windows has no SIGTERM (stopping a process there ends it at once), so a
+// parent that started the server with an IPC channel asks for the same clean
+// stop with a message: pm2 (shutdown_with_message), the tests.
+process.on("message", (m) => {
+	if (m === "shutdown") void shutdown("shutdown message");
+});
 // A bug that escaped every handler: logged with its stack. An unhandled
 // promise rejection is logged and the server goes on; an exception thrown
 // outside any promise leaves the process in an unknown state, so it stops

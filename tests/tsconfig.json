@@ -1,0 +1,34 @@
+// The tests' TypeScript (API, browser and integration tests and their
+// helpers), checked against shared/ like the server and the app: a field
+// renamed in the contract is an error in the tests at `npm run typecheck`, not
+// a failure when they run. Node runs them as they are (it strips the types);
+// Playwright compiles the browser tests itself. (The unit tests import the
+// app's code and are checked with its settings: unit/tsconfig.json.)
+{
+	"compilerOptions": {
+		"target": "es2023",
+		// (DOM: the code a browser test runs in the page, page.evaluate(() => …))
+		"lib": ["es2023", "DOM", "DOM.Iterable"],
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"types": ["node"],
+
+		"strict": true,
+		"noImplicitOverride": true,
+		"noImplicitReturns": true,
+		"noFallthroughCasesInSwitch": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+
+		// what Node can run by removing the types (as in the server)
+		"erasableSyntaxOnly": true,
+		"verbatimModuleSyntax": true,
+		"allowImportingTsExtensions": true,
+		"noEmit": true,
+
+		"isolatedModules": true,
+		"forceConsistentCasingInFileNames": true,
+		"skipLibCheck": true
+	},
+	"include": ["support/**/*.ts", "api/**/*.ts", "e2e/**/*.ts", "integration/**/*.ts"]
+}

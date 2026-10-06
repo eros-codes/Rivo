@@ -88,7 +88,7 @@ export function isPushEndpoint(endpoint: unknown): boolean {
 }
 
 /** A browser's subscription, already checked (PushSubscriptionInput); false when push is off or it points elsewhere. */
-export async function addSubscription(userId: number, sub: PushSubscriptionData, sessionId: string | null = null): Promise<boolean> {
+export async function addSubscription(userId: number, sub: PushSubscriptionData, sessionId: string): Promise<boolean> {
 	if (!pushEnabled) return false;
 	if (!userId || !isPushEndpoint(sub.endpoint)) return false;
 	const { endpoint, keys } = sub;
@@ -101,7 +101,7 @@ export async function addSubscription(userId: number, sub: PushSubscriptionData,
 			create: { userId, sessionId, endpoint, p256dh: keys.p256dh, auth: keys.auth, active: true, lastUsed: new Date() },
 		});
 		// one browser (session) has one subscription: an older one it replaced goes
-		if (sessionId) await prisma.pushSubscription.deleteMany({ where: { sessionId, endpoint: { not: endpoint } } });
+		await prisma.pushSubscription.deleteMany({ where: { sessionId, endpoint: { not: endpoint } } });
 		// and an account has a bounded number of them (the least recently used go first)
 		const extra = await prisma.pushSubscription.findMany({
 			where: { userId },

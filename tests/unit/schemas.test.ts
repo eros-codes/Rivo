@@ -30,8 +30,8 @@ test("ids: whole numbers 1…2³¹−1, as numbers or digits; nothing else reach
 	}
 });
 
-test("a new message: trimmed, checked, the older clientMessageId still works", () => {
-	const m = accepted(check(SendMessage, { conversationId: "7", text: "  hi  ", clientMessageId: "abcdefgh" }));
+test("a new message: trimmed and checked", () => {
+	const m = accepted(check(SendMessage, { conversationId: "7", text: "  hi  ", clientId: "abcdefgh" }));
 	assert.deepEqual(m, { conversationId: 7, forwardOf: null, text: "hi", isOneTime: false, isTimeCapsule: false, clientId: "abcdefgh", replyToId: null, scheduledFor: null });
 	// a quote of "" is no quote; nothing that is not a flag counts as one
 	assert.equal(accepted(check(SendMessage, { conversationId: 7, text: "x", replyToId: "" })).replyToId, null);
@@ -43,9 +43,9 @@ test("a new message: trimmed, checked, the older clientMessageId still works", (
 	assert.equal(refusal(SendMessage, { conversationId: 7, text: "x", clientId: "bad id!" }), "Invalid clientId");
 	assert.equal(refusal(SendMessage, { conversationId: 7, text: "x", replyToId: "abc" }), "Invalid replyToId");
 	assert.equal(refusal(SendMessage, "not an object"), "Invalid data");
-	// clientId wins; the older name is only read (and checked) without it
-	assert.equal(accepted(check(SendMessage, { conversationId: 7, text: "x", clientId: "abcdefgh", clientMessageId: "old one!" })).clientId, "abcdefgh");
-	assert.equal(refusal(SendMessage, { conversationId: 7, text: "x", clientMessageId: "old one!" }), "Invalid clientId");
+	// a name the schema does not know is dropped, not read (the first version's clientMessageId)
+	assert.equal(accepted(check(SendMessage, { conversationId: 7, text: "x", clientMessageId: "abcdefgh" })).clientId, null);
+	assert.equal("clientMessageId" in accepted(check(SendMessage, { conversationId: 7, text: "x", clientMessageId: "abcdefgh" })), false);
 });
 
 test("forwards, one-time messages and capsules: what goes together", () => {

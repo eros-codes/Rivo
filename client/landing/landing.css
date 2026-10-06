@@ -33,6 +33,19 @@
 	font-style: normal;
 	font-display: swap;
 }
+/* Syne, the headings' typeface: served from here, not from Google Fonts (no
+   request to another company, and no wait when Google is slow or out of
+   reach). One variable file for every weight from 400 to 800, with the
+   Latin letters the pages use (assets/fonts/Syne, OFL). */
+@font-face {
+	font-family: "Syne";
+	src: url("/assets/fonts/Syne/Syne-wght-latin.woff2") format("woff2");
+	font-weight: 400 800;
+	font-style: normal;
+	font-display: swap;
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+		U+2190-2193, U+2212, U+2215, U+221E, U+FEFF, U+FFFD;
+}
 
 /* ── Variables ─────────────────────────────────────────────────────────── */
 :root {

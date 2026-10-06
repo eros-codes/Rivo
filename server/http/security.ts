@@ -13,9 +13,9 @@ export function contentSecurityPolicy(): RequestHandler {
 		"base-uri 'self'",
 		"script-src 'self'",
 		"script-src-attr 'none'",
-		// the landing page uses Google Fonts; emoji-picker-element injects styles
-		"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-		"font-src 'self' data: https://fonts.gstatic.com",
+		// (emoji-picker-element injects styles; every font is served from here)
+		"style-src 'self' 'unsafe-inline'",
+		"font-src 'self' data:",
 		"img-src 'self' data: blob:",
 		"connect-src 'self' ws: wss:",
 		"worker-src 'self'",

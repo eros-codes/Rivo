@@ -13,9 +13,8 @@ const ICONS = `<link rel="icon" type="image/png" sizes="32x32" href="/assets/ico
 // Poppins (regular and bold) and Vazirmatn: the app's own fonts
 const FONT_PRELOAD = `<link rel="preload" href="/assets/fonts/Poppins/Poppins-Regular.ttf" as="font" type="font/ttf" crossorigin />`;
 
-const GOOGLE_FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&amp;display=swap" />`;
+// Syne, the landing pages' heading typeface (served from here: client/landing/landing.css)
+const SYNE_PRELOAD = `<link rel="preload" href="/assets/fonts/Syne/Syne-wght-latin.woff2" as="font" type="font/woff2" crossorigin />`;
 
 function scripts(app) {
 	const css = app.css.map((href) => `<link rel="stylesheet" href="${href}" />`).join("\n");
@@ -77,7 +76,7 @@ function landingHead(url) {
 <meta name="twitter:description" content="${esc(LANDING_DESCRIPTION)}" />
 <meta name="twitter:image" content="https://rivo.ir/assets/icons/Icon-1028.png" />
 <script type="application/ld+json">${ld}</script>
-${GOOGLE_FONTS}`;
+${SYNE_PRELOAD}`;
 }
 
 const NOT_FOUND_STYLE = `<style>
@@ -133,7 +132,7 @@ export function pages({ assets, prerendered }) {
 			title: "Privacy Policy — Rivo",
 			description: "What Rivo stores, why, and what it never does with your data.",
 			viewport: PAGE_VIEWPORT,
-			head: `<link rel="canonical" href="https://rivo.ir/landing/privacy.html" />\n${GOOGLE_FONTS}`,
+			head: `<link rel="canonical" href="https://rivo.ir/landing/privacy.html" />\n${SYNE_PRELOAD}`,
 			body: `<div id="root" data-page="privacy">${prerendered.privacy}</div>`,
 			assets,
 			app: assets.landing,

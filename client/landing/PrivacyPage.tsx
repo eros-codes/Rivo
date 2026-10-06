@@ -72,8 +72,8 @@ export function PrivacyPage() {
 				<section className="privacy-section">
 					<h2>This website</h2>
 					<p>
-						The Rivo app itself loads nothing from other companies. These public pages (the home page and this one) load the Syne typeface from Google
-						Fonts, so your browser contacts Google&apos;s servers when you open them.
+						Neither the Rivo app nor these public pages (the home page and this one) load anything from other companies: the typefaces, icons and
+						scripts all come from Rivo&apos;s own server, so opening them tells no one else that you did.
 					</p>
 				</section>
 

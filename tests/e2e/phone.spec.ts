@@ -1,7 +1,7 @@
 // On a phone: a chat and the panels open as pages and Back closes them; touch
 // gestures (holding a message, swiping to reply, swiping a chat in the list).
 import { expect, devices } from "@playwright/test";
-import { bubble, chatter, connect, finger, open, people, PHONE, say, test } from "./support/app.ts";
+import { bubble, chatter, connect, finger, FINGER_IS_CHROMIUM_ONLY, open, people, PHONE, say, test } from "./support/app.ts";
 
 test("on a phone a chat covers the list, and Back returns to it", async ({ browser }) => {
 	const [ann, ben] = await people("Ann", "Ben");
@@ -53,7 +53,8 @@ test("on a phone the panels are pages: settings, a profile over its chat, edit p
 	expect(errors).toEqual([]);
 });
 
-test("touch: holding a message opens its menu (a tap outside closes it); swiping it right starts a reply", async ({ browser }) => {
+test("touch: holding a message opens its menu (a tap outside closes it); swiping it right starts a reply", async ({ browser, browserName }) => {
+	test.skip(browserName !== "chromium", FINGER_IS_CHROMIUM_ONLY);
 	const [ann, ben] = await people("Ann", "Ben");
 	const ab = await connect(ann!, ben!);
 	await chatter(ann!, ben!, ab, 12);
@@ -74,7 +75,8 @@ test("touch: holding a message opens its menu (a tap outside closes it); swiping
 	await expect(page.locator(".message-action-preview", { hasText: "Replying" })).toBeVisible();
 });
 
-test("touch: a chat in the list swiped left shows its actions (Pin works); the next tap closes them", async ({ browser }) => {
+test("touch: a chat in the list swiped left shows its actions (Pin works); the next tap closes them", async ({ browser, browserName }) => {
+	test.skip(browserName !== "chromium", FINGER_IS_CHROMIUM_ONLY);
 	const [ann, ben, cy] = await people("Ann", "Ben", "Cyrus");
 	const ab = await connect(ann!, ben!);
 	const ac = await connect(ann!, cy!);

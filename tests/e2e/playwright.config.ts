@@ -24,5 +24,15 @@ export default defineConfig({
 	// Playwright's own Chromium; with E2E_CHANNEL (chrome, msedge), a browser
 	// installed on the computer instead. (`npm run test:e2e` sets it when
 	// Playwright's own is not installed: scripts/test.mjs → pickBrowser.)
-	projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], ...(process.env.E2E_CHANNEL ? { channel: process.env.E2E_CHANNEL } : {}) } }],
+	// E2E_ALL_BROWSERS=1 adds Firefox and WebKit (Safari's engine): CI runs
+	// them (npm run test:e2e -- --project=firefox --project=webkit).
+	projects: [
+		{ name: "chromium", use: { ...devices["Desktop Chrome"], ...(process.env.E2E_CHANNEL ? { channel: process.env.E2E_CHANNEL } : {}) } },
+		...(process.env.E2E_ALL_BROWSERS === "1"
+			? [
+					{ name: "firefox", use: { ...devices["Desktop Firefox"] } },
+					{ name: "webkit", use: { ...devices["Desktop Safari"] } },
+				]
+			: []),
+	],
 });

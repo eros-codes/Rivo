@@ -20,6 +20,7 @@ npm start                      # http://localhost:3000
 ## تست و کیفیت
 
 ```bash
+npm run check                      # همه‌ی زیر، پشت سر هم (قبل از commit)
 npm run typecheck && npm run lint
 npm run test:unit                  # بدون دیتابیس
 npm run test:api                   # نیاز: TEST_DATABASE_URL (دیتابیسی فقط برای تست)
@@ -27,7 +28,8 @@ npm run build && npm run test:e2e  # مرورگر (یک‌بار: npx playwright
 ```
 
 تست‌ها هم TypeScript‌اند و با همان قرارداد `shared/` چک می‌شوند (unit ۳۴، api ۴۲،
-مرورگر ۳۷). همین‌ها با هر push روی GitHub Actions هم اجرا می‌شوند (`.github/workflows/ci.yml`).
+مرورگر ۳۷). همین‌ها با هر push روی GitHub Actions هم اجرا می‌شوند (`.github/workflows/ci.yml`)،
+تست‌های مرورگر آن‌جا در Firefox و WebKit (Safari) هم.
 
 ## عملیات
 

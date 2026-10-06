@@ -1,7 +1,7 @@
 // Getting in: signing up with the emailed code (and what sign-up must not
 // reveal), signing in, a forgotten password; the landing page.
 import { expect } from "@playwright/test";
-import { context, mails, open, people, PHONE, test, uniq } from "./support/app.ts";
+import { base, context, mails, open, people, PHONE, test, uniq } from "./support/app.ts";
 
 /** The newest email to `to` (the code, the reset link, …). */
 async function lastMailTo(to: string) {
@@ -136,18 +136,29 @@ test("forgot password: the emailed link, the token leaves the address bar, the n
 	await page.waitForURL("**/chat/");
 });
 
-test("the landing page and the privacy page load; the demo phone and the phone menu work", async ({ browser, page }) => {
+test("the landing page and the privacy page load (nothing from other servers, the headings in Syne); the demo phone and the phone menu work", async ({ browser, page }) => {
 	const errors: string[] = [];
 	page.on("pageerror", (e) => errors.push(String(e)));
+	// everything comes from Rivo itself (the privacy page says so)
+	const elsewhere: string[] = [];
+	const own = new URL(base()).host;
+	page.on("request", (r) => {
+		const url = new URL(r.url());
+		if (/^https?:$/.test(url.protocol) && url.host !== own) elsewhere.push(r.url());
+	});
 	await page.goto("/");
 	await expect(page.locator("section.hero")).toBeVisible();
 	await expect(page.locator("a.nav-cta")).toBeVisible();
+	// the heading typeface is our own copy, and it loaded
+	expect(await page.evaluate(async () => (await document.fonts.load('800 32px "Syne"', "Rivo")).length)).toBeGreaterThan(0);
+	expect(await page.evaluate(() => document.fonts.check('800 32px "Syne"', "Rivo"))).toBe(true);
 	// the phone in the page is a small working demo
 	await page.locator(".pm-back-btn").click();
 	await page.locator(".pm-contact-card", { hasText: "Jake" }).click();
 	await expect(page.locator(".phone-name")).toHaveText("Jake");
 	await page.goto("/landing/privacy.html");
 	await expect(page.locator("h1").first()).toBeVisible();
+	expect(elsewhere, "requests to other servers").toEqual([]);
 
 	const phone = await context(browser, PHONE);
 	const small = await phone.newPage();

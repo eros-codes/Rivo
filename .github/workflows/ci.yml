@@ -1,7 +1,9 @@
-# Runs on every push and pull request. Three jobs, side by side:
-#   checks  types, lint, the client's unit tests, the production build
-#   api     the server against a real PostgreSQL (started here, thrown away after)
-#   e2e     the built app in Chromium against the same kind of database
+# Runs on every push and pull request. Four jobs, side by side:
+#   checks     types, lint, the client's unit tests, the production build
+#   api        the server against a real PostgreSQL (started here, thrown away after)
+#   e2e        the built app in Chromium against the same kind of database
+#   e2e-more   the same browser tests in Firefox and WebKit (Safari's engine);
+#              it reports but does not block yet (see there)
 # A red job blocks merging once "main" is protected (Settings → Branches).
 name: CI
 
@@ -100,6 +102,51 @@ jobs:
         if: failure()
         with:
           name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  e2e-more:
+    name: Browser tests (Firefox, WebKit)
+    # New: until it has passed once, a red result here is a report, not a
+    # stop (remove this line then, and make it a required check)
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rivo
+          POSTGRES_PASSWORD: rivo
+          POSTGRES_DB: rivo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rivo -d rivo_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://rivo:rivo@localhost:5432/rivo_test
+      E2E_ALL_BROWSERS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # (Chromium too: the test runner checks for it before starting)
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run build
+      # (the touch gesture tests skip themselves here: they need Chromium)
+      - run: npm run test:e2e -- --project=firefox --project=webkit
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-firefox-webkit
           path: |
             playwright-report/
             test-results/

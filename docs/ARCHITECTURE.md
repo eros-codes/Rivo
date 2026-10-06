@@ -70,6 +70,7 @@ npm start
 | `npm start` | اجرای سرور (اول `server/instrument.ts`: گزارش خطا، اگر `SENTRY_DSN` هست) |
 | `npm run typecheck` | بررسی تایپ‌های TypeScript: اپ، service worker، سرور، تست‌ها (build خودش تایپ چک نمی‌کند، برای سرعت) |
 | `npm run lint` | ESLint روی جاوااسکریپتی که مانده (`scripts/*.mjs`)؛ بقیه TypeScript است |
+| `npm run check` | همه‌چیز پشت سر هم، با اولین خطا می‌ایستد: typecheck → lint → build → هر سه دسته تست (قبل از commit؛ چند دقیقه) |
 | `npm test` | هر سه دسته تست (بخش ۷) |
 | `npm run test:unit` / `test:api` / `test:e2e` | هر دسته جدا |
 | `npm run test:integration` | تست دستی روی یک سرور در حال اجرا |
@@ -633,6 +634,20 @@ Enter یا کلید منو = منوی پیام، Esc = بستن (Enter روی ل
   `prisma generate` ندارد (`npm ci` انجامش می‌دهد).
 - خطاها همان‌اند: تکراری بودن هنوز `P2002` است (`codeOf(e)`).
 
+### لندینگ بدون Google Fonts
+
+- فونت Syne (تیترهای لندینگ و privacy) حالا از خود سرور می‌آید:
+  `public/assets/fonts/Syne/Syne-wght-latin.woff2`، یک فایل variable برای همه‌ی وزن‌های
+  ۴۰۰ تا ۸۰۰، فقط حروف لاتینی که صفحه‌ها دارند (۳۹ کیلوبایت؛ مجوز OFL کنارش). قبلاً از
+  Google Fonts می‌آمد: هر بازدید یک درخواست به Google بود، و وقتی Google کند یا در دسترس
+  نبود (از ایران زیاد پیش می‌آید) صفحه منتظرش می‌ماند.
+- Content-Security-Policy دیگر به `fonts.googleapis.com` و `fonts.gstatic.com` اجازه نمی‌دهد.
+- صفحه‌ی privacy حالا می‌گوید نه اپ و نه این صفحه‌ها چیزی از شرکت دیگری بار نمی‌کنند؛ تست
+  مرورگر لندینگ همین را چک می‌کند (هیچ درخواستی به سرور دیگری نمی‌رود و Syne واقعاً بار شده).
+- اگر متن تیترها حرفی بیرون از لاتین بگیرد، فقط همان حرف با فونت جایگزین نشان داده می‌شود؛
+  برای اضافه کردن حروف، فایل از `Syne[wght].ttf` (مخزن google/fonts) با fontTools دوباره
+  subset می‌شود.
+
 ---
 
 ## ۷. تست‌ها
@@ -686,7 +701,10 @@ npm run test:e2e -- -g "offline"     # فقط یک تست
   کندتر یا دیتابیس واقعی زیر بار. تستی که فقط روی سیستم سریع پاس می‌شود اینجا رد می‌شود؛
   قانون: وضعیت سرور را با `expect.poll` بپا، نه با یک بار خواندن درست بعد از کلیک.
 - انگشت روی گوشی هم واقعی است: `finger()` در `tests/e2e/support/app.ts` رویدادهای لمسی را
-  از خود مرورگر می‌فرستد (نگه داشتن، کشیدن، تپ)، همان‌طور که صفحه‌ی لمسی می‌فرستد.
+  از خود مرورگر می‌فرستد (نگه داشتن، کشیدن، تپ)، همان‌طور که صفحه‌ی لمسی می‌فرستد (فقط Chromium).
+- **مرورگرهای دیگر:** با `E2E_ALL_BROWSERS=1` تست‌ها در Firefox و WebKit هم اجرا می‌شوند
+  (`npm run test:e2e -- --project=firefox --project=webkit`). CI این کار را می‌کند (بخش ۸)؛ روی
+  سیستم خودت لازم نیست (مرورگرهایشان جدا دانلود می‌شوند).
 - **تایپ‌ها:** تست‌ها با `tests/tsconfig.json` (و تست‌های unit با `tests/unit/tsconfig.json`)
   در `npm run typecheck` چک می‌شوند. Node آن‌ها را همان‌طور اجرا می‌کند (تایپ‌ها را حذف
   می‌کند) و Playwright خودش compile می‌کند؛ build جدایی ندارند. endpoint را در تست
@@ -713,13 +731,14 @@ npm run test:integration
 
 ## ۸. CI (GitHub Actions)
 
-`.github/workflows/ci.yml` با هر push و هر Pull Request سه کار را موازی اجرا می‌کند:
+`.github/workflows/ci.yml` با هر push و هر Pull Request چهار کار را موازی اجرا می‌کند:
 
 | کار | چه می‌کند |
 |---|---|
 | **checks** | `npm ci` → typecheck (اپ، سرور، تست‌ها) → lint → unit → build |
 | **api** | یک PostgreSQL 16 تازه کنار کار بالا می‌آید → migrationها → تست‌های api |
 | **e2e** | همان دیتابیس + Chromium → build → تست‌های مرورگر؛ اگر چیزی رد شد، اسکرین‌شات و trace به‌عنوان artifact ذخیره می‌شود |
+| **e2e-more** | همان تست‌های مرورگر در **Firefox** و **WebKit** (موتور Safari). تازه است: تا اولین بار سبز شدنش، قرمز شدنش گزارش است و جلوی merge را نمی‌گیرد (`continue-on-error`). بعد از اولین سبز، آن خط را بردار و این کار را هم در قفل main اضافه کن. دو تست حرکت انگشت (`finger()`) فقط در Chromium اجرا می‌شوند: انگشت از راه DevTools خود Chromium حرکت داده می‌شود |
 
 - `npm ci` کلاینت دیتابیس را هم می‌سازد (`postinstall` → `prisma generate`).
 - `npm ci` دقیقاً نسخه‌های `package-lock.json` را نصب می‌کند، پس **lock باید با
@@ -839,7 +858,6 @@ RESTORE_DATABASE_URL="postgresql://USER:PASS@localhost:5432/rivo_restore_test" \
 - رمزنگاری end-to-end (فعلاً رمزنگاری در سمت سرور و در حالت ذخیره است).
 - ارسال عکس/فایل در چت.
 - اعلان push برای ری‌اکشن روی پیام‌های گروهی (وقتی گروه اضافه شد).
-- self-host کردن فونت Syne برای landing تا هیچ درخواستی به Google نرود.
 - سرور برای **یک پروسه‌ی Node** طراحی شده: لیست سوکت‌های وصل، کش اعضای گفتگو و
   شمارنده‌های rate limit در حافظه‌اند (یکتایی مخاطب‌ها را حالا خود دیتابیس تضمین می‌کند).
   برای اجرای چند نسخه پشت load balancer اول باید این‌ها به یک store مشترک (مثلاً Redis +

@@ -33,7 +33,9 @@ export const test = playwrightTest.extend<{ closeContexts: void }>({
  * checks the server before the server could have answered) fails here too.
  */
 export async function context(browser: Browser, options: BrowserContextOptions = {}): Promise<BrowserContext> {
-	const c = await browser.newContext(options);
+	// (Firefox has no "mobile" mode; the phone layout comes from the screen's width anyway)
+	const { isMobile: _mobile, ...notMobile } = options;
+	const c = await browser.newContext(browser.browserType().name() === "firefox" ? notMobile : options);
 	const delay = Number(process.env.E2E_API_DELAY) || 0;
 	if (delay > 0) {
 		await c.route(/\/api\//, async (route) => {
@@ -217,9 +219,12 @@ export async function cuttable(page: Page): Promise<{ cut(): Promise<void>; http
 	};
 }
 
+/** Why the gesture tests run in Chromium only (in CI the others run too). */
+export const FINGER_IS_CHROMIUM_ONLY = "a finger is moved through Chromium's DevTools protocol; Firefox and WebKit have no way to send touch moves";
+
 /**
  * A finger on a phone page (touch events through the browser itself, as a
- * real screen sends them; Playwright's tap() is only a tap).
+ * real screen sends them; Playwright's tap() is only a tap). Chromium only.
  */
 export async function finger(page: Page) {
 	const cdp = await page.context().newCDPSession(page);

@@ -36,7 +36,8 @@ api 42, browser 37). They also run on every push to GitHub, in GitHub Actions
 
 `GET /api/health` for monitoring, `npm run db:backup` / `db:restore` for backups, and
 `npm run db:check` before migrations. Details: sections 7 to 9 of the docs. Encryption keys,
-key rotation and Vault: [`server/ENCRYPTION.md`](server/ENCRYPTION.md).
+key rotation and Vault: [`server/ENCRYPTION.md`](server/ENCRYPTION.md). Putting Rivo on a server
+(Ubuntu, nginx, HTTPS) and updating it there: [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 ## Documentation
 

@@ -16,6 +16,7 @@ import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { pages } from "./pages.mjs";
+import { site } from "./site.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC = join(ROOT, "public");
@@ -42,7 +43,11 @@ function sharedOptions({ dev, alias }) {
 		alias,
 		legalComments: "linked",
 		logLevel: "warning",
-		define: { "process.env.NODE_ENV": JSON.stringify(dev ? "development" : "production") },
+		define: {
+			"process.env.NODE_ENV": JSON.stringify(dev ? "development" : "production"),
+			// the privacy page's contact (scripts/site.mjs: CONTACT_EMAIL, else SMTP_FROM's)
+			__CONTACT_EMAIL__: JSON.stringify(site.contactEmail),
+		},
 		// fonts and images are served from /assets as they are
 		external: ["/assets/*"],
 	};

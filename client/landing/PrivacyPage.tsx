@@ -2,6 +2,9 @@
 // the server actually do.
 import { Cursor } from "./LandingPage";
 
+/** Who to write to about one's data: set by the build (scripts/site.mjs). */
+declare const __CONTACT_EMAIL__: string;
+
 export function PrivacyPage() {
 	return (
 		<>
@@ -84,14 +87,9 @@ export function PrivacyPage() {
 						to or named yourself — not just anyone who added you) or nobody. Your email address is shown to your contacts only unless you choose
 						otherwise. You can delete your account there at any time. Deleting it removes your profile, contacts, notification addresses and your
 						Saved Messages; the people you talked with keep their copy of your conversations, shown
-						as &ldquo;Deleted account&rdquo;. For questions or a copy of your data, contact us at <a href="mailto:privacy@rivo.ir">privacy@rivo.ir</a>.
+						as &ldquo;Deleted account&rdquo;. For questions or a copy of your data, contact us at <a href={`mailto:${__CONTACT_EMAIL__}`}>{__CONTACT_EMAIL__}</a>.
 					</p>
 				</section>
-
-				<div className="privacy-disclaimer">
-					This is a plain-language summary intended for the Rivo demo site. For complete legal terms, this page should be replaced with a full privacy policy
-					reviewed by qualified legal counsel before any production launch.
-				</div>
 
 				<a href="/" className="privacy-back">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

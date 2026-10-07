@@ -1,0 +1,30 @@
+# Rivo as a system service: started at boot, restarted if it stops, stopped
+# cleanly on a restart (server/index.ts → Graceful shutdown). Installed by
+# docs/DEPLOY.md (step "The service"), with __USER__ and __DIR__ replaced:
+#   sed -e "s|__USER__|$USER|g" -e "s|__DIR__|$PWD|g" deploy/rivo.service | sudo tee /etc/systemd/system/rivo.service
+#
+#   sudo systemctl status rivo        is it running?
+#   sudo systemctl restart rivo       after a change (scripts/deploy.sh does it)
+#   journalctl -u rivo -f             its log, as it is written
+
+[Unit]
+Description=Rivo (chat server)
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__
+# (the rest of the settings come from __DIR__/.env)
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node --import ./server/instrument.ts server/index.ts
+Restart=always
+RestartSec=5
+# Rivo stops by itself within 10 s of SIGTERM
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

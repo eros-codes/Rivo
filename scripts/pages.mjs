@@ -1,6 +1,7 @@
 // The HTML pages, filled with the built asset names. Kept as plain templates:
 // every page is a shell the React app mounts into (the landing pages also
 // carry their pre-rendered markup, which the app hydrates).
+import { site } from "./site.mjs";
 
 const esc = (s) =>
 	String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -52,29 +53,32 @@ const NOSCRIPT = `<noscript><p class="noscript">Rivo needs JavaScript. Please tu
 const LANDING_TITLE = "Rivo — Conversations, Uninterrupted";
 const LANDING_DESCRIPTION = "A fast, warm messaging app that works in your browser — real-time, private and ad-free. Install Rivo on your device.";
 
+// (link previews need full addresses: the site's own, from APP_URL)
+const ICON_URL = `${site.url}/assets/icons/Icon-1028.png`;
+
 function landingHead(url) {
 	const ld = JSON.stringify({
 		"@context": "https://schema.org",
 		"@type": "SoftwareApplication",
 		name: "Rivo",
-		url: "https://rivo.ir/",
-		image: "https://rivo.ir/assets/icons/Icon-1028.png",
+		url: `${site.url}/`,
+		image: ICON_URL,
 		description: "A messaging app designed with intention — fast, warm, and genuinely different.",
 		applicationCategory: "CommunicationApplication",
 		operatingSystem: "Web",
 		offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
 	}).replace(/</g, "\\u003c");
-	return `<link rel="canonical" href="${url}" />
+	return `<link rel="canonical" href="${esc(url)}" />
 <meta property="og:title" content="${esc(LANDING_TITLE)}" />
 <meta property="og:description" content="${esc(LANDING_DESCRIPTION)}" />
-<meta property="og:image" content="https://rivo.ir/assets/icons/Icon-1028.png" />
-<meta property="og:url" content="${url}" />
+<meta property="og:image" content="${esc(ICON_URL)}" />
+<meta property="og:url" content="${esc(url)}" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="Rivo" />
 <meta name="twitter:card" content="summary" />
 <meta name="twitter:title" content="${esc(LANDING_TITLE)}" />
 <meta name="twitter:description" content="${esc(LANDING_DESCRIPTION)}" />
-<meta name="twitter:image" content="https://rivo.ir/assets/icons/Icon-1028.png" />
+<meta name="twitter:image" content="${esc(ICON_URL)}" />
 <script type="application/ld+json">${ld}</script>
 ${SYNE_PRELOAD}`;
 }
@@ -121,7 +125,7 @@ export function pages({ assets, prerendered }) {
 			title: LANDING_TITLE,
 			description: LANDING_DESCRIPTION,
 			viewport: PAGE_VIEWPORT,
-			head: landingHead("https://rivo.ir/"),
+			head: landingHead(`${site.url}/`),
 			body: `<div id="root" data-page="landing">${prerendered.landing}</div>`,
 			assets,
 			app: assets.landing,
@@ -132,7 +136,7 @@ export function pages({ assets, prerendered }) {
 			title: "Privacy Policy — Rivo",
 			description: "What Rivo stores, why, and what it never does with your data.",
 			viewport: PAGE_VIEWPORT,
-			head: `<link rel="canonical" href="https://rivo.ir/landing/privacy.html" />\n${SYNE_PRELOAD}`,
+			head: `<link rel="canonical" href="${esc(site.url)}/landing/privacy.html" />\n${SYNE_PRELOAD}`,
 			body: `<div id="root" data-page="privacy">${prerendered.privacy}</div>`,
 			assets,
 			app: assets.landing,

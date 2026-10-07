@@ -83,6 +83,7 @@ These old files/folders are no longer used and should be deleted:
 | `npm run verify-messages` | Can all messages be decrypted with the current keys? (changes nothing) |
 | `npm run rotate-keys` | Key rotation; the full procedure is in `server/ENCRYPTION.md` |
 | `npm run test:enc` | Writes an encrypted message, reads it back through the server's own read path, and deletes it |
+| `bash scripts/deploy.sh` | On the server: brings Rivo up to what is on GitHub (pull, packages, migrations, build, restart, health check; [`docs/DEPLOY.md`](DEPLOY.md)) |
 
 ---
 
@@ -111,6 +112,8 @@ scripts/
   pages.mjs                ← HTML template for the pages
   dev.mjs                  ← development mode
   test.mjs                 ← runs the tests (unit / api / e2e / load)
+  site.mjs                 ← the site's address and contact email for the built pages (APP_URL, CONTACT_EMAIL)
+  deploy.sh                ← on the server: update to what is on GitHub (docs/DEPLOY.md)
   backup-db.sh             ← backs up the database and pictures
   restore-db.sh            ← restore (drill or for real)
   db-url.mjs               ← database URL for the Postgres tools
@@ -141,6 +144,7 @@ tests/                     ← all TypeScript, checked against the shared/ contr
   integration/             ← manual test against a running server
   load/                    ← load test (npm run loadtest)
 load-reports/              ← the load test's reports (not in git)
+deploy/                    ← for a server (docs/DEPLOY.md): nginx site, systemd service, production .env template
 .github/workflows/ci.yml   ← CI
 eslint.config.js           ← ESLint 10 (flat config)
 ```
@@ -850,6 +854,9 @@ for example before and after a change to the server, or with `DATABASE_POOL_MAX=
 ---
 
 ## 9. Operations (running server)
+
+Setting up a server (Ubuntu, PostgreSQL, nginx, HTTPS, the service, backups) and updating it:
+[`docs/DEPLOY.md`](DEPLOY.md).
 
 ### Health check
 

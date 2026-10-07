@@ -14,6 +14,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPrismaClient } from "../../server/prisma.ts";
+import type { ProcessStats } from "../../server/utils/processStats.ts";
+
+export type { ProcessStats };
 
 export const ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
@@ -58,6 +61,8 @@ export interface TestServer {
 	jwtSecret: string;
 	/** everything it printed so far */
 	log(): string;
+	/** the server process's own figures (CPU, memory, event loop), or null if it did not answer within 5 s */
+	stats(): Promise<ProcessStats | null>;
 	stop(): Promise<void>;
 }
 
@@ -121,6 +126,22 @@ export async function startServer(extraEnv: Env = {}): Promise<TestServer> {
 		mailFile,
 		jwtSecret: settings.JWT_SECRET!,
 		log,
+		// (asked over the IPC channel: the server answers { stats } to "stats")
+		stats: () =>
+			new Promise((r) => {
+				if (!proc.connected) return r(null);
+				const done = (stats: ProcessStats | null) => {
+					clearTimeout(timer);
+					proc.off("message", onMessage);
+					r(stats);
+				};
+				const onMessage = (m: unknown) => {
+					if (m && typeof m === "object" && "stats" in m) done((m as { stats: ProcessStats }).stats);
+				};
+				const timer = setTimeout(() => done(null), 5000);
+				proc.on("message", onMessage);
+				proc.send("stats");
+			}),
 		// A clean stop, as a deploy does it. Not with kill("SIGTERM"): Windows has
 		// no signals, and there that ends the process at once, without its
 		// shutdown. The server takes a "shutdown" message instead (on every

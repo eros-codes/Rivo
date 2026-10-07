@@ -2,8 +2,7 @@
 #   checks     types, lint, the client's unit tests, the production build
 #   api        the server against a real PostgreSQL (started here, thrown away after)
 #   e2e        the built app in Chromium against the same kind of database
-#   e2e-more   the same browser tests in Firefox and WebKit (Safari's engine);
-#              it reports but does not block yet (see there)
+#   e2e-more   the same browser tests in Firefox and WebKit (Safari's engine)
 # A red job blocks merging once "main" is protected (Settings → Branches).
 name: CI
 
@@ -109,9 +108,6 @@ jobs:
 
   e2e-more:
     name: Browser tests (Firefox, WebKit)
-    # New: until it has passed once, a red result here is a report, not a
-    # stop (remove this line then, and make it a required check)
-    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 35
     services:

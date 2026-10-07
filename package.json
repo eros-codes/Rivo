@@ -16,6 +16,7 @@
 		"test:unit": "node scripts/test.mjs unit",
 		"test:api": "node scripts/test.mjs api",
 		"test:e2e": "node scripts/test.mjs e2e",
+		"loadtest": "node scripts/test.mjs load",
 		"test:integration": "node tests/integration/socket-flow.ts",
 		"db:check": "node server/scripts/check_duplicates.ts",
 		"db:seed": "node prisma/seed/index.ts",

@@ -3,8 +3,11 @@
 //   node scripts/test.mjs api    the server on a test database                      npm run test:api
 //   node scripts/test.mjs e2e    the built app in a browser (same database)          npm run test:e2e
 //   node scripts/test.mjs all    all three, in that order                           npm test
+//   node scripts/test.mjs load   many people chatting at once, measured             npm run loadtest
+//                                (not part of "all": it takes minutes and measures, it does not pass or fail;
+//                                its options after "--": npm run loadtest -- --help)
 //
-// api and e2e need TEST_DATABASE_URL (in the environment or in .env): a
+// api, e2e and load need TEST_DATABASE_URL (in the environment or in .env): a
 // PostgreSQL database used only for tests (its name must contain "test").
 // Its migrations are brought up to date first. e2e also needs
 // `npm run build` and a browser: Playwright's own (`npx playwright install
@@ -145,13 +148,25 @@ const suites = {
 		// (the config reads E2E_CHANNEL)
 		return run([bin("@playwright/test"), "test", "-c", "tests/e2e/playwright.config.ts", ...process.argv.slice(3)], { ...process.env, E2E_CHANNEL: channel });
 	},
+	load() {
+		const args = process.argv.slice(3);
+		if (!args.includes("--help") && !args.includes("-h")) {
+			testDatabase();
+			const m = migrate();
+			if (m !== 0) return m;
+		}
+		// Ctrl+C reaches the load test too: it stops, reports the stages it
+		// measured and stops its server. This waits for that.
+		process.on("SIGINT", () => {});
+		return run(["tests/load/loadtest.ts", ...args]);
+	},
 };
 
 const which = process.argv[2] || "all";
 const order = which === "all" ? ["unit", "api", "e2e"] : [which];
 for (const name of order) {
 	if (!suites[name]) {
-		console.error(`unknown suite "${name}" (unit, api, e2e or all)`);
+		console.error(`unknown suite "${name}" (unit, api, e2e, all or load)`);
 		process.exit(2);
 	}
 	console.log(`\n━━ ${name} tests ━━`);

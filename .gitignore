@@ -36,9 +36,10 @@ pids/
 *.seed
 *.pid.lock
 
-# Tests (Playwright's report and failure artifacts)
+# Tests (Playwright's report and failure artifacts; the load test's reports)
 test-results/
 playwright-report/
+load-reports/
 
 # Database backups (scripts/backup-db.sh): user data, never in git
 backups/

@@ -11,7 +11,7 @@ import prisma from "./prisma.ts";
 import { initKeyStore, wrapDEK, generateDEK } from "./utils/encryption.ts";
 import { contentSecurityPolicy, corsPolicy, csrfProtection, securityHeaders } from "./http/security.ts";
 import { cleanupSessions } from "./auth/sessions.ts";
-import { initSocket, type RivoServer } from "./socket/index.ts";
+import { initSocket, userSockets, type RivoServer } from "./socket/index.ts";
 import { openDueCapsules } from "./jobs/openCapsules.ts";
 import authRoutes from "./routes/auth.ts";
 import sessionRoutes from "./routes/sessions.ts";
@@ -22,6 +22,7 @@ import messageRoutes from "./routes/messages.ts";
 import pushRoutes from "./routes/push.ts";
 import { log, requestLogging } from "./utils/logger.ts";
 import { messageOf } from "./utils/errors.ts";
+import { processStats } from "./utils/processStats.ts";
 
 // ─── Configuration checks (fail fast with a clear message) ─────────────────
 if (config.isProd && process.env.ALLOW_EPHEMERAL_KEK === "1") {
@@ -310,6 +311,9 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 // stop with a message: pm2 (shutdown_with_message), the tests.
 process.on("message", (m) => {
 	if (m === "shutdown") void shutdown("shutdown message");
+	// the load test's measurements of this process (tests/load): only the
+	// process that started this one can ask, over the same channel
+	else if (m === "stats") process.send?.({ stats: processStats([...userSockets.values()].reduce((n, set) => n + set.size, 0)) });
 });
 // A bug that escaped every handler: logged with its stack. An unhandled
 // promise rejection is logged and the server goes on; an exception thrown

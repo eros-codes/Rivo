@@ -1,722 +1,750 @@
-# معماری ریوو (Rivo)
+# Rivo Architecture
 
-این سند توضیح می‌دهد ریوو چطور ساخته شده، هر بخش کجاست و چرا این‌طور طراحی شده.
-اگر فقط می‌خواهی پروژه را بالا بیاوری، از بخش «نصب و به‌روزرسانی» شروع کن.
+This document explains how Rivo is built, where each part lives, and why it is designed this way.
+If you just want to get the project running, start with the "Install and update" section.
 
 ---
 
-## ۱. نصب و به‌روزرسانی
+## 1. Install and update
 
-### نصب تمیز (پیشنهادی)
+### Clean install (recommended)
 
 ```bash
-# ۱) zip را در یک پوشه‌ی تازه باز کن، بعد این‌ها را از پروژه‌ی قبلی کپی کن:
-#    - فایل .env
-#    - پوشه‌ی public/assets/images/user-profiles  (عکس‌های پروفایل آپلودشده)
-# ۲) نصب وابستگی‌ها (npm install، نه npm ci: وابستگی‌ها عوض شده‌اند و
-#    package-lock.json همین‌جا با نسخه‌های جدید به‌روز می‌شود)
-#    (کلاینت دیتابیس را هم از prisma/schema.prisma می‌سازد: server/generated/prisma)
+# 1) Unzip into a new folder, then copy these over from the previous project:
+#    - the .env file
+#    - the public/assets/images/user-profiles folder  (uploaded profile pictures)
+# 2) Install dependencies (npm install, not npm ci: the dependencies have changed and
+#    package-lock.json gets updated right here with the new versions)
+#    (it also builds the database client from prisma/schema.prisma: server/generated/prisma)
 npm install
-# ۳) migrationهای دیتابیس (فقط آن‌هایی که هنوز اجرا نشده‌اند — بخش «migrationها»)
+# 3) Database migrations (only the ones that have not run yet; see the "Migrations" section)
 npx prisma migrate deploy
-# ۴) ساخت کلاینت‌ها
+# 4) Build the clients
 npm run build
-# ۵) اجرا (= node --import ./server/instrument.ts server/index.ts؛ بخش ۹ → گزارش خطا)
+# 5) Run (= node --import ./server/instrument.ts server/index.ts; section 9 → Error reporting)
 npm start
 ```
 
-> **یک بار همه دوباره وارد می‌شوند.** سیستم نشست (session) عوض شده و توکن‌های قدیمی
-> پذیرفته نمی‌شوند. بعد از ورود، هر دستگاه در Settings → Devices دیده می‌شود.
+> **Everyone has to log in again, once.** The session system has changed, and old tokens
+> are no longer accepted. After logging in, each device shows up in Settings → Devices.
 
-### migrationها
+### Migrations
 
-| migration | چه می‌کند |
+| migration | What it does |
 |---|---|
-| `20261005090000_sessions_and_sync` | جدول `Session`؛ ستون‌های `updatedAt` و `clientId` در `Message` (پیام‌های موجود `updatedAt = createdAt` می‌گیرند)؛ `sessionId` در `PushSubscription` |
-| `20261006090000_contact_privacy` | ستون `addedByOwner` در `Contact` (توضیح در بخش «حریم خصوصی»)؛ نمایش ایمیل پیش‌فرض «فقط مخاطبین» |
-| `20261007090000_integrity_constraints` | قانون‌هایی که تا حالا فقط کد رعایت می‌کرد، حالا خود دیتابیس تضمین می‌کند: هر نفر یک بار در لیست هر کس، یک Saved Messages برای هر کاربر، هر عضو یک بار در هر چت (بخش ۹) |
-| `20261008090000_drop_legacy_columns` | دو ستونی که دیگر استفاده نمی‌شدند حذف می‌شوند: `Message.text` (متن رمزنشده‌ی پیام‌های قبل از رمزنگاری) و `Conversation.participantsKey`. اگر هنوز پیامی فقط به شکل رمزنشده مانده باشد، migration قبل از هر تغییری متوقف می‌شود و می‌گوید چند تا |
-| `20261009090000_saved_messages_and_push_sessions` | حسابی که (از قبل از وجود Saved Messages) آن را ندارد یک‌بار Saved Messages می‌گیرد (سرور دیگر موقع لود لیست آن را نمی‌سازد). و هر اشتراک push حالا حتماً مال یک دستگاه (نشست) است و با خروج آن دستگاه پاک می‌شود؛ اشتراک‌های قدیمیِ بی‌نشست پاک می‌شوند و مرورگر دفعه‌ی بعد که اپ باز شود خودش دوباره مشترک می‌شود |
+| `20261005090000_sessions_and_sync` | `Session` table; `updatedAt` and `clientId` columns on `Message` (existing messages get `updatedAt = createdAt`); `sessionId` on `PushSubscription` |
+| `20261006090000_contact_privacy` | `addedByOwner` column on `Contact` (explained in section 3 → "Contacts only" privacy); email visibility defaults to "Contacts only" |
+| `20261007090000_integrity_constraints` | Rules that until now only the code enforced are now guaranteed by the database itself: each person appears once in anyone's list, one Saved Messages per user, each member once per chat (section 9) |
+| `20261008090000_drop_legacy_columns` | Drops two columns that were no longer used: `Message.text` (the unencrypted text of messages from before encryption) and `Conversation.participantsKey`. If any message still exists only in unencrypted form, the migration stops before changing anything and says how many |
+| `20261009090000_saved_messages_and_push_sessions` | An account that does not have Saved Messages (dating from before Saved Messages existed) gets one, once (the server no longer creates it when loading the list). Also, every push subscription must now belong to a device (session) and is deleted when that device logs out; old subscriptions without a session are deleted, and the browser re-subscribes on its own the next time the app is opened |
 
-> ⚠️ migration دوم ایمیل کاربرانی را که روی «Everyone» بودند «Contacts» می‌کند
-> (پیش‌فرض قبلی «Everyone» بود و هر کسی با جستجوی username ایمیل همه را می‌دید).
-> هر کاربر می‌تواند از Settings → Privacy برش گرداند.
+> ⚠️ The second migration switches the email visibility of users who were on "Everyone" to "Contacts"
+> (the previous default was "Everyone", and anyone could see everyone's email by searching a username).
+> Each user can switch it back in Settings → Privacy.
 
-همه روی Postgres 16 واقعی، روی کل زنجیره‌ی migrationهای قبلی، با داده‌ی نمونه
-(از جمله ردیف‌های تکراری) اجرا و با `schema.prisma` مقایسه شدند (ستون‌ها، nullable
-بودن و unique indexها یکی است).
+All of them were run on a real Postgres 16, on top of the full chain of earlier migrations, with
+sample data (including duplicate rows), and compared against `schema.prisma` (columns, nullability
+and unique indexes match).
 
-> **قبل از `migrate deploy` روی دیتابیس واقعی:** `npm run db:check` نشان می‌دهد
-> migration سوم چیزی را مرتب می‌کند یا نه (و چه چیزی را). هیچ تغییری نمی‌دهد.
+> **Before `migrate deploy` on a real database:** `npm run db:check` shows whether
+> the third migration will clean anything up (and what). It changes nothing.
 
-**عوض کردن schema:** `npx prisma migrate dev --name <اسم>` migration تازه را می‌سازد و
-روی دیتابیس توسعه اجرا می‌کند. از Prisma 7 کلاینت را خودش دوباره نمی‌سازد، پس بعدش
-`npx prisma generate` (تا تایپ‌ها و کلاینت در `server/generated/prisma` به‌روز شوند).
-دستور `prisma` آدرس دیتابیس را از `prisma.config.ts` می‌گیرد (که `.env` را می‌خواند).
+**Changing the schema:** `npx prisma migrate dev --name <name>` creates a new migration and
+runs it on the development database. Since Prisma 7 it no longer regenerates the client by itself, so
+run `npx prisma generate` afterwards (so the types and the client in `server/generated/prisma` are updated).
+The `prisma` command gets the database URL from `prisma.config.ts` (which reads `.env`).
 
-### اگر روی پوشه‌ی قبلی کپی می‌کنی
+### If you are copying over the previous folder
 
-این فایل‌ها/پوشه‌های قدیمی دیگر استفاده نمی‌شوند و بهتر است پاک شوند:
-`src/`، `public/js/`، `public/css/`، `public/chat/main.html`، فایل‌های قدیمی داخل
-`public/landing/` (مثل `landing.css`/`landing.js`)، و `public/auth/` قدیمی.
-`npm run build` همه‌ی خروجی‌های جدید را در `public/` می‌سازد.
+These old files/folders are no longer used and should be deleted:
+`src/`, `public/js/`, `public/css/`, `public/chat/main.html`, the old files inside
+`public/landing/` (such as `landing.css`/`landing.js`), and the old `public/auth/`.
+`npm run build` generates all the new output in `public/`.
 
-### دستورها
+### Commands
 
-| دستور | کار |
+| Command | What it does |
 |---|---|
-| `npm run build` | ساخت production همه‌ی کلاینت‌ها در `public/` (اسم فایل‌ها با hash محتوا) |
-| `npm run dev` | ساخت پیوسته با هر تغییر در `client/` + ری‌استارت سرور با nodemon (با تغییر `server/`، `shared/` یا `.env`) |
-| `npm start` | اجرای سرور (اول `server/instrument.ts`: گزارش خطا، اگر `SENTRY_DSN` هست) |
-| `npm run typecheck` | بررسی تایپ‌های TypeScript: اپ، service worker، سرور، تست‌ها (build خودش تایپ چک نمی‌کند، برای سرعت) |
-| `npm run lint` | ESLint روی جاوااسکریپتی که مانده (`scripts/*.mjs`)؛ بقیه TypeScript است |
-| `npm run check` | همه‌چیز پشت سر هم، با اولین خطا می‌ایستد: typecheck → lint → build → هر سه دسته تست (قبل از commit؛ چند دقیقه) |
-| `npm test` | هر سه دسته تست (بخش ۷) |
-| `npm run test:unit` / `test:api` / `test:e2e` | هر دسته جدا |
-| `npm run test:integration` | تست دستی روی یک سرور در حال اجرا |
-| `npm run db:check` | قبل از migration: ردیف‌های تکراری‌ای که migration یکپارچگی مرتب می‌کند |
-| `npm run db:seed` | داده‌ی تست (`-- --wipe`: اول همه‌چیز پاک می‌شود؛ فقط دیتابیس محلی) |
-| `npm run db:backup` / `db:restore` | بکاپ و بازگردانی (بخش ۹) |
-| `npm run gen-kek` / `check-kek` | ساختن کلید پیام‌ها / بررسی کلیدهای `.env` (یا Vault) |
-| `npm run gen-vapid` / `check-vapid` | ساختن / بررسی کلیدهای push |
-| `npm run verify-messages` | همه‌ی پیام‌ها با کلیدهای فعلی باز می‌شوند؟ (چیزی را عوض نمی‌کند) |
-| `npm run rotate-keys` | چرخش کلید؛ روال کاملش در `server/ENCRYPTION.md` |
-| `npm run test:enc` | یک پیام رمزشده می‌نویسد، از مسیر خواندن خود سرور می‌خواند، پاکش می‌کند |
+| `npm run build` | Production build of all clients into `public/` (file names include a content hash) |
+| `npm run dev` | Continuous build on every change in `client/` + server restart with nodemon (on changes to `server/`, `shared/` or `.env`) |
+| `npm start` | Run the server (`server/instrument.ts` first: error reporting, if `SENTRY_DSN` is set) |
+| `npm run typecheck` | Check TypeScript types: app, service worker, server, tests (the build itself does not type-check, for speed) |
+| `npm run lint` | ESLint on the JavaScript that remains (`scripts/*.mjs`); everything else is TypeScript |
+| `npm run check` | Everything in sequence, stopping at the first error: typecheck → lint → build → all three test suites (before a commit; takes a few minutes) |
+| `npm test` | All three test suites (section 7) |
+| `npm run test:unit` / `test:api` / `test:e2e` | Each suite on its own |
+| `npm run test:integration` | Manual test against a running server |
+| `npm run loadtest` | Many people chatting at once on a test server, measured: how long messages take to arrive, what fails, the server's CPU and memory (section 7 → Load test; not part of `npm test`) |
+| `npm run db:check` | Before migrating: the duplicate rows that the integrity migration will clean up |
+| `npm run db:seed` | Test data (`-- --wipe`: deletes everything first; local database only) |
+| `npm run db:backup` / `db:restore` | Backup and restore (section 9) |
+| `npm run gen-kek` / `check-kek` | Generate the message key / check the keys in `.env` (or Vault) |
+| `npm run gen-vapid` / `check-vapid` | Generate / check the push keys |
+| `npm run verify-messages` | Can all messages be decrypted with the current keys? (changes nothing) |
+| `npm run rotate-keys` | Key rotation; the full procedure is in `server/ENCRYPTION.md` |
+| `npm run test:enc` | Writes an encrypted message, reads it back through the server's own read path, and deletes it |
 
 ---
 
-## ۲. نقشه‌ی پوشه‌ها
+## 2. Folder map
 
 ```
-client/                    ← همه‌ی کد مرورگر (React 19 + TypeScript strict)
-  shared/                  ← مشترک بین همه‌ی صفحه‌ها
-    api/                   ← types.ts (از shared/ می‌آید)، http.ts، endpoints.ts
-    lib/                   ← store، زمان، متن/لینک/RTL، theme، storage، hooks، تصویر
-    ui/                    ← Icons، Avatar، Dialog، PasswordInput
-    styles/global.css      ← توکن‌های رنگ، فونت‌ها، helperها
-  chat/                    ← اپ اصلی (/chat/)
-    main.tsx               ← راه‌اندازی: کاربر، اتصال زنده، بارگذاری اول، رندر
-    state/                 ← storeها و مدل‌های خالص (بدون UI)
-    services/              ← هرچیزی که با سرور/مرورگر حرف می‌زند
-    ui/                    ← کامپوننت‌ها (people / chat / panels / dialogs / feedback)
-    styles/                ← CSSها (همان ظاهر قبلی، باگ‌هایش رفع شده)
-  auth/                    ← ورود/ثبت‌نام (/auth/)
-  reset/                   ← رمز جدید از لینک ایمیل (/reset-password.html)
-  landing/                 ← صفحه‌ی اصلی و حریم خصوصی (SSG + hydrate)
-  boot/theme.ts            ← قبل از اولین paint تم/رنگ/والپیپر را اعمال می‌کند
-  sw/service-worker.ts     ← نوتیفیکیشن + کش فایل‌های اپ
+client/                    ← all browser code (React 19 + TypeScript strict)
+  shared/                  ← shared by all pages
+    api/                   ← types.ts (comes from shared/), http.ts, endpoints.ts
+    lib/                   ← store, time, text/links/RTL, theme, storage, hooks, images
+    ui/                    ← Icons, Avatar, Dialog, PasswordInput
+    styles/global.css      ← color tokens, fonts, helpers
+  chat/                    ← the main app (/chat/)
+    main.tsx               ← startup: user, live connection, initial load, render
+    state/                 ← stores and pure models (no UI)
+    services/              ← everything that talks to the server/browser
+    ui/                    ← components (people / chat / panels / dialogs / feedback)
+    styles/                ← CSS (same look as before, with its bugs fixed)
+  auth/                    ← login/sign-up (/auth/)
+  reset/                   ← new password from the email link (/reset-password.html)
+  landing/                 ← home page and privacy page (SSG + hydrate)
+  boot/theme.ts            ← applies theme/color/wallpaper before the first paint
+  sw/service-worker.ts     ← notifications + caching of app files
 scripts/
-  build.mjs                ← esbuild: باندل، hash، صفحه‌ها، SW، پیش‌رندر landing
-  pages.mjs                ← قالب HTML صفحه‌ها
-  dev.mjs                  ← حالت توسعه
-  test.mjs                 ← اجرای تست‌ها (unit / api / e2e)
-  backup-db.sh             ← بکاپ دیتابیس و عکس‌ها
-  restore-db.sh            ← بازگردانی (تمرینی یا واقعی)
-  db-url.mjs               ← آدرس دیتابیس برای ابزارهای Postgres
-server/                    ← Express 5 + Socket.IO + Prisma، همه TypeScript (بخش ۳)
-  tsconfig.json            ← چک تایپ سرور و prisma/seed (npm run typecheck)
-  instrument.ts            ← گزارش خطا (Sentry)، قبل از خود سرور بارگذاری می‌شود
-  prisma.ts                ← کلاینت دیتابیس (Prisma 7 + adapter pg) و تایپ‌هایش برای بقیه‌ی سرور
-  generated/prisma/        ← کلاینت ساخته‌شده از schema (npm install / npx prisma generate؛ در git نیست)
-  utils/logger.ts          ← لاگ JSON با reqId/userId
-  utils/errors.ts          ← خواندن پیام/کد خطای throw شده
-  scripts/                 ← ابزارهای دستی: کلیدها، چرخش، بررسی پیام‌ها، Vault (server/ENCRYPTION.md)
-shared/                    ← قرارداد اپ و سرور (بخش ۳ → قرارداد)
-  api.ts                   ← شکل جواب‌ها و هر endpoint
-  events.ts                ← رویدادهای زنده و جواب‌هایشان
-  limits.ts                ← حدها (طول پیام، اسم، رمز، …)
-  schemas/                 ← schemaهای zod برای هر ورودی (بخش ۳ → ورودی‌ها)
-public/                    ← assetها (فونت، آیکن، emoji data) + خروجی build
-prisma/                    ← schema و migrationها
-prisma.config.ts           ← تنظیمات دستور prisma: schema، migrationها، آدرس دیتابیس (از .env)
-  seed/                    ← داده‌ی تست (npm run db:seed؛ data.ts را آزادانه عوض کن)
-tests/                     ← همه TypeScript، چک‌شده با قرارداد shared/ (بخش ۷)
-  tsconfig.json            ← چک تایپ api / e2e / integration / support
-  support/                 ← سرور تست (backend.ts)، کاربر و سوکت تستیِ تایپ‌دار (client.ts)، سرور SMTP کوچک (smtp.ts)
-  unit/                    ← منطق کلاینت (node:test + tsx؛ با tsconfig خود اپ)
-  api/                     ← سرور واقعی + دیتابیس تست (node:test)
-  e2e/                     ← مرورگر (Playwright)؛ support/app.ts کارهای تکراری
-  integration/             ← تست دستی روی سرور در حال اجرا
+  build.mjs                ← esbuild: bundling, hashing, pages, SW, landing prerender
+  pages.mjs                ← HTML template for the pages
+  dev.mjs                  ← development mode
+  test.mjs                 ← runs the tests (unit / api / e2e / load)
+  backup-db.sh             ← backs up the database and pictures
+  restore-db.sh            ← restore (drill or for real)
+  db-url.mjs               ← database URL for the Postgres tools
+server/                    ← Express 5 + Socket.IO + Prisma, all TypeScript (section 3)
+  tsconfig.json            ← type check for the server and prisma/seed (npm run typecheck)
+  instrument.ts            ← error reporting (Sentry), loaded before the server itself
+  prisma.ts                ← database client (Prisma 7 + pg adapter) and its types for the rest of the server
+  generated/prisma/        ← client generated from the schema (npm install / npx prisma generate; not in git)
+  utils/logger.ts          ← JSON logs with reqId/userId
+  utils/errors.ts          ← reads the message/code of a thrown error
+  utils/processStats.ts    ← the process's CPU, memory and event loop, for the load test
+  scripts/                 ← manual tools: keys, rotation, message checks, Vault (server/ENCRYPTION.md)
+shared/                    ← the contract between app and server (section 3 → Contract)
+  api.ts                   ← response shapes and every endpoint
+  events.ts                ← live events and their responses
+  limits.ts                ← limits (message length, name, password, …)
+  schemas/                 ← zod schemas for every input (section 3 → Inputs)
+public/                    ← assets (fonts, icons, emoji data) + build output
+prisma/                    ← schema and migrations
+  seed/                    ← test data (npm run db:seed; change data.ts freely)
+prisma.config.ts           ← prisma command settings: schema, migrations, database URL (from .env)
+tests/                     ← all TypeScript, checked against the shared/ contract (section 7)
+  tsconfig.json            ← type check for api / e2e / integration / load / support
+  support/                 ← test server (backend.ts), typed test user and socket (client.ts), small SMTP server (smtp.ts)
+  unit/                    ← client logic (node:test + tsx; with the app's own tsconfig)
+  api/                     ← real server + test database (node:test)
+  e2e/                     ← browser (Playwright); support/app.ts for repeated tasks
+  integration/             ← manual test against a running server
+  load/                    ← load test (npm run loadtest)
+load-reports/              ← the load test's reports (not in git)
 .github/workflows/ci.yml   ← CI
 eslint.config.js           ← ESLint 10 (flat config)
 ```
 
 ---
 
-## ۳. سرور
+## 3. Server
 
-### TypeScript در سرور
+### TypeScript on the server
 
-سرور در سه مرحله و بدون تغییر رفتار از JS به TypeScript منتقل شد:
+The server was moved from JS to TypeScript in three stages, with no change in behavior:
 
-| مرحله | فایل‌ها | وضعیت |
+| Stage | Files | Status |
 |---|---|---|
-| ۱ | `config`، `env`، `events`، `prisma`، همه‌ی `utils/`، `services/caches`، `services/actionLimit`، `realtime/registry` | ✅ |
-| ۲ | `services/` (messages، contacts، presence)، `auth/sessions`، `jobs/` | ✅ |
-| ۳ | `routes/`، `socket/`، `middleware/`، `http/`، `index` | ✅ |
+| 1 | `config`, `env`, `events`, `prisma`, all of `utils/`, `services/caches`, `services/actionLimit`, `realtime/registry` | ✅ |
+| 2 | `services/` (messages, contacts, presence), `auth/sessions`, `jobs/` | ✅ |
+| 3 | `routes/`, `socket/`, `middleware/`, `http/`, `index` | ✅ |
 
-- **بدون build:** Node از ۲۲.۱۸ به بعد فایل `.ts` را مستقیم اجرا می‌کند (فقط
-  تایپ‌ها را حذف می‌کند). `tsc` فقط چک می‌کند: `npm run typecheck`
-  (`server/tsconfig.json`، حالت strict).
-- **فقط syntaxی که پاک‌شدنی است** (`erasableSyntaxOnly`): نه `enum`، نه
-  `namespace` با کد، نه parameter property در constructor. به جای enum، union
-  رشته‌ها (`"asc" | "desc"`).
-- **importها با پسوند واقعی:** `from "../prisma.ts"`. فایل‌های JS باقی‌مانده هم
-  ماژول‌های TS را با `.ts` import می‌کنند. تایپ‌هایی که فقط تایپ‌اند با
+- **No build:** Node 22.18 and later runs `.ts` files directly (it only strips
+  the types). `tsc` only checks: `npm run typecheck`
+  (`server/tsconfig.json`, strict mode).
+- **Only erasable syntax** (`erasableSyntaxOnly`): no `enum`, no
+  `namespace` with code, no parameter properties in constructors. Instead of an enum, use a union
+  of strings (`"asc" | "desc"`).
+- **Imports use the real extension:** `from "../prisma.ts"`. The remaining JS files also
+  import TS modules with `.ts`. Type-only imports use
   `import type`.
-- **دیتابیس:** تایپ‌ها را Prisma از `schema.prisma` می‌سازد (`npx prisma
-  generate`، که `npm install` هم انجامش می‌دهد، در `server/generated/prisma`):
-  فیلد اشتباه در `where` و `select`، یا خواندن فیلدی که select نشده، قبل از اجرا
-  خطا می‌گیرد. کد سرور تایپ‌ها را از `server/prisma.ts` می‌گیرد، نه از پوشه‌ی
-  generated: `import prisma, { type Prisma } from "../prisma.ts"`.
-- **چیزی که throw شده `unknown` است:** پیامش با `messageOf(e)` و کدش (مثلاً
-  `P2002` در Prisma) با `codeOf(e)` از `utils/errors.ts`.
-- **همه‌ی سرور TypeScript است**، ابزارهای دستی `server/scripts/` و داده‌ی تست
-  `prisma/seed/` هم. پس اگر امضای یک تابع سرور عوض شود، اسکریپتی که از آن استفاده
-  می‌کند (مثلاً `rotate_keys.ts`) همان موقع در typecheck خطا می‌گیرد، نه روزی که
-  رویش اجرا می‌شود. در `prisma/seed/data.ts` هم username اشتباه یا گزینه‌ی
-  غلط‌املایی (`{ raect: "❤️" }`) خطای تایپ است. سرور با `node server/index.ts`
-  بالا می‌آید (`npm start` قبلش `server/instrument.ts` را هم با `--import` بارگذاری می‌کند).
-- **handlerهای Express چیزی برنمی‌گردانند** (تایپ‌های Express 5):
-  `return void res.status(400).json(...)` یعنی «جواب بده و تمام»؛ Express مقدار
-  برگشتی را به هر حال نادیده می‌گیرد.
-- **نتیجه‌ی کارهای سرویس پیام** یا `{ error }` است یا موفق؛ با
-  `if ("error" in result)` از هم جدا می‌شوند.
-- **`req.userId` / `req.sessionId`** را `requireAuth` می‌گذارد
-  (`server/types/express.d.ts`)؛ فقط در routeهای پشت آن خوانده می‌شوند.
-- **سوکت:** هر چه به اتصال تعلق دارد در `socket.data` است (`SocketData` در
-  `realtime/registry.ts`)، از جمله `userId`. payload هر رویداد قبل از استفاده با
-  schemaی خودش چک می‌شود (بخش بعد).
+- **Database:** Prisma generates the types from `schema.prisma` (`npx prisma generate`,
+  which `npm install` also runs, into `server/generated/prisma`):
+  a wrong field in `where` and `select`, or reading a field that was not selected, is an error
+  before anything runs. Server code gets the types from `server/prisma.ts`, not from the
+  generated folder: `import prisma, { type Prisma } from "../prisma.ts"`.
+- **Whatever is thrown is `unknown`:** get its message with `messageOf(e)` and its code (e.g.
+  `P2002` in Prisma) with `codeOf(e)` from `utils/errors.ts`.
+- **The whole server is TypeScript**, including the manual tools in `server/scripts/` and the test data in
+  `prisma/seed/`. So if a server function's signature changes, a script that uses it
+  (e.g. `rotate_keys.ts`) fails typecheck right away, not on the day someone
+  runs it. In `prisma/seed/data.ts`, a wrong username or a misspelled
+  option (`{ raect: "❤️" }`) is also a type error. The server starts with `node server/index.ts`
+  (`npm start` also loads `server/instrument.ts` before it with `--import`).
+- **Express handlers return nothing** (Express 5 types):
+  `return void res.status(400).json(...)` means "respond and stop"; Express ignores the
+  return value anyway.
+- **The result of message service operations** is either `{ error }` or a success; they are told apart with
+  `if ("error" in result)`.
+- **`req.userId` / `req.sessionId`** are set by `requireAuth`
+  (`server/types/express.d.ts`); they are only read in routes behind it.
+- **Socket:** everything that belongs to the connection is in `socket.data` (`SocketData` in
+  `realtime/registry.ts`), including `userId`. Each event's payload is checked against its own
+  schema before it is used (next section).
 
-### ورودی‌ها (zod)
+### Inputs (zod)
 
-TypeScript فقط موقع نوشتن کد چک می‌کند؛ چیزی که از شبکه می‌آید هر شکلی می‌تواند
-داشته باشد (`{ conversationId: "12abc", text: 5 }`). برای همین هر ورودی (body،
-query و params هر route، payload هر رویداد سوکت) **قبل از هر کاری** با یک schema
-از `shared/schemas/` چک می‌شود:
+TypeScript only checks while you write the code; what arrives from the network can have any
+shape (`{ conversationId: "12abc", text: 5 }`). That is why every input (the body,
+query and params of each route, the payload of each socket event) is checked **before anything else**
+against a schema from `shared/schemas/`:
 
-| فایل | چه چیزی |
+| File | What |
 |---|---|
-| `common.ts` | تکه‌ها: id (عدد یا رقم، ۱ تا ۲³¹−۱)، id اختیاری، flag، متن trim‌شده، clientId، اندازه‌ی صفحه |
-| `messages.ts` | ارسال، فوروارد، ویرایش، حذف، پین، ری‌اکشن، seen، join/leave/typing، جستجو |
-| `auth.ts` | کد ایمیل، ثبت‌نام، ورود، خروج، فراموشی رمز |
-| `account.ts` | پروفایل، رمز، حذف حساب، جستجوی آدم‌ها، دستگاه‌ها، push |
-| `contacts.ts` / `conversations.ts` | لیست مخاطبین، صفحه‌های چت، تغییرات، پاک کردن چت |
+| `common.ts` | Building blocks: id (number or digits, 1 to 2³¹−1), optional id, flag, trimmed text, clientId, page size |
+| `messages.ts` | Send, forward, edit, delete, pin, reaction, seen, join/leave/typing, search |
+| `auth.ts` | Email code, sign-up, login, logout, forgot password |
+| `account.ts` | Profile, password, account deletion, people search, devices, push |
+| `contacts.ts` / `conversations.ts` | Contact list, chat pages, changes, clearing a chat |
 
-- **یک جا برای چک کردن:** `server/http/validate.ts` → `check(schema, input)` (برای
-  سوکت) و `parse(res, schema, input)` (برای route: اگر بد بود خودش `400 { error }`
-  جواب می‌دهد). جواب، **اولین** مشکل است با همان جمله‌ای که schema برایش نوشته
-  (`"Invalid clientId"`، `"Name must be between 2 and 100 characters"`)؛ مشکلی که
-  جمله‌ی خودش را ندارد `"Invalid data"` است. جمله‌ها همان‌هایی‌اند که سرور قبلاً
-  می‌گفت (اپ بعضی‌شان را به کاربر نشان می‌دهد).
-- **سرویس‌ها داده‌ی چک‌شده می‌گیرند:** `sendMessageAs(actor, data)` دیگر `unknown`
-  نمی‌گیرد؛ `data` خروجی schema است (`conversationId: number`، `text` trim‌شده،
-  `scheduledFor: Date | null`). چک‌هایی که دیتابیس یا ساعت لازم دارند (عضو چت
-  بودن، بلاک، بازه‌ی کپسول) در سرویس مانده‌اند.
-- **قبل از چک، بودجه:** هزینه‌ی یک رویداد/درخواست از بودجه‌ی اقدام‌ها کم می‌شود و
-  بعد payload چک می‌شود؛ سیل payloadهای خراب هم مجانی نیست.
-- **سخت‌گیرتر از قبل:** `isOneTime: "yes"` قبلاً بی‌صدا `false` حساب می‌شد، حالا رد
-  می‌شود؛ یک id خراب وسط لیست حذف یا فوروارد قبلاً نادیده گرفته می‌شد، حالا کل
-  درخواست رد می‌شود؛ `beforeId` خراب در لیست چت‌ها قبلاً نادیده گرفته می‌شد. اپ
-  هیچ‌کدام از این‌ها را نمی‌فرستد.
-- **حدها در `shared/limits.ts`:** طول پیام (۱۵۰۰)، اسم، بیو، رمز، الگوی
-  username، اندازه‌ی batch، بازه‌ی کپسول. این‌ها دیگر در `.env` نیستند: اپ و سرور
-  باید یک عدد را بدانند و اپ `.env` سرور را نمی‌بیند.
-- **ورودی تازه:** schemaش را در `shared/schemas/` بنویس، در route یا handler با
-  `parse`/`check` چکش کن، و به سرویس خروجی‌اش را بده. تست‌هایش در
+- **One place for checking:** `server/http/validate.ts` → `check(schema, input)` (for
+  sockets) and `parse(res, schema, input)` (for routes: if the input is bad, it responds with `400 { error }`
+  itself). The response is the **first** problem, with the sentence the schema defines for it
+  (`"Invalid clientId"`, `"Name must be between 2 and 100 characters"`); a problem that
+  has no sentence of its own is `"Invalid data"`. The sentences are the same ones the server used
+  before (the app shows some of them to the user).
+- **Services receive checked data:** `sendMessageAs(actor, data)` no longer takes `unknown`;
+  `data` is the schema's output (`conversationId: number`, trimmed `text`,
+  `scheduledFor: Date | null`). Checks that need the database or the clock (chat
+  membership, blocking, the capsule time window) stay in the service.
+- **Budget before the check:** the cost of an event/request is deducted from the action budget first,
+  and then the payload is checked; a flood of malformed payloads is not free either.
+- **Stricter than before:** `isOneTime: "yes"` used to be silently treated as `false`; now it is
+  rejected. A bad id in the middle of a delete or forward list used to be ignored; now the whole
+  request is rejected. A bad `beforeId` in the chat list used to be ignored. The app
+  sends none of these.
+- **Limits in `shared/limits.ts`:** message length (1500), name, bio, password, username
+  pattern, batch size, capsule time window. These are no longer in `.env`: the app and the server
+  must know the same number, and the app cannot see the server's `.env`.
+- **New input:** write its schema in `shared/schemas/`, check it in the route or handler with
+  `parse`/`check`, and pass its output to the service. Its tests go in
   `tests/unit/schemas.test.ts`.
 
-### قرارداد بین اپ و سرور (`shared/`)
+### Contract between the app and the server (`shared/`)
 
-اپ و سرور قبلاً هر کدام تایپ‌های خودشان را داشتند: اگر سرور اسم یک فیلد را عوض
-می‌کرد، typecheck هر دو طرف سبز می‌ماند و خرابی فقط موقع اجرا معلوم می‌شد. حالا
-هر دو از **یک جا** می‌خوانند و `npm run typecheck` هر دو را در برابر همان فایل‌ها چک
-می‌کند:
+The app and the server used to each have their own types: if the server renamed a field,
+typecheck stayed green on both sides and the breakage only showed up at runtime. Now
+both read from **one place**, and `npm run typecheck` checks both against the same
+files:
 
-| فایل | چه چیزی |
+| File | What |
 |---|---|
-| `shared/api.ts` | شکل هر چیزی که سرور می‌فرستد (`Me`، `Person`، `ContactRow`، `LiveMessage`، …) و `Endpoints`: هر endpoint چه می‌گیرد (`Body<"PATCH /api/users/me">`، از schemaی همان ورودی) و چه جواب می‌دهد (`Answer<…>`) |
-| `shared/events.ts` | `ServerEvents` (هر رویدادی که سرور می‌فرستد)، `ClientEventSchemas` (schemaی هر رویدادی که اپ می‌فرستد)، `ClientAcks` (جواب هر کدام) |
-| `shared/limits.ts` | حدها و الگوها (طول پیام، username، ایمیل، …)؛ فقط مقدار ساده |
-| `shared/schemas/` | ورودی‌ها (بخش قبل) |
+| `shared/api.ts` | The shape of everything the server sends (`Me`, `Person`, `ContactRow`, `LiveMessage`, …) and `Endpoints`: what each endpoint takes (`Body<"PATCH /api/users/me">`, from that input's schema) and what it returns (`Answer<…>`) |
+| `shared/events.ts` | `ServerEvents` (every event the server sends), `ClientEventSchemas` (the schema of every event the app sends), `ClientAcks` (the response to each one) |
+| `shared/limits.ts` | Limits and patterns (message length, username, email, …); plain values only |
+| `shared/schemas/` | Inputs (previous section) |
 
-- **سرور:** هر جواب موفق یک route با `reply(res, "GET /api/users/me", me)` فرستاده
-  می‌شود (`server/http/reply.ts`)؛ اگر `me` آن چیزی نباشد که قرارداد می‌گوید، کامپایل
-  نمی‌شود. هر رویداد با `emitToUser` / `deliverToConversation` می‌رود که اسم رویداد و
-  payloadش را از `ServerEvents` چک می‌کنند. هر رویداد سوکت با schemaی خودش از
-  `ClientEventSchemas` خوانده می‌شود و جوابش باید `ClientAcks` همان رویداد باشد
-  (سرویس‌ها `Result<…>` برمی‌گردانند).
-- **اپ:** `client/shared/api/types.ts` فقط از `shared/` re-export می‌کند (importهای اپ
-  همان ماندند)؛ `endpoints.ts` جواب هر endpoint را `Answer<…>` و بدنه‌اش را
-  `satisfies Body<…>` می‌گیرد؛ `realtime.ts` با همان `ClientEvents` / `ServerEvents`
-  کار می‌کند. اپ zod را **bundle نمی‌کند**: از schemaها فقط type می‌گیرد و
-  `limits.ts` چیزی جز مقدار ساده ندارد.
-- **تاریخ‌ها روی سیم رشته‌ی ISO‌اند:** سرور `Date` را خودش تبدیل می‌کند
-  (`server/utils/wire.ts`: `iso`، `isoOrNull`، `meOf`). خروجی JSON مثل قبل است؛ فقط
-  حالا تایپ هم همین را می‌گوید.
-- **فیلدی که schema نمی‌شناسد:** zod آن را بی‌صدا دور می‌اندازد. برای همین
-  `shared/events.ts` برای هر رویداد یک تایپ دقیق از چیزی که اپ می‌فرستد دارد
-  (`ClientPayloads`؛ idها عدد، نه «عدد یا رشته» که سرور هم قبول می‌کند) و در زمان
-  کامپایل چک می‌کند که schemaی همان رویداد آن را بپذیرد و **همه‌ی** فیلدهایش را
-  بخواند.
-- **عوض کردن پروتکل:** فایل `shared/` را عوض کن و `npm run typecheck` بزن: هر جای
-  سرور و اپ که باید همراهش عوض شود خطا می‌گیرد. مثلاً عوض کردن اسم
-  `LiveMessage.replyToName` هم در `messageView.ts` سرور خطا می‌دهد هم در
-  `bubbleData.ts` اپ؛ جوابی که `updatedAt` نداشته باشد، یا رویدادی با فیلد اشتباه، در
-  خود سرور.
-- **چیزی بیرون از قرارداد نیست:** هر endpoint و رویدادی که سرور دارد در `shared/`
-  است. آنچه فقط برای نسخه‌ی اول اپ مانده بود حذف شد: `GET /api/conversations`،
-  `GET /api/conversations/:id`، `GET /api/messages/:conversationId` (و `/pinned`)،
-  رویداد تکی `message:delete` (اپ `messages:delete` را می‌فرستد)، اسم قدیمی
-  `clientMessageId`، ردیف مخاطبِ دارای `conversation.messages`، «You» به جای اسم در
-  نقل‌قول و فوروارد، آواتارهای `<id>.jpg`، آدرس‌های `/chat/main.html`،
-  `/auth/auth.html` و `/reset-password`، و کوکی‌های قبل از نشست‌ها.
-- **تست‌ها هم با همین قرارداد:** کلاینت تست (`tests/support/client.ts`) جواب هر
-  endpointی را که اسمش را ببری با `Answer<…>` و بدنه‌اش را با `Body<…>` تایپ می‌کند
-  (`a.get<"GET /api/contacts">("/api/contacts")`)، payload هر رویداد را با schemaی
-  خودش، جوابش را با `ClientAcks` و رویدادهای سرور را با `ServerEvents`. فیلدی که در
-  `shared/` عوض شود در تست‌ها هم خطای تایپ است.
+- **Server:** every successful route response is sent with `reply(res, "GET /api/users/me", me)`
+  (`server/http/reply.ts`); if `me` is not what the contract says, it does not
+  compile. Every event goes out through `emitToUser` / `deliverToConversation`, which check the event name and
+  its payload against `ServerEvents`. Every socket event is read with its own schema from
+  `ClientEventSchemas`, and its response must be that event's `ClientAcks`
+  (services return `Result<…>`).
+- **App:** `client/shared/api/types.ts` only re-exports from `shared/` (the app's imports
+  stayed the same); `endpoints.ts` types each endpoint's response as `Answer<…>` and its body as
+  `satisfies Body<…>`; `realtime.ts` works with the same `ClientEvents` / `ServerEvents`.
+  The app does **not bundle** zod: it only takes types from the schemas, and
+  `limits.ts` contains nothing but plain values.
+- **Dates on the wire are ISO strings:** the server converts `Date` itself
+  (`server/utils/wire.ts`: `iso`, `isoOrNull`, `meOf`). The JSON output is the same as before; only
+  now the types say so too.
+- **A field the schema does not know:** zod silently drops it. That is why
+  `shared/events.ts` has an exact type for what the app sends for each event
+  (`ClientPayloads`; ids are numbers, not the "number or string" that the server also accepts), and it checks
+  at compile time that the schema for that event accepts it and reads **all** of its
+  fields.
+- **Changing the protocol:** change the `shared/` file and run `npm run typecheck`: every place in the
+  server and the app that must change along with it gets an error. For example, renaming
+  `LiveMessage.replyToName` causes an error both in the server's `messageView.ts` and in the app's
+  `bubbleData.ts`; a response that lacks `updatedAt`, or an event with a wrong field, causes an error in
+  the server itself.
+- **Nothing is outside the contract:** every endpoint and event the server has is in `shared/`.
+  What remained only for the first version of the app was removed: `GET /api/conversations`,
+  `GET /api/conversations/:id`, `GET /api/messages/:conversationId` (and `/pinned`),
+  the single-message `message:delete` event (the app sends `messages:delete`), the old name
+  `clientMessageId`, the contact row that included `conversation.messages`, "You" instead of the name in
+  quotes and forwards, `<id>.jpg` avatars, the `/chat/main.html`,
+  `/auth/auth.html` and `/reset-password` URLs, and the cookies from before sessions.
+- **Tests use the same contract:** the test client (`tests/support/client.ts`) types the response of
+  any endpoint you name with `Answer<…>` and its body with `Body<…>`
+  (`a.get<"GET /api/contacts">("/api/contacts")`), each event's payload with its own
+  schema, its response with `ClientAcks`, and the server's events with `ServerEvents`. A field that
+  changes in `shared/` is a type error in the tests too.
 
-### نشست‌ها (Sessions)
+### Sessions
 
-- هر ورود یک ردیف `Session` می‌سازد. کوکی نشست (`rivo_session`، در production
-  `__Host-rivo_session`) یک JWT با `{uid, sid}` است: امضا ثابت می‌کند کوکی مال
-  سرور است، ردیف دیتابیس تعیین می‌کند هنوز معتبر هست یا نه.
-- نتیجه: خارج کردن یک دستگاه فوری است (Settings → Devices)، تغییر رمز بقیه‌ی
-  دستگاه‌ها را خارج می‌کند ولی دستگاه فعلی می‌ماند، و reset رمز/حذف حساب همه را.
-- نشست با استفاده تمدید می‌شود (`SESSION_TTL_DAYS`، پیش‌فرض ۳۰ روز).
-- سوکت هم به `sid` گره خورده؛ پایان نشست = `session:ended` و قطع همان دستگاه.
+- Each login creates a `Session` row. The session cookie (`rivo_session`, in production
+  `__Host-rivo_session`) is a JWT with `{uid, sid}`: the signature proves the cookie came from the
+  server; the database row decides whether it is still valid.
+- Result: logging out a device is immediate (Settings → Devices); a password change logs out the
+  other devices but keeps the current one; a password reset/account deletion logs out all of them.
+- A session is extended with use (`SESSION_TTL_DAYS`, default 30 days).
+- The socket is also tied to the `sid`; session end = `session:ended` and that device is disconnected.
 
 ### CSRF
 
-کوکی `rivo_csrf` مقدار `HMAC(secret, "csrf:" + sid)` است و کلاینت آن را در هدر
-`X-CSRF-Token` برمی‌گرداند. سرور دوباره از روی نشست حسابش می‌کند، پس مقداری که
-کس دیگری بکارد هیچ‌وقت جور نمی‌شود (signed double-submit).
+The `rivo_csrf` cookie holds `HMAC(secret, "csrf:" + sid)`, and the client sends it back in the
+`X-CSRF-Token` header. The server recomputes it from the session, so a value planted by
+someone else never matches (signed double-submit).
 
-### پروتکل همگام‌سازی پیام‌ها
+### Message sync protocol
 
-مشکل قدیمی: اگر اتصال چند ثانیه قطع می‌شد، پیام‌ها/ویرایش‌ها/حذف‌های آن فاصله
-گم می‌شدند. حالا:
+The old problem: if the connection dropped for a few seconds, the messages/edits/deletions in that gap
+were lost. Now:
 
-- هر پیام `updatedAt` دارد (با هر ویرایش، حذف، seen، pin، reaction جلو می‌رود).
-- `GET /api/conversations/:id/messages?limit&before&beforeId` → صفحه‌ای از پیام‌ها +
-  `cursor` (زمان سرور).
-- `GET /api/conversations/:id/changes?since=<cursor>` → هرچه از آن لحظه عوض شده
-  (با ۱۰ ثانیه هم‌پوشانی برای اطمینان؛ حذف‌شده‌ها به شکل tombstone). اگر بیش از
-  ۵۰۰ تغییر باشد `reset: true` و کلاینت صفحه‌ی آخر را از نو می‌گیرد.
-- کلاینت هنگام قطع اتصال همه‌ی چت‌های کش‌شده را «کهنه» علامت می‌زند و هر کدام را
-  وقتی باز شد (چت باز را فوراً بعد از وصل شدن) catch-up می‌کند. نقطه‌ی شروع،
-  **آخرین باری است که از سرور خبری رسیده** (هر رویداد یا ping هر ۵ ثانیه) منهای
-  ۳۰ ثانیه، نه لحظه‌ی فهمیدن قطعی: گوشی‌ای که ۱۰ دقیقه خواب بوده قطعی را فقط موقع
-  بیدار شدن می‌فهمد. اگر catch-up خطا بدهد، تا وقتی چت باز است با فاصله‌ی بیشتر
-  دوباره امتحان می‌شود.
-- پاک کردن چت `upToId` دارد: فقط تا آخرین پیامی که کاربر دیده پاک می‌شود (برای هر
-  دو نفر). پیامی که در ۳ ثانیه‌ی Undo برسد می‌ماند. رویداد `messages:bulk-deleted`
-  هم `{conversationId, upToId}` است.
+- Every message has `updatedAt` (it moves forward with every edit, deletion, seen, pin, and reaction).
+- `GET /api/conversations/:id/messages?limit&before&beforeId` → a page of messages +
+  `cursor` (server time).
+- `GET /api/conversations/:id/changes?since=<cursor>` → everything that changed since that moment
+  (with a 10-second overlap to be safe; deleted messages as tombstones). If there are more than
+  500 changes, `reset: true`, and the client fetches the last page from scratch.
+- When the connection drops, the client marks all cached chats as "stale" and catches up on each one
+  when it is opened (the open chat right after reconnecting). The starting point is
+  **the last time anything was heard from the server** (any event, or the ping every 5 seconds) minus
+  30 seconds, not the moment the drop was noticed: a phone that was asleep for 10 minutes only notices the drop
+  when it wakes up. If catch-up fails, it is retried at longer intervals for as long as the chat
+  stays open.
+- Clearing a chat has `upToId`: only messages up to the last one the user has seen are deleted (for both
+  people). A message that arrives during the 3-second Undo window stays. The `messages:bulk-deleted` event
+  is also `{conversationId, upToId}`.
 
-### ارسال idempotent
+### Idempotent sending
 
-هر پیام یک `clientId` تصادفی (۲۲ کاراکتر) از کلاینت دارد و `(senderId, clientId)`
-در دیتابیس یکتاست. اگر جواب ارسال گم شود و کلاینت دوباره بفرستد، پیام تکراری
-ساخته نمی‌شود و همان پیام قبلی برمی‌گردد — اگر در این فاصله پاک شده، tombstoneاش
-(برای خود فرستنده با `clientId`) تا کلاینت پیام در حال ارسال را رها کند.
+Each message carries a random `clientId` (22 characters) from the client, and `(senderId, clientId)`
+is unique in the database. If the send response is lost and the client sends again, no duplicate
+message is created and the existing message is returned — or, if it was deleted in the meantime, its tombstone
+(for the sender only, with `clientId`) so the client can drop the pending message.
 
-### reply و forward از روی خود پیام
+### Reply and forward from the message itself
 
-- reply فقط `replyToId` می‌فرستد؛ متن نقل‌قول را **سرور** از پیام اصلی می‌سازد
-  (قبلاً از کلاینت می‌آمد و می‌شد زیر پیام کسی متنی ساختگی «نقل» کرد). از پیام یک‌بار
-  مصرف، کپسول قفل دیگران یا پیام پاک‌شده چیزی نقل نمی‌شود.
-- forward فقط `forwardOf` (id پیام) می‌فرستد؛ متن و «Forwarded from» را سرور از
-  پیام اصلی برمی‌دارد (فوروارِدِ فوروارد نویسنده‌ی اصلی را نگه می‌دارد). فقط پیام‌های
-  چت‌هایی که کاربر عضوش است؛ پیام یک‌بار مصرف یا کپسول قفل دیگران فوروارد نمی‌شود.
+- A reply sends only `replyToId`; the quoted text is built by the **server** from the original message
+  (it used to come from the client, and someone could "quote" made-up text under someone else's message). Nothing is
+  quoted from a one-time message, someone else's locked capsule, or a deleted message.
+- A forward sends only `forwardOf` (the message id); the server takes the text and "Forwarded from" from the
+  original message (forwarding a forward keeps the original author). Only messages from
+  chats the user is a member of; a one-time message or someone else's locked capsule cannot be forwarded.
 
-### حریم خصوصی «فقط مخاطبین»
+### "Contacts only" privacy
 
-وقتی A کسی را اضافه می‌کند، چت در لیست B هم ظاهر می‌شود (ردیفی که سرور خودش
-می‌سازد). قبلاً همین ردیف B را «مخاطبِ انتخاب‌شده‌ی B» حساب می‌کرد؛ پس هر کسی فقط با
-اضافه کردن یک نفر ایمیل، عکس و last seen «فقط مخاطبین» او را می‌دید. حالا
-`Contact.addedByOwner` مشخص می‌کند: ردیفی که سرور ساخته تا وقتی صاحبش خودش
-اضافه‌اش نکند (Add Contact → 200 به جای «already exists»)، به او پیام ندهد یا اسم
-رویش نگذارد، «مخاطب» حساب نمی‌شود.
+When A adds someone, the chat also appears in B's list (a row the server creates on its own).
+Previously, that same row counted as "a contact B chose"; so anyone could see someone's
+"Contacts only" email, photo and last seen just by adding them. Now
+`Contact.addedByOwner` decides: a row the server created does not count as a "contact" until its owner
+adds it themselves (Add Contact → 200 instead of "already exists"), sends them a message, or gives it
+a name.
 
-### رویدادهای زنده (مهم‌ها)
+### Live events (the important ones)
 
-`message:new`، `message:edited`، `message:deleted`، `messages:bulk-deleted`،
-`message:pinned`، `reaction:updated`، `message:seen {upToId}`،
-`message:capsule:opened` (کل پیام)، `contact:upsert` (ردیف کامل مخاطب)،
-`contact:removed`، `user:online/offline/updated`، `typing:start/stop`،
-`session:ended`. حذف و فوروارد دسته‌ای: `messages:delete` و `messages:forward`.
+`message:new`, `message:edited`, `message:deleted`, `messages:bulk-deleted`,
+`message:pinned`, `reaction:updated`, `message:seen {upToId}`,
+`message:capsule:opened` (the whole message), `contact:upsert` (the full contact row),
+`contact:removed`, `user:online/offline/updated`, `typing:start/stop`,
+`session:ended`. Bulk delete and forward: `messages:delete` and `messages:forward`.
 
-### محدودیت نرخ
+### Rate limiting
 
-- HTTP: سقف کلی API (`HTTP_RATE_MAX`).
-- auth: فقط تلاش‌های **ناموفق** شمرده می‌شوند، به ازای IP + حساب (`AUTH_RATE_MAX`)؛
-  پس ثبت‌نام عادی یا logout هیچ‌وقت قفل نمی‌شود ولی حدس رمز می‌شود.
-- کارها: بودجه‌ی «هزینه» برای هر کاربر (`SOCKET_RATE_MAX` در `SOCKET_RATE_WINDOW_MS`)،
-  **مشترک بین سوکت و REST** (ارسال، فوروارد، ویرایش، حذف، پین، پاک کردن چت، آپلود
-  آواتار، join). کلاینت در صورت رسیدن به سقف صبر می‌کند و دوباره می‌فرستد؛ پیامی گم نمی‌شود.
-- auth: علاوه بر سقف «IP + حساب»، سقفی ۱۰ برابری فقط برای IP (امتحان کردن حساب‌های
-  زیاد از یک جا). کلید حساب از همان فیلدی خوانده می‌شود که آن endpoint استفاده
-  می‌کند (قبلاً با عوض کردن فیلد دیگری سهمیه‌ی تازه گرفته می‌شد).
-- کد تأیید ایمیل: هر حدس اول یک تلاش را **اتمی** مصرف می‌کند؛ ۵ حدس هم‌زمان هم از ۵ بیشتر نمی‌شود.
-- مسیرهای API بدون توجه به حروف بزرگ/کوچک محدود می‌شوند (`/API/...` دیگر راه فرار نیست).
-- آدرس IPv6 با شبکه‌ی `/56`اش شمرده می‌شود (express-rate-limit 8): یک اینترنت خانگی
-  یک بازه‌ی کامل آدرس IPv6 دارد و هر آدرسش وگرنه سهمیه‌ی تازه‌ای بود.
-- `HTTP_RATE_MAX` / `AUTH_RATE_MAX` حداقل ۱ است (صفر یعنی «همه را رد کن»، نه «خاموش»)؛
-  برای خاموش کردن سقف HTTP: `ENABLE_HTTP_RATE_LIMITER=0`.
+- HTTP: an overall API cap (`HTTP_RATE_MAX`).
+- auth: only **failed** attempts are counted, per IP + account (`AUTH_RATE_MAX`);
+  so a normal sign-up or logout is never locked out, but password guessing is.
+- Actions: a "cost" budget per user (`SOCKET_RATE_MAX` per `SOCKET_RATE_WINDOW_MS`),
+  **shared between the socket and REST** (send, forward, edit, delete, pin, clear chat, avatar
+  upload, join). When the client hits the cap, it waits and sends again; no message is lost.
+- auth: in addition to the "IP + account" cap, a 10× cap per IP alone (trying many
+  accounts from one place). The account key is read from the same field that the endpoint
+  uses (previously, changing a different field got you a fresh quota).
+- Email verification code: each guess **atomically** consumes one attempt first; even 5 concurrent guesses cannot go past 5.
+- API paths are rate-limited regardless of upper/lower case (`/API/...` is no longer a way around it).
+- An IPv6 address is counted by its `/56` network (express-rate-limit 8): a home internet connection
+  has a whole range of IPv6 addresses, and otherwise each of those addresses would get a fresh quota.
+- `HTTP_RATE_MAX` / `AUTH_RATE_MAX` are at least 1 (zero means "reject everything", not "off");
+  to turn off the HTTP cap: `ENABLE_HTTP_RATE_LIMITER=0`.
 
-### ایمیل‌ها و لو نرفتن حساب‌ها
+### Emails without leaking accounts
 
-- `check-availability` فقط username را جواب می‌دهد. `send-code` برای ایمیلی که حساب
-  دارد به جای کد، ایمیل «You already have an account» (با لینک ورود و فراموشی رمز)
-  می‌فرستد و همان جواب همیشگی را می‌دهد؛ پس فرم ثبت‌نام نمی‌گوید چه کسی حساب دارد.
-- درخواست reset رمز (بدون ورود) اول جواب می‌دهد و بعد کار را انجام می‌دهد؛ زمان
-  جواب هم چیزی لو نمی‌دهد.
-- regex ایمیل طوری نوشته شده که backtrack نمی‌کند (قبلاً یک ایمیل ۶۰ هزار کاراکتری
-  سرور را ~۳ ثانیه قفل می‌کرد) و بیش از ۲۵۴ کاراکتر رد می‌شود.
+- `check-availability` only answers for usernames. For an email that already has an account, `send-code`
+  sends a "You already have an account" email (with login and forgot-password links) instead of a code,
+  and gives the usual response; so the sign-up form does not reveal who has an account.
+- A password reset request (made without logging in) responds first and then does the work; the response
+  time does not reveal anything either.
+- The email regex is written so that it does not backtrack (previously a 60,000-character email
+  locked up the server for ~3 seconds), and anything over 254 characters is rejected.
 
 ### Push
 
-- فقط آدرس سرویس‌های push مرورگرها (Google/FCM، Mozilla، Apple، Windows؛
-  `PUSH_ALLOWED_HOSTS` برای اضافه) با https و پورت پیش‌فرض قبول می‌شود؛ قبلاً هر
-  آدرس https قبول می‌شد و سرور به آن درخواست می‌زد (SSRF).
-- هر دستگاه (نشست) یک اشتراک، هر حساب حداکثر `PUSH_MAX_PER_USER` (۲۰). route
-  تستی `POST /api/push/send` حذف شد.
+- Only addresses of the browsers' push services (Google/FCM, Mozilla, Apple, Windows;
+  `PUSH_ALLOWED_HOSTS` to add more) are accepted, with https and the default port; previously any
+  https address was accepted and the server sent requests to it (SSRF).
+- One subscription per device (session), at most `PUSH_MAX_PER_USER` (20) per account. The test
+  route `POST /api/push/send` was removed.
 
-### بلاک و حذف حساب
+### Blocking and account deletion
 
-- کسی که بلاک شده نمی‌تواند پیام‌های قبلی‌اش را ویرایش یا پین کند یا چت را برای
-  طرف مقابل پاک کند (ارسال و ری‌اکشن از قبل بسته بود).
-- حذف حساب پیام‌های Saved Messages را هم پاک می‌کند (قبلاً روی سرور می‌ماند).
+- Someone who has been blocked cannot edit or pin their earlier messages, or clear the chat for
+  the other person (sending and reacting were already blocked).
+- Deleting an account also deletes the messages in Saved Messages (they used to stay on the server).
 
 ---
 
-## ۴. کلاینت چت
+## 4. Chat client
 
-### لایه‌ها
+### Layers
 
 ```
-UI (React)  ──می‌خواند──▶  stores  ◀──می‌نویسد──  services  ◀──▶  سرور (HTTP + Socket)
-     │                                               ▲
-     └────────────── صدا می‌زند (actions) ───────────┘
+UI (React)  ──reads──▶  stores  ◀──writes──  services  ◀──▶  server (HTTP + Socket)
+     │                                          ▲
+     └──────────────── calls (actions) ─────────┘
 ```
 
-- **stores** (`state/stores.ts`): چند store کوچک و مستقل، هرکدام به اندازه‌ی سرعت
-  تغییرش: `session`، `contacts` (ردیف‌ها با کلید conversationId)، `chats` (کش پیام‌های
-  هر چت)، `outbox` (در حال ارسال)، `typing`، `connection`، `ui`، `composers`
-  (پیش‌نویس هر چت)، `undoing`، `toasts`، `notices`. نتیجه: تایپ کردن یک حرف لیست
-  مخاطبین را دوباره رندر نمی‌کند و رسیدن «typing...» پیام‌ها را.
-- `createStore` + `useStore(store, selector)` روی `useSyncExternalStore` ساخته شده؛
-  کامپوننت فقط وقتی رندر می‌شود که خروجی selector خودش عوض شود.
-- **مدل‌ها** (`chatModel.ts`، `contactModel.ts`): توابع خالص و قابل تست برای ادغام
-  پیام‌ها، قوانین جایگاه چت‌ها و مرتب‌سازی. هر تغییر ردیف مخاطب شماره می‌خورد؛ لیست
-  کاملی که قبل از یک تغییر زنده درخواست شده، آن تغییر را بازنویسی نمی‌کند.
-- **services**: تنها جاهایی که side effect دارند.
+- **stores** (`state/stores.ts`): several small, independent stores, each scoped to how often
+  it changes: `session`, `contacts` (rows keyed by conversationId), `chats` (each chat's message
+  cache), `outbox` (messages being sent), `typing`, `connection`, `ui`, `composers`
+  (each chat's draft), `undoing`, `toasts`, `notices`. Result: typing one character does not re-render the contact
+  list, and an incoming "typing..." does not re-render the messages.
+- `createStore` + `useStore(store, selector)` are built on `useSyncExternalStore`;
+  a component re-renders only when the output of its own selector changes.
+- **Models** (`chatModel.ts`, `contactModel.ts`): pure, testable functions for merging
+  messages, chat placement rules, and sorting. Every change to a contact row gets a sequence number; a full
+  list that was requested before a live change does not overwrite that change.
+- **services**: the only places that have side effects.
 
-### قانون‌های ادغام پیام (chatModel)
+### Message merge rules (chatModel)
 
-- نسخه‌ای که `updatedAt` جدیدتری دارد برنده است (رویداد دیررسیده چیز تازه را خراب نمی‌کند).
-- `isSeen` و باز شدن کپسول فقط رو به جلو می‌روند.
-- پیام حذف‌شده در `gone` به خاطر سپرده می‌شود تا یک رویداد قدیمی آن را برنگرداند.
-- حداکثر ۱۲ چت در حافظه نگه داشته می‌شوند (LRU؛ چت باز هرگز حذف نمی‌شود).
+- The version with the newer `updatedAt` wins (a late event does not overwrite newer data).
+- `isSeen` and capsule opening only move forward.
+- A deleted message is remembered in `gone` so that an old event does not bring it back.
+- At most 12 chats are kept in memory (LRU; the open chat is never evicted).
 
-### صف ارسال (outbox)
+### Send queue (outbox)
 
-- هر پیام اول در outbox می‌نشیند (با `clientId`) و فوراً در چت دیده می‌شود.
-- یک فرستنده‌ی ترتیبی پیام‌ها را به همان ترتیب می‌فرستد؛ آفلاین → صبر،
-  rate limit → چند ثانیه صبر و تلاش دوباره، خطای واقعی (مثلاً بلاک) → «failed» با
-  دکمه‌های Retry / Copy / Delete.
-- outbox برای هر کاربر در localStorage ذخیره می‌شود: رفرش یا بستن تب هم پیام را گم
-  نمی‌کند. با خروج از حساب پاک می‌شود. چند تب هم‌زمان پیام‌های ارسال‌نشده‌ی هم را پاک
-  نمی‌کنند (ادغام با `clientId`).
-- اگر اتصال وسط ارسال قطع شود، درخواست همان لحظه شکست می‌خورد (نه ۱۰ ثانیه بعد) و
-  پیام با همان ترتیب دوباره می‌رود.
-- بعد از هر وصل شدن، تا سرور تأیید نکند همان حساب هنوز وارد است چیزی از outbox
-  فرستاده نمی‌شود (اگر در تب دیگری با حساب دیگری وارد شده باشی، صفحه از نو بالا می‌آید).
+- Every message first goes into the outbox (with `clientId`) and appears in the chat immediately.
+- A sequential sender sends the messages in the same order; offline → wait,
+  rate limit → wait a few seconds and retry, real error (e.g. blocked) → "failed" with
+  Retry / Copy / Delete buttons.
+- The outbox is saved in localStorage per user: a refresh or closing the tab does not lose the message
+  either. It is cleared on logout. Several tabs open at once do not delete each other's unsent messages
+  (they are merged by `clientId`).
+- If the connection drops mid-send, the request fails right away (not 10 seconds later), and
+  the message goes out again in the same order.
+- After every reconnect, nothing is sent from the outbox until the server confirms that the same account is still
+  logged in (if you have logged in with a different account in another tab, the page reloads).
 
 ### Undo
 
-حذف پیام/چت/مخاطب اول فقط پنهان می‌شود و Toast با «Undo» می‌آید؛ بعد از ۳ ثانیه
-به سرور گفته می‌شود. اگر صفحه در این فاصله بسته شود، درخواست با `keepalive` همچنان
-فرستاده می‌شود.
+Deleting a message/chat/contact first only hides it, and a Toast with "Undo" appears; after 3 seconds
+the server is told. If the page is closed in the meantime, the request is still sent
+with `keepalive`.
 
-### دکمه‌ی Back گوشی
+### The phone's Back button
 
-هر لایه (چت، پنل، دیالوگ، منو، جستجو، All contacts) یک ورودی history دارد
-(`backStack.ts`). Back بالاترین لایه را می‌بندد نه کل اپ را؛ بستن از داخل UI هم
-ورودی‌اش را برمی‌دارد. تغییرات history صف می‌شوند چون `history.go` ناهمزمان است.
+Each layer (chat, panel, dialog, menu, search, All contacts) has a history entry
+(`backStack.ts`). Back closes the topmost layer, not the whole app; closing from inside the UI also
+removes its entry. History changes are queued because `history.go` is asynchronous.
 
 ### Seen
 
-پیامی seen می‌شود که واقعاً روی صفحه دیده شده (IntersectionObserver)، صفحه
-visible باشد و اتصال برقرار. به سرور `upToId` فرستاده می‌شود، نه «همه را seen کن»؛
-پس پیامی که همین الان رسیده و دیده نشده، seen نمی‌شود.
+A message becomes seen when it has actually been visible on screen (IntersectionObserver), the page
+is visible, and the connection is up. The server is sent `upToId`, not "mark everything seen";
+so a message that has just arrived and has not been seen does not become seen.
 
-### جایگاه چت‌ها (همان قانون‌های قبلی)
+### Chat placement (same rules as before)
 
-- **Active Chats**: Saved Messages، سنجاق‌شده‌ها، چت باز، چت با پیام خوانده‌نشده،
-  چتی که پیامی از من در حال ارسال دارد یا آخرین پیام من هنوز دیده نشده.
-- **Contacts**: بقیه (اول آن‌هایی که پیام دارند به ترتیب تازگی، بعد بدون پیام، بلاک‌شده‌ها آخر).
-- **Archived**: فقط در Settings → Archived Chats.
+- **Active Chats**: Saved Messages, pinned chats, the open chat, chats with unread messages,
+  a chat where a message from me is being sent or my last message has not been seen yet.
+- **Contacts**: the rest (first those with messages, by recency, then those without messages, blocked ones last).
+- **Archived**: only in Settings → Archived Chats.
 
-### دسترسی با کیبورد
+### Keyboard access
 
-همه‌چیز با Tab در دسترس است و فوکوس دیده می‌شود. در لیست پیام‌ها: ↑/↓ بین پیام‌ها،
-Enter یا کلید منو = منوی پیام، Esc = بستن (Enter روی لینک یا نقل‌قول داخل پیام کار
-خودِ آن را می‌کند). روی کارت Active Chat: ←/→ مثل swipe دکمه‌ها را نشان می‌دهد.
+Everything is reachable with Tab, and focus is visible. In the message list: ↑/↓ moves between messages,
+Enter or the Menu key = message menu, Esc = close (Enter on a link or quote inside a message does
+that element's own action). On an Active Chat card: ←/→ reveals the buttons, like a swipe.
 
-### دیالوگ‌ها و toast
+### Dialogs and toasts
 
-دیالوگ‌ها `<dialog>` بومی با `showModal()` هستند (بقیه‌ی صفحه inert می‌شود). toastها
-داخل بالاترین دیالوگ باز، به شکل popover در top layer نمایش داده می‌شوند (`TopLayer`)
-تا روی دیالوگ دیده و کلیک شوند. Escape در دیالوگ تو در تو فقط همان را می‌بندد.
+Dialogs are native `<dialog>` elements with `showModal()` (the rest of the page becomes inert). Toasts
+are shown inside the topmost open dialog, as a popover in the top layer (`TopLayer`),
+so they are visible and clickable on top of the dialog. Escape in a nested dialog closes only that dialog.
 
-### تم
+### Theme
 
-`boot/theme.ts` قبل از اولین paint (بدون inline script، سازگار با CSP) کلاس
-`dark-mode` روی `<html>`، رنگ accent و والپیپر را اعمال می‌کند؛ پس هیچ فلش سفیدی
-دیده نمی‌شود. والپیپر قبل از ذخیره به JPEG حداکثر ۱۶۰۰ پیکسل کوچک می‌شود.
-
----
-
-## ۵. Build
-
-- **esbuild** با ESM و code splitting: React یک‌بار دانلود و بین صفحه‌ها کش می‌شود؛
-  emoji picker فقط با اولین باز شدن بارگذاری می‌شود.
-- اسم همه‌ی فایل‌های `public/app/` با hash محتواست → سرور آن‌ها را `immutable` کش
-  می‌کند و هر build جدید خودبه‌خود جایگزین می‌شود.
-- HTML صفحه‌ها با اسم فایل‌های همان build ساخته می‌شوند (`pages.mjs`) + `modulepreload`.
-- landing و privacy هنگام build با `react-dom/server` به HTML کامل تبدیل می‌شوند
-  (برای SEO و نمایش فوری) و در مرورگر hydrate می‌شوند.
-- service worker با نسخه‌ای از روی hash فایل‌ها ساخته می‌شود؛ هر build = نسخه‌ی جدید.
+`boot/theme.ts` applies the `dark-mode` class on `<html>`, the accent color and the wallpaper before the first paint
+(without an inline script, so it is CSP-compatible); so no white flash is ever
+seen. The wallpaper is downscaled to a JPEG of at most 1600 pixels before it is saved.
 
 ---
 
-## ۶. چیزهایی که عوض/درست شد
+## 5. Build
 
-### کلاینت (بازنویسی کامل با React + TypeScript)
+- **esbuild** with ESM and code splitting: React is downloaded once and cached across pages;
+  the emoji picker is loaded only when it is opened for the first time.
+- All file names in `public/app/` include a content hash → the server caches them as `immutable`,
+  and each new build replaces them automatically.
+- The pages' HTML is generated with the file names from the same build (`pages.mjs`) + `modulepreload`.
+- landing and privacy are rendered to full HTML at build time with `react-dom/server`
+  (for SEO and instant display) and are hydrated in the browser.
+- The service worker is built with a version derived from the file hashes; every build = a new version.
 
-- **همگام‌سازی**: پیام/ویرایش/حذفی که هنگام قطعی اینترنت رخ می‌داد دیگر گم نمی‌شود.
-- **ارسال آفلاین**: پیام در صف می‌ماند، بعد از وصل شدن (حتی بعد از رفرش) می‌رسد، تکراری نمی‌شود.
-- **Seen دقیق** (قبلاً پیامی که همان لحظه می‌رسید هم seen می‌شد).
-- **Back گوشی** همه‌جا درست کار می‌کند.
-- منوی پیام با نگه داشتن انگشت: قبلاً بلند کردن انگشت گاهی روی یکی از گزینه‌ها
-  «کلیک» می‌کرد؛ حالا آن کلیک نادیده گرفته می‌شود.
-- **Settings → Devices** (جدید)، Notifications (روشن/خاموش)، شمارش معکوس «Send reset email».
-- cropper اختصاصی (cropperjs حذف شد)، gsap حذف شد، Sentry مرورگر (که هیچ‌وقت فعال نبود) حذف شد.
-- صفحه‌ی auth روی گوشی بیرون می‌زد؛ درست شد. صفحه‌ی reset هم‌شکل بقیه‌ی اپ شد
-  و توکن را از نوار آدرس پاک می‌کند.
-- ایمیل کاربر دیگر در localStorage ذخیره نمی‌شود.
-- CSS: `rgbaa` (گرادیان پروفایل کار نمی‌کرد)، دکمه‌ی Add بدون رنگ در Add Contact
-  (متغیرهای تعریف‌نشده)، حلقه‌ی رنگ انتخاب‌شده‌ی accent که دیده نمی‌شد، قانون شکسته
-  در active-chats، `.contact-actions :nth-child` شکننده، hoverها روی گوشی،
-  نوار صورتی ذوزنقه‌ای در پیش‌نمایش حذف، `outline: none` سراسری (فوکوس کیبورد
-  دیده نمی‌شد)، `scroll-behavior: smooth` سراسری که اسکرول برنامه‌ای را خراب می‌کرد.
-- کارت‌هایی که داخلشان دکمه بود (دکمه در دکمه) برای screen reader درست شدند.
-- بازبینی دوم (کلاینت): catch-up گوشیِ خوابیده، پیام گیرکرده روی «در حال ارسال»،
-  ترتیب پیام‌ها بعد از وصل شدن دوباره، outbox چند تب، ارسال با حساب دیگر بعد از
-  عوض شدن حساب در تب دیگر، حذف پیامی که در Undo «حذف چت» رسید، لیست مخاطبین که
-  تغییرات زنده را پاک می‌کرد، toast پشت دیالوگ‌ها، Escape در cropper که Edit Profile
-  را می‌بست، Enter روی لینک داخل پیام، تپی که بعد از swipe خورده می‌شد، پرش لیست
-  موقع لود پیام‌های قدیمی، دو ایمیل با دابل‌کلیک Resend.
-- landing: ادعاهای نادرست اصلاح شد («حتی ما نمی‌توانیم پیام‌ها را بخوانیم»،
-  «Instant Chat بدون حساب»، «Scheduled messages»، «Full offline support»،
-  «100ms latency»)؛ متن حریم خصوصی با رفتار واقعی سرور هماهنگ شد؛ نشانگر سفارشی
-  ماوس فقط با ماوس و وقتی JS اجرا شده جای نشانگر سیستم را می‌گیرد؛ انتخاب متن صفحه
-  دوباره ممکن است؛ Poppins از خود سایت بارگذاری می‌شود.
+---
 
-### سرور
+## 6. What changed or was fixed
 
-- نشست‌های واقعی، CSRF امضاشده، تغییر رمز بدون خروج دستگاه فعلی، Devices.
-- پروتکل `/changes`، `clientId`، `updatedAt`، `message:seen {upToId}`، حذف/فوروارد دسته‌ای.
-- بارگذاری `.env` قبل از هر import (قبلاً VAPID تصادفاً کار می‌کرد).
-- CSP یکسان در dev و production، HSTS در production، هدرهای کش درست (`/app` immutable،
-  HTML و SW بدون کش).
-- mountهای اضافی (`/src`، `/node_modules`، ...) حذف شدند.
-- rate limit ورود فقط تلاش ناموفق را می‌شمارد.
-- مسابقه‌ی join/seen در سوکت (seen قبل از join پردازش می‌شد) سریالی شد.
-- بازبینی دوم (امنیت): ReDoS در چک ایمیل، دور زدن rate limit با `/API`، حریم «فقط
-  مخاطبین» که با اضافه کردن یک نفر دور زده می‌شد، لو رفتن حساب‌ها از ثبت‌نام و زمان
-  reset، SSRF از اشتراک push، brute-force هم‌زمان کد ایمیل، کارهای REST بیرون از بودجه،
-  ویرایش/پین/پاک کردن چت با وجود بلاک، نقل‌قول و «Forwarded from» جعلی، Saved
-  Messages باقی‌مانده بعد از حذف حساب، فیلدها/پیکسل‌های بی‌حد در آپلود آواتار،
-  `X-Forwarded-For` جعلی در سوکت — جزئیات در بخش ۳.
-- ابزارهای `server/scripts` (حالا TypeScript): `rotate-keys` و `push-keks` اصلاً `.env`
-  را نمی‌خواندند (کلیدها و آدرس Vault خالی می‌ماند)؛ چرخش کلید اگر وسط کار پیامی
-  ویرایش می‌شد، DEK قدیمی را رویش می‌نوشت و آن پیام دیگر باز نمی‌شد، و `updatedAt`
-  همه‌ی پیام‌ها را عوض می‌کرد (هر دستگاه کل پیام‌ها را دوباره می‌گرفت)؛ `push-keks`
-  بقیه‌ی اسرار همان مسیر Vault را پاک می‌کرد و اگر خواندن از Vault خطا می‌داد همه را
-  بازنویسی می‌کرد؛ با `SECRET_PROVIDER=vault` بعضی اسکریپت‌ها هیچ‌وقت تمام نمی‌شدند؛
-  کلید همه‌کاره‌ی `KEK` می‌توانست بی‌صدا جای `KEK_V2` بنشیند؛ «تست» رمزنگاری با خطا هم
-  موفق تمام می‌شد.
-- چیزهایی که قرارداد مشترک پیدا کرد: `contact:upsert` اگر ردیف وسط کار پاک می‌شد
-  `null` می‌فرستاد (و جواب ۲۰۰ با بدنه‌ی خالی)؛ `message:capsule:opened` گاهی `text`
-  نداشت؛ یک `lastSeen` خراب کل اعلام آنلاین/آفلاین را متوقف می‌کرد.
+### Client (full rewrite with React + TypeScript)
 
-### پاک‌سازی، وابستگی‌ها، تست‌ها
+- **Sync**: a message/edit/deletion that happened while the internet was down is no longer lost.
+- **Offline sending**: the message stays in the queue, is delivered after reconnecting (even after a refresh), and is not duplicated.
+- **Accurate Seen** (previously a message that arrived at that very moment was also marked seen).
+- The phone's **Back** button works correctly everywhere.
+- Long-press message menu: lifting the finger used to sometimes "click" one of the options;
+  now that click is ignored.
+- **Settings → Devices** (new), Notifications (on/off), a countdown on "Send reset email".
+- A custom cropper (cropperjs removed), gsap removed, browser Sentry (which was never active) removed.
+- The auth page overflowed on phones; fixed. The reset page now looks like the rest of the app
+  and removes the token from the address bar.
+- The user's email is no longer stored in localStorage.
+- CSS: `rgbaa` (the profile gradient did not work), the Add button with no color in Add Contact
+  (undefined variables), the ring around the selected accent color that was not visible, a broken rule
+  in active-chats, the fragile `.contact-actions :nth-child`, hovers on phones,
+  the trapezoid-shaped pink bar in the delete preview, a global `outline: none` (keyboard focus
+  was not visible), a global `scroll-behavior: smooth` that broke programmatic scrolling.
+- Cards that had buttons inside them (a button inside a button) were fixed for screen readers.
+- Second review (client): catch-up on a phone that was asleep, a message stuck on "sending",
+  message order after reconnecting, multi-tab outbox, sending as another account after
+  the account was switched in another tab, deleting a message that arrived during the "delete chat" Undo, the contact list
+  wiping out live changes, toasts behind dialogs, Escape in the cropper closing Edit Profile,
+  Enter on a link inside a message, a tap registering after a swipe, the list jumping
+  while older messages load, two emails from double-clicking Resend.
+- landing: false claims corrected ("even we can't read the messages",
+  "Instant Chat without an account", "Scheduled messages", "Full offline support",
+  "100ms latency"); the privacy text now matches the server's actual behavior; the custom
+  mouse cursor replaces the system cursor only when a mouse is used and JS has run; selecting text on the page
+  is possible again; Poppins is loaded from the site itself.
 
-- **کد سازگاری با نسخه‌ی اول اپ حذف شد** (ریوو هنوز منتشر نشده، پس کلاینت قدیمی‌ای
-  وجود ندارد): فهرستش در بخش ۳ → قرارداد. همراهش: اشتراک push بی‌نشست، ساختن
-  Saved Messages برای حساب‌های قدیمی موقع هر بار لود لیست (هر دو حالا یک‌بار در
-  migration تازه؛ ثبت‌نام و seed خودشان Saved Messages می‌سازند)، و
+### Server
+
+- Real sessions, signed CSRF, password change without logging out the current device, Devices.
+- The `/changes` protocol, `clientId`, `updatedAt`, `message:seen {upToId}`, bulk delete/forward.
+- `.env` is loaded before any import (previously VAPID worked by accident).
+- The same CSP in dev and production, HSTS in production, correct cache headers (`/app` immutable,
+  HTML and SW not cached).
+- Extra mounts (`/src`, `/node_modules`, ...) removed.
+- The login rate limit counts only failed attempts.
+- The join/seen race on the socket (seen was processed before join) was serialized.
+- Second review (security): ReDoS in the email check, bypassing the rate limit with `/API`, the
+  "Contacts only" privacy that could be bypassed by adding someone, leaking accounts through sign-up and
+  reset timing, SSRF via push subscriptions, concurrent brute-forcing of the email code, REST actions outside the budget,
+  editing/pinning/clearing a chat despite a block, forged quotes and "Forwarded from", Saved
+  Messages left over after account deletion, unlimited fields/pixels in avatar uploads,
+  forged `X-Forwarded-For` on the socket — details in section 3.
+- The `server/scripts` tools (now TypeScript): `rotate-keys` and `push-keks` did not read `.env`
+  at all (the keys and the Vault address stayed empty); if a message was edited in the middle of a key rotation,
+  the rotation wrote the old DEK over it and that message could no longer be decrypted, and it changed the `updatedAt`
+  of every message (every device fetched all messages again); `push-keks`
+  deleted the other secrets at the same Vault path, and if reading from Vault failed, it overwrote
+  all of them; with `SECRET_PROVIDER=vault` some scripts never finished;
+  the catch-all `KEK` key could silently take the place of `KEK_V2`; the encryption "test" finished as successful
+  even when there was an error.
+- Things the shared contract caught: `contact:upsert` sent `null` if the row was deleted mid-operation
+  (and a 200 response with an empty body); `message:capsule:opened` sometimes lacked `text`;
+  a single bad `lastSeen` stopped all online/offline announcements.
+
+### Cleanup, dependencies, tests
+
+- **Compatibility code for the first version of the app was removed** (Rivo has not been released yet, so no old
+  client exists): the list is in section 3 → Contract. Along with it: push subscriptions without a session, creating
+  Saved Messages for old accounts every time the list was loaded (both now happen once in the
+  new migration; sign-up and seed create Saved Messages themselves), and
   `DEFAULT_CONVERSATIONS_TAKE` / `MAX_CONVERSATIONS_TAKE`.
-- **وابستگی‌ها به نسخه‌های فعلی** (با تغییرهای ناسازگارشان):
+- **Dependencies at their current versions** (with their breaking changes):
 
-  | بسته | از → به | چه عوض شد |
+  | Package | From → to | What changed |
   |---|---|---|
-  | helmet | 6 → 8 | HSTS در خود `helmet()` (فقط production)؛ COEP به‌طور پیش‌فرض خاموش است |
-  | express-rate-limit | 6 → 8 | `max` → `limit`؛ IPv6 با `/56` (`ipKeyGenerator`)؛ سقف ۰ دیگر «خاموش» نیست |
-  | nodemailer | 6 → 10 | TypeScript شده و تایپ‌های خودش را دارد (`@types/nodemailer` حذف شد)؛ Node 20+ |
-  | sharp | 0.32 → 0.35 | `autoOrient()` به جای `rotate()` بی‌آرگومان؛ Node 20.9+ |
-  | @sentry/node | 7 → 11 | `Handlers` حذف شد: Sentry در `server/instrument.ts` و قبل از Express شروع می‌شود (`--import`) و خطاهای Express را خودش می‌گیرد؛ داده‌ی همراه خطا محدود شد (بخش ۹) |
-  | dotenv | 17 → 18 | `quiet: true` (پیام «injected env» در لاگ نمی‌آید) |
+  | helmet | 6 → 8 | HSTS is in `helmet()` itself (production only); COEP is off by default |
+  | express-rate-limit | 6 → 8 | `max` → `limit`; IPv6 by `/56` (`ipKeyGenerator`); a cap of 0 no longer means "off" |
+  | nodemailer | 6 → 10 | Now written in TypeScript and ships its own types (`@types/nodemailer` removed); Node 20+ |
+  | sharp | 0.32 → 0.35 | `autoOrient()` instead of `rotate()` with no arguments; Node 20.9+ |
+  | @sentry/node | 7 → 11 | `Handlers` was removed: Sentry starts in `server/instrument.ts`, before Express (`--import`), and catches Express errors on its own; the data sent along with errors was limited (section 9) |
+  | dotenv | 17 → 18 | `quiet: true` (the "injected env" message no longer appears in the log) |
 
-  Prisma 7 جدا انجام شد (پایین‌تر).
-- **باگ‌هایی که در این کار پیدا و درست شد:**
-  - `npm run dev` سرور را با **ts-node** اجرا می‌کرد (nodemon برای فایل `.ts` خودش
-    ts-node را صدا می‌زند، که در پروژه نیست) و با تغییر `shared/` هم ری‌استارت نمی‌کرد.
-    حالا فرمان صریح است (`--exec "node --import ./server/instrument.ts"`).
-  - `npm run db:backup` / `db:restore` وقتی تنظیمات از `.env` می‌آمد خراب می‌شد:
-    dotenv 17 خط «injected env» را روی خروجی چاپ می‌کرد و همان خط جزو آدرس دیتابیس و
-    پوشه‌ی بکاپ خوانده می‌شد.
-  - چتی که در جای «پیام‌های خوانده‌نشده» و نزدیک بالای لیست باز می‌شد پیام‌های قدیمی‌ترش
-    را **هیچ‌وقت** بار نمی‌کرد (لیستی که بالاست رویداد scroll ندارد)؛ همین‌طور اگر کاربر
-    در لحظه‌ی اول باز شدن تا بالا می‌رفت.
-  - تپ روی چت یا پیام تا ۰.۶ ثانیه بعد از یک swipe با انگشت نادیده گرفته می‌شد
-    (جلوگیری از کلیکِ آخر کشیدن با **ماوس** برای انگشت هم فعال بود).
-  - (و در همین کار: صفحه‌ای از پیام‌های قدیمی که بار نشود — بی‌اینترنت — خودبه‌خود
-    پشت سر هم دوباره خواسته نمی‌شود؛ با اسکرول بعدی کاربر دوباره امتحان می‌شود.)
-  - **آپلود عکس پروفایل همیشه رد می‌شد** («Only images are allowed»). سقف `parts: 1`
-    که در سخت‌کردن‌های قبلی به multer اضافه شده بود را busboy همان لحظه‌ی *رسیدن* به سقف
-    اعلام می‌کند، پس تنها بخشِ مجاز (خود عکس) هم رد می‌شد. تست‌های قبلی با یک multer
-    جایگزین اجرا شده بودند و این را نشان ندادند؛ اولین اجرای e2e روی سیستم واقعی پیدایش کرد.
-    حالا: بدون `parts` (`files: 1` و `fields: 0` خودشان کافی‌اند)، عکس **در حافظه**
-    دریافت می‌شود (۵ مگ؛ فایل موقتِ پردازش‌نشده دیگر در پوشه‌ی public نمی‌ماند و روی ویندوز
-    هم قفل نمی‌شود)، JPEG نهایی مستقیم با اسم نهایی نوشته می‌شود (بدون rename)، و هر حالت
-    رد شدن جمله‌ی درست خودش را دارد. یک تست api برای همین مسیر اضافه شد.
-  - **Log Out صفحه را دو بار عوض می‌کرد**: «session:ended» از اتصال زنده معمولاً زودتر از
-    جواب خود درخواست logout می‌رسد و هر دو مسیر جدا جدا به `/auth/` می‌رفتند؛ رفتن اول
-    نیمه‌کاره قطع می‌شد (`ERR_ABORTED`). حذف حساب هم همین‌طور. حالا پایان نشست یک کار
-    است که فقط یک بار انجام می‌شود (`finish()` در `client/chat/services/session.ts`).
-- **تست‌ها**: همه TypeScript و چک‌شده با قرارداد؛ سناریوهای مرورگر از ۱۰ به ۳۷ رسید
-  (بخش ۷)؛ تست ارسال واقعی ایمیل از راه SMTP (برای nodemailer)، هدرهای امنیتی (برای helmet)
-  و آپلود عکس (برای multer و sharp). چند تست مرورگر که فقط روی یک سیستم سریع پاس
-  می‌شدند درست شدند (سرور را قبل از رسیدن جوابش چک می‌کردند، یا یک highlight نیم‌ثانیه‌ای
-  را با فاصله‌ی یک‌ثانیه‌ای می‌پاییدند)، و قطع اتصال در تست حالا راه دوم Socket.IO
-  (long polling روی HTTP) را هم می‌بندد.
+  Prisma 7 was done separately (below).
+- **Bugs found and fixed during this work:**
+  - `npm run dev` ran the server with **ts-node** (nodemon calls ts-node by itself for `.ts` files,
+    and ts-node is not in the project) and did not restart on changes to `shared/` either.
+    Now the command is explicit (`--exec "node --import ./server/instrument.ts"`).
+  - `npm run db:backup` / `db:restore` broke when the settings came from `.env`:
+    dotenv 17 printed an "injected env" line to the output, and that line was read as part of the database URL and
+    the backup folder.
+  - A chat that opened at the "unread messages" position, near the top of the list, **never** loaded
+    its older messages (a list that is already at the top gets no scroll event); the same happened if the user
+    scrolled to the top in the first moment after the chat opened.
+  - A tap on a chat or message was ignored for up to 0.6 seconds after a finger swipe
+    (the guard against the click at the end of a **mouse** drag was also active for fingers).
+  - (Also as part of the same work: a page of older messages that fails to load — no internet — is no longer
+    automatically requested again and again; it is retried on the user's next scroll.)
+  - **Profile picture upload was always rejected** ("Only images are allowed"). The `parts: 1` limit
+    that earlier hardening had added to multer is reported by busboy the moment the limit is *reached*,
+    so the only allowed part (the picture itself) was rejected too. The earlier tests ran with a substitute multer
+    and did not reveal this; the first e2e run on a real system found it.
+    Now: no `parts` (`files: 1` and `fields: 0` are enough on their own), the picture is received **in memory**
+    (5 MB; an unprocessed temporary file no longer stays in the public folder, and it no longer gets locked
+    on Windows), the final JPEG is written directly under its final name (no rename), and every
+    rejection case has its own correct message. An api test was added for this path.
+  - **Log Out changed the page twice**: "session:ended" from the live connection usually arrives before
+    the response to the logout request itself, and both paths navigated to `/auth/` separately; the first navigation
+    was cut off midway (`ERR_ABORTED`). Account deletion had the same problem. Now ending the session is a single
+    action that happens only once (`finish()` in `client/chat/services/session.ts`).
+- **Tests**: all TypeScript and checked against the contract; browser scenarios went from 10 to 37
+  (section 7); a test for actually sending email over SMTP (for nodemailer), security headers (for helmet),
+  and picture upload (for multer and sharp). Several browser tests that only passed on a fast
+  machine were fixed (they checked the server before its response arrived, or watched a half-second highlight
+  at one-second intervals), and dropping the connection in tests now also blocks Socket.IO's second path
+  (long polling over HTTP).
 
 ### Prisma 7
 
-- **چرا:** Prisma 6 فقط تا ۱۹ نوامبر ۲۰۲۶ وصله‌ی امنیتی می‌گیرد. 7 نسخه‌ی پایدار فعلی است و
-  تا ۱۸ ماه بعد از انتشار Prisma 8 پشتیبانی می‌شود.
-- **کلاینت ساخته‌شده** دیگر داخل `node_modules` نیست: generator تازه‌ی `prisma-client`
-  آن را در `server/generated/prisma` می‌سازد، به TypeScript و ES module با importهای
-  `.ts`، که Node مثل بقیه‌ی سرور مستقیم اجرا می‌کند. در git نیست؛ `npm install`
-  (`postinstall`) و `npx prisma generate` آن را می‌سازند.
-- **اتصال از راه driver adapter:** `@prisma/adapter-pg` روی `pg` (node-postgres)، در
-  `server/prisma.ts`. تفاوت‌هایش با Prisma 6:
-  - اندازه‌ی pool با `DATABASE_POOL_MAX` (پیش‌فرض ۱۰). `connection_limit` در آدرس
-    دیگر اثری ندارد.
-  - صبر برای اتصال یا برای یک اتصال آزاد حداکثر ۱۰ ثانیه (pg خودش تا ابد صبر می‌کند؛
-    Prisma 6 برای وصل شدن ۵ و برای اتصال آزاد ۱۰ ثانیه صبر می‌کرد و pg یک حد برای هر دو دارد).
-  - `?schema=` آدرس هنوز رعایت می‌شود: کوئری‌های خود Prisma از adapter می‌گیرندش و SQL
-    دست‌نوشته (`$queryRaw`…) از `search_path` اتصال.
-  - **SSL:** Prisma 6 به‌طور پیش‌فرض TLS را امتحان می‌کرد و گواهی را بررسی نمی‌کرد. pg بدون
-    `sslmode` در آدرس اصلاً TLS نمی‌زند، و با `sslmode=require` گواهی را کامل بررسی می‌کند.
-    پس برای دیتابیسی روی سرور دیگر که TLS می‌خواهد: `?sslmode=require` در `DATABASE_URL`،
-    و اگر گواهی‌اش مال خودش است، CA آن با `NODE_EXTRA_CA_CERTS` (نه خاموش کردن بررسی).
-    دیتابیس روی همان سرور (localhost) TLS لازم ندارد.
-- **تنظیمات دستور `prisma`** در `prisma.config.ts`؛ آدرس دیتابیس دیگر در `schema.prisma`
-  نیست و Prisma خودش `.env` را نمی‌خواند (config می‌خواند؛ `DATABASE_URL` محیط بر `.env`
-  مقدم است، تست‌ها همین‌طور دیتابیس تست را می‌دهند).
-- `prisma migrate dev` دیگر `generate` را اجرا نمی‌کند (بخش ۱ → migrationها).
-- تست‌ها با همان `createPrismaClient` سرور به دیتابیس تست وصل می‌شوند؛ CI قدم جدای
-  `prisma generate` ندارد (`npm ci` انجامش می‌دهد).
-- خطاها همان‌اند: تکراری بودن هنوز `P2002` است (`codeOf(e)`).
+- **Why:** Prisma 6 only gets security patches until November 19, 2026. 7 is the current stable version and
+  is supported until 18 months after Prisma 8 is released.
+- **The generated client** is no longer inside `node_modules`: the new `prisma-client` generator
+  builds it in `server/generated/prisma`, as TypeScript and ES modules with `.ts`
+  imports, which Node runs directly like the rest of the server. It is not in git; `npm install`
+  (`postinstall`) and `npx prisma generate` build it.
+- **Connection through a driver adapter:** `@prisma/adapter-pg` on top of `pg` (node-postgres), in
+  `server/prisma.ts`. Differences from Prisma 6:
+  - Pool size is set with `DATABASE_POOL_MAX` (default 10). `connection_limit` in the URL
+    no longer has any effect.
+  - Waiting to connect, or for a free connection, takes at most 10 seconds (pg on its own waits forever;
+    Prisma 6 waited 5 seconds to connect and 10 seconds for a free connection, and pg has a single limit for both).
+  - The URL's `?schema=` is still respected: Prisma's own queries get it from the adapter, and hand-written
+    SQL (`$queryRaw`…) gets it from the connection's `search_path`.
+  - **SSL:** Prisma 6 tried TLS by default and did not verify the certificate. Without
+    `sslmode` in the URL, pg does not use TLS at all, and with `sslmode=require` it fully verifies the certificate.
+    So for a database on another server that requires TLS: `?sslmode=require` in `DATABASE_URL`,
+    and if its certificate is self-issued, provide its CA with `NODE_EXTRA_CA_CERTS` (do not turn verification off).
+    A database on the same server (localhost) does not need TLS.
+- **Settings for the `prisma` command** are in `prisma.config.ts`; the database URL is no longer in `schema.prisma`,
+  and Prisma no longer reads `.env` itself (the config does; `DATABASE_URL` from the environment takes
+  precedence over `.env`, which is how the tests supply the test database).
+- `prisma migrate dev` no longer runs `generate` (section 1 → Migrations).
+- Tests connect to the test database with the server's own `createPrismaClient`; CI has no separate
+  `prisma generate` step (`npm ci` does it).
+- Errors are the same: a duplicate is still `P2002` (`codeOf(e)`).
 
-### لندینگ بدون Google Fonts
+### Landing without Google Fonts
 
-- فونت Syne (تیترهای لندینگ و privacy) حالا از خود سرور می‌آید:
-  `public/assets/fonts/Syne/Syne-wght-latin.woff2`، یک فایل variable برای همه‌ی وزن‌های
-  ۴۰۰ تا ۸۰۰، فقط حروف لاتینی که صفحه‌ها دارند (۳۹ کیلوبایت؛ مجوز OFL کنارش). قبلاً از
-  Google Fonts می‌آمد: هر بازدید یک درخواست به Google بود، و وقتی Google کند یا در دسترس
-  نبود (از ایران زیاد پیش می‌آید) صفحه منتظرش می‌ماند.
-- Content-Security-Policy دیگر به `fonts.googleapis.com` و `fonts.gstatic.com` اجازه نمی‌دهد.
-- صفحه‌ی privacy حالا می‌گوید نه اپ و نه این صفحه‌ها چیزی از شرکت دیگری بار نمی‌کنند؛ تست
-  مرورگر لندینگ همین را چک می‌کند (هیچ درخواستی به سرور دیگری نمی‌رود و Syne واقعاً بار شده).
-- اگر متن تیترها حرفی بیرون از لاتین بگیرد، فقط همان حرف با فونت جایگزین نشان داده می‌شود؛
-  برای اضافه کردن حروف، فایل از `Syne[wght].ttf` (مخزن google/fonts) با fontTools دوباره
-  subset می‌شود.
+- The Syne font (headings on the landing and privacy pages) now comes from the server itself:
+  `public/assets/fonts/Syne/Syne-wght-latin.woff2`, a single variable file for all weights from
+  400 to 800, with only the Latin characters the pages use (39 KB; the OFL license sits next to it). It used to come from
+  Google Fonts: every visit made a request to Google, and when Google was slow or unreachable
+  (which happens a lot from Iran), the page waited for it.
+- The Content-Security-Policy no longer allows `fonts.googleapis.com` and `fonts.gstatic.com`.
+- The privacy page now says that neither the app nor these pages load anything from another company; the landing
+  browser test checks exactly this (no request goes to another server, and Syne actually loaded).
+- If the heading text gets a character outside Latin, only that character is shown in the fallback font;
+  to add characters, the file is subset again from `Syne[wght].ttf` (the google/fonts repository) with
+  fontTools.
+
+### Dependency audit (npm audit)
+
+- `npm audit fix` (without `--force`) moved the affected packages to fixed versions within the ranges
+  `package.json` allows; only `package-lock.json` changed.
+- What is left was reviewed and accepted. None of it can be reached by anything a user sends:
+
+  | Package | Comes from | Why it is accepted |
+  |---|---|---|
+  | deepmerge-ts | `prisma` (the command) → `@prisma/config` | It only merges Prisma's defaults with our own `prisma.config.ts` when a `prisma` command runs (`migrate`, `generate`). The running server never loads it, and no outside input reaches it |
+  | mysql2 | `prisma` (the command) | Prisma's driver for MySQL databases. Rivo uses PostgreSQL: it is installed but never loaded |
+  | braces (through chokidar) | `nodemon` (development only) | The file watcher of `npm run dev`, matching our own folder names. The server never runs it, and there is no fixed version for nodemon's line yet |
+
+- `npm audit fix --force` is not used: it gets rid of a finding by installing a different major version
+  of a package, which is a breaking change made without anyone choosing it.
+- After every dependency update: `npm audit`. `npm audit --omit=dev` shows only what a production install
+  gets (the first two stay there: production needs the `prisma` command for `migrate deploy`). A new
+  finding gets the same review: can a user's input reach it, and is there a fixed version within range?
+
+### Load test
+
+- `npm run loadtest`: many people chatting at once on a test server, measured (section 7 → Load test).
+- Its only server change: the server answers a `stats` message on the IPC channel of the process that
+  started it (`server/utils/processStats.ts`). Nothing new is exposed on the network.
 
 ---
 
-## ۷. تست‌ها
+## 7. Tests
 
-سه دسته، همه داخل ریپو، همه **TypeScript**، و همه با هر push روی GitHub اجرا می‌شوند (بخش ۸):
+Three suites, all in the repo, all **TypeScript**, and all run on every push to GitHub (section 8):
 
-| دسته | کجا | چه چیزی | نیاز |
+| Suite | Where | What | Requires |
 |---|---|---|---|
-| **unit** | `tests/unit/*.test.ts` | منطق خالص کلاینت: ادغام پیام‌ها، جایگاه و ترتیب چت‌ها، پیش‌نمایش‌ها، لیست مخاطبینی که تغییرات زنده را پاک نکند، outbox چند تب، لینک‌ها (و اینکه `javascript:` هیچ‌وقت لینک نشود)، رنگ accent؛ و schemaهای ورودی (`shared/schemas`: چه چیزی پذیرفته می‌شود، به چه شکلی، و جواب ورودی بد با چه جمله‌ای) — ۳۴ تست | هیچ (چند ثانیه) |
-| **api** | `tests/api/*.test.ts` | سرور واقعی روی یک دیتابیس تست: نشست‌ها، CSRF، دستگاه‌ها، رمز، ثبت‌نام، مخاطب‌ها و حریم خصوصی، ارسال idempotent، seen، sync، حذف/فوروارد، کپسول، یک‌بار مصرف، rate limit، push، health، هدرهای امنیتی، آپلود عکس پروفایل (multer و sharp واقعی: JPEG خود سرور، پاک شدن عکس قبلی، رد شدن هر چیز دیگر با دلیلش)، **ارسال واقعی ایمیل با SMTP** (به یک سرور SMTP کوچک داخل تست)، قید‌های دیتابیس، ورودی‌های بد از هر دو راه (سوکت و REST) که با جمله‌ی schema رد می‌شوند و چیزی را عوض نمی‌کنند؛ و ابزارهای `server/scripts` (چرخش کلید از اول تا آخر با کلیدهای جدای `t1`→`t2` که فقط پیام‌های خود تست را جابه‌جا می‌کند، خواندن همه‌ی پیام‌ها، `test:enc`، `check-kek`) — ۴۲ تست | `TEST_DATABASE_URL` |
-| **e2e** | `tests/e2e/*.spec.ts` | اپ build‌شده در Chromium — ۳۷ تست در شش فایل: `auth` (ثبت‌نام با کد و خطاهای هر فیلد، کد غلط، رمز اشتباه، فراموشی رمز تا ورود با رمز جدید، landing)، `chat` (چت زنده‌ی دو نفره، صفحه‌های قدیمی تا اولین پیام، ری‌اکشن و پین، فوروارد، انتخاب چندتایی، بنر پیام چت دیگر، **قطع و وصل اینترنت**، صف ارسال بعد از رفرش، ارسال سریع‌تر از سقف)، `features` (یک‌بار مصرف، کپسول، لیست پین‌ها، All contacts، Undo حذف مخاطب، بلاک)، `panels` (تنظیمات، دستگاه‌ها، تغییر رمز، افزودن مخاطب، پروفایل مخاطب و آرشیو، جستجو، عکس پروفایل، حذف حساب)، `phone` (صفحه‌ها و Back، نگه داشتن و swipe با انگشت)، `ui` (toast روی دیالوگ، کیبورد) | `TEST_DATABASE_URL` + `npm run build` |
+| **unit** | `tests/unit/*.test.ts` | Pure client logic: merging messages, chat placement and order, previews, a contact list that does not wipe out live changes, multi-tab outbox, links (and that `javascript:` never becomes a link), accent color; and the input schemas (`shared/schemas`: what is accepted, in what form, and with what message a bad input is answered) — 34 tests | Nothing (a few seconds) |
+| **api** | `tests/api/*.test.ts` | The real server on a test database: sessions, CSRF, devices, password, sign-up, contacts and privacy, idempotent sending, seen, sync, delete/forward, capsules, one-time messages, rate limits, push, health, security headers, profile picture upload (real multer and sharp: the server's own JPEG, deletion of the previous picture, rejection of anything else with its reason), **actually sending email over SMTP** (to a small SMTP server inside the test), database constraints, bad inputs through both paths (socket and REST) that are rejected with the schema's message and change nothing; and the `server/scripts` tools (key rotation from start to finish with separate `t1`→`t2` keys that only moves the test's own messages, reading all messages, `test:enc`, `check-kek`) — 42 tests | `TEST_DATABASE_URL` |
+| **e2e** | `tests/e2e/*.spec.ts` | The built app in Chromium — 37 tests in six files: `auth` (sign-up with a code and per-field errors, wrong code, wrong password, forgot password all the way to logging in with the new password, landing), `chat` (live two-person chat, older pages back to the first message, reactions and pins, forwarding, multi-select, the banner for a message in another chat, **internet disconnect and reconnect**, the send queue after a refresh, sending faster than the cap), `features` (one-time messages, capsules, the pinned list, All contacts, Undo of contact deletion, blocking), `panels` (settings, devices, password change, adding a contact, contact profile and archive, search, profile picture, account deletion), `phone` (pages and Back, long-press and swipe with a finger), `ui` (toast over a dialog, keyboard) | `TEST_DATABASE_URL` + `npm run build` |
 
-### اجرای محلی
+### Running locally
 
 ```bash
-# یک‌بار: یک دیتابیس فقط برای تست (اسمش باید «test» داشته باشد؛ تست‌ها در آن می‌نویسند)
+# once: a database just for tests (its name must contain "test"; the tests write to it)
 createdb rivo_test
-# در .env (یا در محیط):
+# in .env (or in the environment):
 TEST_DATABASE_URL="postgresql://USER:PASSWORD@localhost:5432/rivo_test"
 
 npm run test:unit
-npm run test:api                     # migrationهای دیتابیس تست را خودش جلو می‌برد
-npx playwright install chromium      # یک‌بار، و دوباره بعد از npm installی که Playwright را بالا برد (نشد: Chrome/Edge سیستم، پایین‌تر)
+npm run test:api                     # applies the test database's migrations itself
+npx playwright install chromium      # once, and again after an npm install that upgraded Playwright (if it fails: system Chrome/Edge, see below)
 npm run build && npm run test:e2e
-npm run test:e2e -- -g "offline"     # فقط یک تست
+npm run test:e2e -- -g "offline"     # just one test
 ```
 
-- سرورهای تست با تنظیمات خودشان بالا می‌آیند (کلید جدا، hash سریع رمز، rate limitهای باز)
-  و از `.env` تو فقط `TEST_DATABASE_URL` را برمی‌دارند؛ به vault، SMTP یا دیتابیس اصلی دست نمی‌زنند.
-- ایمیل‌ها (کد تأیید، لینک reset) در تست واقعاً فرستاده نمی‌شوند: سرور با
-  `MAIL_CAPTURE_FILE` آن‌ها را در یک فایل می‌نویسد و تست از آنجا می‌خواند. سرور در
-  production با این متغیر **اصلاً بالا نمی‌آید**.
-- اگر دیتابیس اسمش «test» نداشته باشد، تست‌ها اجرا نمی‌شوند (جلوی پاک شدن اشتباهی داده‌ی واقعی).
-- **مرورگر:** هر نسخه‌ی Playwright build مخصوص خودش از Chromium را می‌خواهد (همان که CI
-  استفاده می‌کند). اگر نصب نباشد، مثلاً وقتی دانلودش از cdn.playwright.dev جواب نمی‌دهد،
-  `test:e2e` با Chrome یا Edge نصب‌شده روی سیستم اجرا می‌شود (موتور همان است و Playwright
-  آن را به همان شکل کنترل می‌کند؛ Edge روی ویندوز همیشه هست) و با یک خط اعلام می‌کند از کدام
-  استفاده کرده. اگر هیچ‌کدام نباشد، قبل از شروع می‌گوید و `npx playwright install chromium`
-  را نشان می‌دهد. با `E2E_CHANNEL=msedge` (یا `chrome`) می‌شود یکی را خودت انتخاب کنی.
-  - دانلود پشت فیلتر یا پروکسی: `set HTTPS_PROXY=http://127.0.0.1:PORT` (پورت HTTP پروکسی‌ات)
-    و برای اینترنت کند `set PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000`، و بعد
+- Test servers start with their own settings (a separate key, fast password hashing, relaxed rate limits)
+  and take only `TEST_DATABASE_URL` from your `.env`; they do not touch Vault, SMTP or the main database.
+- Emails (verification code, reset link) are not actually sent in tests: with
+  `MAIL_CAPTURE_FILE`, the server writes them to a file and the test reads them from there. In
+  production, the server **does not start at all** with this variable set.
+- If the database name does not contain "test", the tests do not run (this prevents real data from being deleted by mistake).
+- **Browser:** each Playwright version needs its own Chromium build (the same one CI
+  uses). If it is not installed, for example when downloading it from cdn.playwright.dev does not respond,
+  `test:e2e` runs with the Chrome or Edge installed on the system (the engine is the same, and Playwright
+  controls it the same way; Edge is always present on Windows) and prints one line saying which one
+  it used. If neither is present, it says so before starting and shows `npx playwright install chromium`.
+  With `E2E_CHANNEL=msedge` (or `chrome`) you can pick one yourself.
+  - Downloading behind a filter or proxy: `set HTTPS_PROXY=http://127.0.0.1:PORT` (your proxy's HTTP port)
+    and, for slow internet, `set PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000`, then
     `npx playwright install chromium`.
-- قطع اینترنت در e2e واقعی است: اتصال زنده (WebSocket) از Playwright رد می‌شود و تست
-  آن را می‌بندد و تا وقت وصل شدن رد می‌کند (حالت آفلاین مرورگر به‌تنهایی WebSocket باز را نمی‌بندد).
-  راه دوم Socket.IO هم بسته می‌شود: اتصال با درخواست‌های HTTP معمولی (long polling،
-  `/socket.io/?transport=polling`) شروع می‌شود و بعد به WebSocket می‌رود؛ بدون بستن آن،
-  صفحه‌ای که HTTP دارد از همین راه دوباره وصل می‌شد.
-- **سرور کند:** `E2E_API_DELAY=300 npm run test:e2e` (در cmd ویندوز: `set E2E_API_DELAY=300` و بعد
-  `npm run test:e2e`) جواب هر درخواست API را ۳۰۰ میلی‌ثانیه
-  دیرتر می‌رساند (برای صفحه‌هایی که با کمک‌های `support/app.ts` باز می‌شوند)، مثل یک سیستم
-  کندتر یا دیتابیس واقعی زیر بار. تستی که فقط روی سیستم سریع پاس می‌شود اینجا رد می‌شود؛
-  قانون: وضعیت سرور را با `expect.poll` بپا، نه با یک بار خواندن درست بعد از کلیک.
-- انگشت روی گوشی هم واقعی است: `finger()` در `tests/e2e/support/app.ts` رویدادهای لمسی را
-  از خود مرورگر می‌فرستد (نگه داشتن، کشیدن، تپ)، همان‌طور که صفحه‌ی لمسی می‌فرستد (فقط Chromium).
-- **مرورگرهای دیگر:** با `E2E_ALL_BROWSERS=1` تست‌ها در Firefox و WebKit هم اجرا می‌شوند
-  (`npm run test:e2e -- --project=firefox --project=webkit`). CI این کار را می‌کند (بخش ۸)؛ روی
-  سیستم خودت لازم نیست (مرورگرهایشان جدا دانلود می‌شوند).
-- **تایپ‌ها:** تست‌ها با `tests/tsconfig.json` (و تست‌های unit با `tests/unit/tsconfig.json`)
-  در `npm run typecheck` چک می‌شوند. Node آن‌ها را همان‌طور اجرا می‌کند (تایپ‌ها را حذف
-  می‌کند) و Playwright خودش compile می‌کند؛ build جدایی ندارند. endpoint را در تست
-  نام ببر تا جوابش تایپ بگیرد؛ درخواستی که عمداً غلط است (`requestRaw`، `req`) بی‌تایپ می‌ماند.
-- هر تست مرورگر contextهایی را که باز کرده آخرش می‌بندد (`test` از `support/app.ts`)؛
-  اسکرین‌شات خطا فقط صفحه‌های همان تست است.
+- Internet disconnects in e2e are real: the live connection (WebSocket) goes through Playwright, and the test
+  closes it and keeps rejecting it until it is time to reconnect (the browser's offline mode alone does not close an open WebSocket).
+  Socket.IO's second path is blocked too: the connection starts with ordinary HTTP requests (long polling,
+  `/socket.io/?transport=polling`) and then moves to WebSocket; without blocking that path,
+  a page that still has HTTP would reconnect through it.
+- **Slow server:** `E2E_API_DELAY=300 npm run test:e2e` (in Windows cmd: `set E2E_API_DELAY=300`, then
+  `npm run test:e2e`) delivers every API response 300 milliseconds
+  later (for pages opened with the `support/app.ts` helpers), like a slower
+  machine or a real database under load. A test that only passes on a fast machine fails here;
+  rule: watch server state with `expect.poll`, not with a single read right after a click.
+- The finger on the phone is real too: `finger()` in `tests/e2e/support/app.ts` sends touch events
+  from the browser itself (long press, drag, tap), the same way a touchscreen does (Chromium only).
+- **Other browsers:** with `E2E_ALL_BROWSERS=1`, the tests also run in Firefox and WebKit
+  (`npm run test:e2e -- --project=firefox --project=webkit`). CI does this (section 8); you do not need to on
+  your own machine (their browsers are downloaded separately).
+- **Types:** the tests are checked in `npm run typecheck` with `tests/tsconfig.json` (and the unit tests with `tests/unit/tsconfig.json`).
+  Node runs them as they are (it strips the types),
+  and Playwright compiles them itself; they have no separate build. Name the endpoint in a test
+  so its response gets a type; a deliberately wrong request (`requestRaw`, `req`) stays untyped.
+- Each browser test closes the contexts it opened when it finishes (`test` from `support/app.ts`);
+  a failure screenshot shows only that test's pages.
 
-### تست دستی روی سرور در حال اجرا
+### Manual test against a running server
 
-`tests/integration/socket-flow.ts` روی یک سرور واقعیِ در حال اجرا و دو حساب موجود
-۱۵ چیز را چک می‌کند (ورود، CSRF، ارسال، ویرایش، نقل‌قول، پین، seen، `/changes`، حذف، خروج).
-همان کلاینت تایپ‌دار تست‌های api را به کار می‌برد:
+`tests/integration/socket-flow.ts` checks 15 things against a real running server and two existing accounts
+(login, CSRF, send, edit, quote, pin, seen, `/changes`, delete, logout).
+It uses the same typed client as the api tests:
 
 ```bash
 TEST_SERVER_URL=http://localhost:3000 \
@@ -724,142 +752,212 @@ TEST_USER_A=alice TEST_PASS_A=... TEST_USER_B=bob TEST_PASS_B=... \
 npm run test:integration
 ```
 
-> با دو حساب تستی اجرا کن، نه حساب‌های واقعی: داخل گفتگویشان دو پیام می‌فرستد (و
-> بعد پاکشان می‌کند).
+> Run it with two test accounts, not real accounts: it sends two messages in their conversation (and
+> then deletes them).
 
----
+### Load test
 
-## ۸. CI (GitHub Actions)
+`npm run loadtest` measures how Rivo holds up with many people chatting at once: how long a message
+takes to reach the other person, what fails, and what it costs the server. It is not a pass/fail suite
+(it is not part of `npm test` or CI): it measures, and you compare runs.
 
-`.github/workflows/ci.yml` با هر push و هر Pull Request چهار کار را موازی اجرا می‌کند:
+```bash
+npm run loadtest                                     # 50, 100, 200, 400 people; 30 s each (a few minutes)
+npm run loadtest -- --stages 20,40 --seconds 15      # a quick one
+npm run loadtest -- --interval 5                     # busier people: a message every 5 s each
+npm run loadtest -- --compare load-reports/load-2026-10-07-09-30-00.json
+npm run loadtest -- --help
+```
 
-| کار | چه می‌کند |
+**What it does**
+
+- It starts its own server on the test database, as the api tests do (`TEST_DATABASE_URL`, migrations
+  brought up to date first), with production's per-person limit (`SOCKET_RATE_MAX`: 20 actions per
+  10 seconds) and only warnings and errors in the log.
+- It creates the accounts the real way (code by email, sign-up, login) and pairs them: each pair is a
+  one-to-one chat.
+- Stages: each one brings more people online (each on their own WebSocket, with the chat open), waits two
+  seconds, then measures for `--seconds`. Each person, every `--interval` seconds on average (10 by
+  default; the gaps are random, people do not take turns): `typing:start`, one to two seconds of typing,
+  `typing:stop`, `message:send`. A received message is read 0.3 to 1.5 seconds later (`message:seen`), as
+  the app does with the chat on screen.
+- After each stage, sending stops and messages still on their way get up to 5 seconds to arrive.
+- The load is roughly people ÷ interval messages per second: 400 people at 10 s ≈ 40 messages per second,
+  plus as many typing events and reads.
+
+**Reading the table** (one column per stage)
+
+| Row | Meaning |
 |---|---|
-| **checks** | `npm ci` → typecheck (اپ، سرور، تست‌ها) → lint → unit → build |
-| **api** | یک PostgreSQL 16 تازه کنار کار بالا می‌آید → migrationها → تست‌های api |
-| **e2e** | همان دیتابیس + Chromium → build → تست‌های مرورگر؛ اگر چیزی رد شد، اسکرین‌شات و trace به‌عنوان artifact ذخیره می‌شود |
-| **e2e-more** | همان تست‌های مرورگر در **Firefox** و **WebKit** (موتور Safari). تازه است: تا اولین بار سبز شدنش، قرمز شدنش گزارش است و جلوی merge را نمی‌گیرد (`continue-on-error`). بعد از اولین سبز، آن خط را بردار و این کار را هم در قفل main اضافه کن. دو تست حرکت انگشت (`finger()`) فقط در Chromium اجرا می‌شوند: انگشت از راه DevTools خود Chromium حرکت داده می‌شود |
+| messages / s | Messages the server stored per second |
+| send → answer | From sending to the server's answer (the message is stored) |
+| send → delivered p50 / p95 / p99 / max | From sending to arriving on the other person's connection: **what people feel**. p95 = 95% of the messages arrived faster than this |
+| seen → answer | Marking as read |
+| coming online p95 | The WebSocket handshake, with its session check |
+| failed / lost / dropped | Sends the server refused or did not answer within 10 seconds (the reasons are listed under the table); messages stored but never delivered; connections that broke or could not be made. All three should be 0 |
+| server CPU | The server process, one core = 100% |
+| server event loop busy | How much of the time the server's one JavaScript thread was working. Close to 100%, every event waits for the ones before it and delivery times climb steeply: that is the ceiling of a single process |
+| server event loop delay p99 | How late the event loop got to a timer: what each event waits on top of its own work. Windows' timers fire only every ~15.6 ms, so there it is only that exact (the table says so under it); "event loop busy" is exact everywhere |
+| server memory (RSS) | At the end of the stage |
+| load generator CPU | The test's own process (the people) |
+| verdict | `smooth` (95% delivered within 200 ms), `at the limit` (still that fast, but the event loop is busy 90% of the time or more), `noticeable` (within 1 second), `too slow`, or `errors` |
 
-- `npm ci` کلاینت دیتابیس را هم می‌سازد (`postinstall` → `prisma generate`).
-- `npm ci` دقیقاً نسخه‌های `package-lock.json` را نصب می‌کند، پس **lock باید با
-  `package.json` هماهنگ و commit شده باشد** (بعد از هر تغییر وابستگی: `npm install` و commit lock).
-- **قفل کردن main** (یک‌بار، روی GitHub، بعد از اولین اجرای CI): Settings → Branches →
-  Add branch protection rule (یا Settings → Rules → Rulesets) برای `main` → «Require status
-  checks to pass before merging» و سه کار `Types, lint, unit tests, build`،
-  `API tests (PostgreSQL)` و `Browser tests (Chromium)` را انتخاب کن. از آن به بعد چیزی که
-  تست‌هایش قرمز است وارد main نمی‌شود (تغییرها با branch و Pull Request).
-- نتیجه‌ی هر اجرا: تب **Actions** ریپو. روی یک کار قرمز بزن تا قدم شکست‌خورده و لاگش را ببینی.
+**Reports:** each run writes the same figures as JSON to `load-reports/load-<date>.json` (not in git),
+with the computer, the commit and the settings. `--compare <an earlier report>` puts its figures next to
+these (old → new and the change in %, lower is better), for the stages with the same number of people:
+for example before and after a change to the server, or with `DATABASE_POOL_MAX=20` against the default 10
+(the load test's server takes it from the command's environment, not from `.env`: in Windows cmd,
+`set DATABASE_POOL_MAX=20`, then `npm run loadtest`; the report records it).
+
+**Things to keep in mind**
+
+- **One computer:** run locally, the people (the test's process), the server and PostgreSQL share the CPU
+  and take it from each other. If "load generator CPU" is high, the test itself is part of the load. The
+  figures are that computer's: compare runs on the same computer, and for the real ceiling, run it on a
+  machine like the production server.
+- The server's own figures (CPU, memory, event loop) come from the server process itself, asked over the
+  IPC channel that the test's process opened when it started it (`server/utils/processStats.ts`, the
+  `stats` message in `server/index.ts`). Only the process that started the server can ask; nothing is
+  exposed on the network.
+- Every run leaves its accounts in the test database (400 by default), like the api tests do. To start
+  it empty: `dropdb rivo_test` and `createdb rivo_test`; the next test run applies the migrations.
+- Ctrl+C stops it: it reports the stages it finished and stops its server.
+- If the server logged warnings or errors during the run, the first ten lines are printed at the end.
 
 ---
 
-## ۹. عملیات (سرور در حال کار)
+## 8. CI (GitHub Actions)
+
+`.github/workflows/ci.yml` runs four jobs in parallel on every push and every Pull Request:
+
+| Job | What it does |
+|---|---|
+| **checks** | `npm ci` → typecheck (app, server, tests) → lint → unit → build |
+| **api** | A fresh PostgreSQL 16 starts alongside the job → migrations → api tests |
+| **e2e** | The same database + Chromium → build → browser tests; if something fails, screenshots and traces are saved as artifacts |
+| **e2e-more** | The same browser tests in **Firefox** and **WebKit** (Safari's engine). The two finger-gesture tests (`finger()`) run only in Chromium: the finger is moved through Chromium's own DevTools, which the other two do not have |
+
+- `npm ci` also builds the database client (`postinstall` → `prisma generate`).
+- `npm ci` installs exactly the versions in `package-lock.json`, so **the lock file must be in sync with
+  `package.json` and committed** (after every dependency change: `npm install` and commit the lock file).
+- **Protecting main** (once, on GitHub, after the first CI run): Settings → Branches →
+  Add branch protection rule (or Settings → Rules → Rulesets) for `main` → "Require status
+  checks to pass before merging", and select the four jobs `Types, lint, unit tests, build`,
+  `API tests (PostgreSQL)`, `Browser tests (Chromium)` and `Browser tests (Firefox, WebKit)`. From then on, nothing whose
+  tests are red gets into main (changes go through branches and Pull Requests).
+- The result of each run: the repo's **Actions** tab. Click a red job to see the failed step and its log.
+
+---
+
+## 9. Operations (running server)
 
 ### Health check
 
 `GET /api/health` → `200 {"status":"ok","db":"ok","dbMs":…,"uptime":…,"version":…}`
-وقتی سرور و دیتابیس جواب می‌دهند؛ `503` وقتی دیتابیس جواب نمی‌دهد (حداکثر ۲ ثانیه
-صبر) یا سرور در حال خاموش شدن است. جواب یک ثانیه کش می‌شود، پس سیل درخواست health
-سیل query نمی‌شود. برای پایش: یک سرویس uptime (مثل UptimeRobot، رایگان) هر یک دقیقه
-`https://<دامنه>/api/health` را صدا بزند و اگر ۲۰۰ نبود ایمیل/پیام بدهد.
+when the server and the database respond; `503` when the database does not respond (it waits at most 2
+seconds) or the server is shutting down. The response is cached for one second, so a flood of health requests
+does not turn into a flood of queries. For monitoring: have an uptime service (such as UptimeRobot, which is free) call
+`https://<domain>/api/health` every minute and send an email/message if the response is not 200.
 
-### لاگ‌ها
+### Logs
 
-`server/utils/logger.ts`. در production هر خط یک JSON است:
+`server/utils/logger.ts`. In production, each line is a JSON object:
 
 ```json
 {"time":"2026-10-07T09:01:22.545Z","level":"info","msg":"http","reqId":"9fa4bb92-7ab5","userId":12,"details":{"method":"POST","path":"/api/messages","status":201,"ms":14.2}}
 ```
 
-- هر درخواست یک `reqId` دارد که در هدر جواب (`X-Request-Id`) هم برمی‌گردد. اگر proxy
-  (مثل nginx) خودش id بفرستد همان نگه داشته می‌شود؛ پس لاگ nginx و ریوو به هم وصل می‌شوند.
-- هر خطی که هنگام رسیدگی به یک درخواست یا رویداد سوکت نوشته شود، خودش `reqId`/`userId`
-  را دارد (بدون پاس دادن دستی، با AsyncLocalStorage).
-- query string در لاگ نمی‌آید (ممکن است توکن داشته باشد)؛ بدنه‌ی درخواست‌ها هم هیچ‌وقت.
-- `LOG_LEVEL` (debug/info/warn/error) و `LOG_FORMAT` (json/pretty). در development خوانا.
-- جستجو: `journalctl -u rivo -o cat | jq 'select(.level=="error")'` یا
+- Every request has a `reqId`, which is also returned in the response header (`X-Request-Id`). If a proxy
+  (such as nginx) sends its own id, that id is kept; so nginx's logs and Rivo's logs can be linked to each other.
+- Every line written while handling a request or socket event carries its `reqId`/`userId`
+  automatically (no manual passing, via AsyncLocalStorage).
+- The query string is not logged (it may contain a token); request bodies are never logged either.
+- `LOG_LEVEL` (debug/info/warn/error) and `LOG_FORMAT` (json/pretty). Human-readable in development.
+- Searching: `journalctl -u rivo -o cat | jq 'select(.level=="error")'` or
   `… | jq 'select(.reqId=="9fa4bb92-7ab5")'`.
 
-### گزارش خطا (Sentry)
+### Error reporting (Sentry)
 
-با `SENTRY_DSN` در `.env`، خطاهای سرور به Sentry می‌روند؛ بدون آن Sentry اصلاً بارگذاری نمی‌شود.
+With `SENTRY_DSN` in `.env`, server errors go to Sentry; without it, Sentry is not loaded at all.
 
-- Sentry باید **قبل از Express** شروع شود تا خطاهایی را که به Express می‌رسند ببیند؛ برای همین
-  در `server/instrument.ts` است و با `node --import ./server/instrument.ts server/index.ts`
-  اجرا می‌شود (`npm start` و `npm run dev` همین کار را می‌کنند). اگر سرور را بدون آن اجرا کنی
-  و `SENTRY_DSN` باشد، لاگ شروع یک هشدار می‌دهد.
-- systemd / pm2: همان فرمان `npm start` (یا `node --import ./server/instrument.ts server/index.ts`).
-- چه چیزی همراه خطا می‌رود: پیام و stack، مسیر درخواست، چند هدر بی‌خطر (`user-agent`،
-  `content-type`، …). **نمی‌رود:** کوکی‌ها (نشست)، بدنه‌ی درخواست و جواب (رمزها، متن پیام‌ها)،
-  query string (جستجوها)، مقدار متغیرها، IP و هویت کاربر، داده‌ی queryهای دیتابیس.
-  (Sentry 11 بدون تنظیم همه‌ی این‌ها را می‌فرستد؛ `dataCollection` در instrument.ts جلویش را می‌گیرد.)
-- خاموش شدن (`SIGTERM`، یا خطایی که سرور را می‌بندد) اول چیزهای در صف Sentry را می‌فرستد (تا ۲ ثانیه).
+- Sentry must start **before Express** to see the errors that reach Express; that is why it
+  lives in `server/instrument.ts` and is run with `node --import ./server/instrument.ts server/index.ts`
+  (`npm start` and `npm run dev` do this). If you run the server without it
+  while `SENTRY_DSN` is set, the startup log shows a warning.
+- systemd / pm2: the same `npm start` command (or `node --import ./server/instrument.ts server/index.ts`).
+- What is sent with an error: the message and stack, the request path, a few harmless headers (`user-agent`,
+  `content-type`, …). **Not sent:** cookies (the session), request and response bodies (passwords, message text),
+  the query string (searches), variable values, IP address and user identity, database query data.
+  (Sentry 11 sends all of these by default; `dataCollection` in instrument.ts prevents that.)
+- Shutting down (`SIGTERM`, or an error that brings the server down) first sends whatever is queued for Sentry (up to 2 seconds).
 
-### خاموش شدن تمیز
+### Graceful shutdown
 
-با `SIGTERM` (restart، deploy): health فوراً 503 می‌شود، اتصال تازه پذیرفته نمی‌شود،
-درخواست‌های در حال انجام تمام می‌شوند، سوکت‌ها قطع می‌شوند (کلاینت‌ها خودشان به پروسه‌ی
-جدید وصل می‌شوند)، اتصال دیتابیس بسته می‌شود؛ حداکثر ۱۰ ثانیه. خطایی که هیچ‌جا گرفته
-نشده با stack کامل لاگ می‌شود؛ exception بیرون از promise سرور را (تمیز) می‌بندد تا
-process manager (systemd/pm2) دوباره بالایش بیاورد.
+On `SIGTERM` (restart, deploy): health immediately becomes 503, new connections are not accepted,
+in-flight requests finish, sockets are disconnected (clients reconnect to the new process
+on their own), and the database connection is closed; at most 10 seconds. An error that was not caught
+anywhere is logged with its full stack; an exception outside a promise shuts the server down (cleanly) so that
+the process manager (systemd/pm2) brings it back up.
 
-ویندوز سیگنال `SIGTERM` ندارد (آنجا بستن یک پروسه یعنی تمام شدن فوری‌اش). پس سرور همین
-خاموش شدن تمیز را با پیام `"shutdown"` از کانال IPC هم انجام می‌دهد: pm2 با
-`shutdown_with_message: true`، و سرورهای تست (که برای همین روی ویندوز هم تمیز بسته می‌شوند).
+Windows has no `SIGTERM` signal (there, closing a process means it ends immediately). So the server also
+performs the same graceful shutdown when it gets a `"shutdown"` message over the IPC channel: pm2 with
+`shutdown_with_message: true`, and the test servers (which is why they also shut down cleanly on Windows).
 
-### بکاپ
+### Backup
 
 ```bash
 npm run db:backup     # = scripts/backup-db.sh
 ```
 
-- `pg_dump` فشرده در `backups/rivo-<تاریخ>.dump` + عکس‌های پروفایل در `…-avatars.tar.gz`.
-- هر بکاپ بلافاصله یک بار خوانده می‌شود (`pg_restore --list`) تا فایل خراب همان موقع
-  معلوم شود، نه روز مصیبت. فقط برای همان کاربر سیستم خواندنی است. بیش از ۱۴ روز
-  (`BACKUP_KEEP_DAYS`) پاک می‌شود. پوشه: `BACKUP_DIR`.
-- هر شب ساعت ۳:۳۰ (`crontab -e`):
+- A compressed `pg_dump` in `backups/rivo-<date>.dump` + profile pictures in `…-avatars.tar.gz`.
+- Each backup is read once right away (`pg_restore --list`) so that a corrupt file is caught
+  then, not on the day of disaster. It is readable only by the same system user. Backups older than 14 days
+  (`BACKUP_KEEP_DAYS`) are deleted. Folder: `BACKUP_DIR`.
+- Every night at 3:30 (`crontab -e`):
   `30 3 * * * cd /path/to/Rivo && bash scripts/backup-db.sh >> backups/backup.log 2>&1`
-- نیاز: `pg_dump`/`pg_restore` هم‌نسخه‌ی سرور Postgres (`apt install postgresql-client-16`).
-- ⚠️ پیام‌ها در دیتابیس با کلیدهای `.env` (`KEK_V1` …) رمز شده‌اند: **بکاپ بدون آن
-  کلیدها خواندنی نیست.** یک نسخه از `.env` را جای امن و جدا از بکاپ‌ها نگه دار.
-- یک نسخه از بکاپ‌ها باید خارج از همان سرور هم باشد (دیسک دیگر، فضای ابری)؛ بکاپی که
-  با خود سرور از بین برود فایده ندارد.
+- Requires: `pg_dump`/`pg_restore` of the same version as the Postgres server (`apt install postgresql-client-16`).
+- ⚠️ Messages in the database are encrypted with the keys in `.env` (`KEK_V1` …): **a backup cannot be read without those
+  keys.** Keep a copy of `.env` somewhere safe and separate from the backups.
+- A copy of the backups must also be kept outside that server (another disk, cloud storage); a backup that
+  is lost along with the server is useless.
 
-### تمرین بازگردانی (ماهی یک بار)
+### Restore drill (once a month)
 
-بکاپی که هیچ‌وقت restore نشده، بکاپ حساب نمی‌شود:
+A backup that has never been restored does not count as a backup:
 
 ```bash
-createdb rivo_restore_test          # یک‌بار
+createdb rivo_restore_test          # once
 RESTORE_DATABASE_URL="postgresql://USER:PASS@localhost:5432/rivo_restore_test" \
   npm run db:restore -- backups/rivo-20261007-033000.dump
 # → restored … / 1234 users, 56789 messages, last migration: …
 ```
 
-بازگردانی واقعی روی دیتابیس اصلی (سرور را اول خاموش کن؛ اسم دیتابیس را باید تایپ کنی):
+A real restore onto the main database (shut the server down first; you have to type the database name):
 `npm run db:restore -- backups/rivo-….dump --into-live`
 
-### قیدهای دیتابیس (migration سوم)
+### Database constraints (third migration)
 
-| قید | قبلاً | حالا |
+| Constraint | Before | Now |
 |---|---|---|
-| هر نفر یک بار در لیست هر کس | قفل داخل حافظه (فقط یک پروسه) | unique index؛ درخواست هم‌زمان دوم → 409 |
-| یک Saved Messages برای هر کاربر | چک کد | unique index |
-| هر عضو یک بار در هر چت | کد تکراری‌ها را نادیده می‌گرفت | unique index |
+| Each person once in anyone's list | In-memory lock (single process only) | unique index; a concurrent second request → 409 |
+| One Saved Messages per user | Check in code | unique index |
+| Each member once per chat | Code ignored duplicates | unique index |
 
-ردیف‌های تکراری موجود قبل از ساخت قید مرتب می‌شوند (**هیچ پیامی پاک نمی‌شود**):
-عضو تکراری حذف؛ Saved Messages اضافه با پیام‌هایش در قدیمی‌ترین ادغام؛ از دو ردیف یک
-نفر، آنکه چتش اخیراً استفاده شده می‌ماند (پیام‌های چت دیگر روی سرور می‌مانند).
-`npm run db:check` قبل از migrate دقیقاً نشان می‌دهد چه چیزی (اگر چیزی) مرتب می‌شود.
+Existing duplicate rows are cleaned up before the constraint is created (**no message is deleted**):
+a duplicate member is removed; an extra Saved Messages is merged, along with its messages, into the oldest one; of two rows for the same
+person, the one whose chat was used most recently is kept (the other chat's messages stay on the server).
+`npm run db:check` before migrating shows exactly what (if anything) will be cleaned up.
 
 ---
 
-## ۱۰. پیشنهاد برای قدم‌های بعدی
+## 10. Suggestions for next steps
 
-- رمزنگاری end-to-end (فعلاً رمزنگاری در سمت سرور و در حالت ذخیره است).
-- ارسال عکس/فایل در چت.
-- اعلان push برای ری‌اکشن روی پیام‌های گروهی (وقتی گروه اضافه شد).
-- سرور برای **یک پروسه‌ی Node** طراحی شده: لیست سوکت‌های وصل، کش اعضای گفتگو و
-  شمارنده‌های rate limit در حافظه‌اند (یکتایی مخاطب‌ها را حالا خود دیتابیس تضمین می‌کند).
-  برای اجرای چند نسخه پشت load balancer اول باید این‌ها به یک store مشترک (مثلاً Redis +
-  Socket.IO Redis adapter) بروند.
-- load test (مثلاً با k6) تا سقف فعلی معلوم شود.
+- End-to-end encryption (for now, encryption is server-side and at rest).
+- Sending pictures/files in chat.
+- Push notifications for reactions on group messages (once groups are added).
+- The server is designed for **a single Node process**: the list of connected sockets, the conversation member cache and
+  the rate-limit counters are in memory (contact uniqueness is now guaranteed by the database itself).
+  To run several instances behind a load balancer, these must first move to a shared store (e.g. Redis +
+  the Socket.IO Redis adapter).
+- The load test on a machine like the production server (section 7 → Load test), to find the real
+  ceiling of a single process before it is reached.

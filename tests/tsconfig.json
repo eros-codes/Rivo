@@ -1,4 +1,4 @@
-// The tests' TypeScript (API, browser and integration tests and their
+// The tests' TypeScript (API, browser, integration and load tests and their
 // helpers), checked against shared/ like the server and the app: a field
 // renamed in the contract is an error in the tests at `npm run typecheck`, not
 // a failure when they run. Node runs them as they are (it strips the types);
@@ -30,5 +30,5 @@
 		"forceConsistentCasingInFileNames": true,
 		"skipLibCheck": true
 	},
-	"include": ["support/**/*.ts", "api/**/*.ts", "e2e/**/*.ts", "integration/**/*.ts"]
+	"include": ["support/**/*.ts", "api/**/*.ts", "e2e/**/*.ts", "integration/**/*.ts", "load/**/*.ts"]
 }

@@ -1,44 +1,45 @@
 # Rivo
 
-پیام‌رسان بلادرنگ: Express 5 + Socket.IO + Prisma (Postgres) در سرور، React 19 +
-TypeScript در مرورگر. هر دو TypeScript‌اند و از یک قرارداد مشترک (`shared/`: شکل
-داده‌ها، رویدادها، و schemaهای zod که سرور هر ورودی را با آن‌ها چک می‌کند) می‌خوانند.
+A real-time messenger: Express 5 + Socket.IO + Prisma (PostgreSQL) on the server, React 19 +
+TypeScript in the browser. Both sides are TypeScript and read from one shared contract (`shared/`:
+the shape of the data, the live events, and the zod schemas the server checks every input against).
 
-## راه‌اندازی
+## Getting started
 
 ```bash
-cp .env.example .env          # (یا .env قبلی‌ات را کپی کن) و مقدارها را پر کن
+cp .env.example .env          # (or copy your previous .env) and fill in the values
 npm install
 npx prisma migrate deploy
 npm run build
 npm start                      # http://localhost:3000
 ```
 
-برای توسعه: `npm run dev` (ساخت پیوسته‌ی کلاینت + ری‌استارت سرور). داده‌ی تست:
-`npm run db:seed` (۱۶ نفر با چت‌هایشان؛ `-- --wipe` اول همه‌چیز را پاک می‌کند).
+For development: `npm run dev` (continuous client build + server restarts). Test data:
+`npm run db:seed` (16 people with their chats; `-- --wipe` deletes everything first).
 
-## تست و کیفیت
+## Tests and checks
 
 ```bash
-npm run check                      # همه‌ی زیر، پشت سر هم (قبل از commit)
+npm run check                      # everything below, one after another (before a commit)
 npm run typecheck && npm run lint
-npm run test:unit                  # بدون دیتابیس
-npm run test:api                   # نیاز: TEST_DATABASE_URL (دیتابیسی فقط برای تست)
-npm run build && npm run test:e2e  # مرورگر (یک‌بار: npx playwright install chromium)
+npm run test:unit                  # no database needed
+npm run test:api                   # needs TEST_DATABASE_URL (a database used only for tests)
+npm run build && npm run test:e2e  # in a browser (once: npx playwright install chromium)
+npm run loadtest                   # many people chatting at once, measured (not part of check)
 ```
 
-تست‌ها هم TypeScript‌اند و با همان قرارداد `shared/` چک می‌شوند (unit ۳۴، api ۴۲،
-مرورگر ۳۷). همین‌ها با هر push روی GitHub Actions هم اجرا می‌شوند (`.github/workflows/ci.yml`)،
-تست‌های مرورگر آن‌جا در Firefox و WebKit (Safari) هم.
+The tests are TypeScript too and are checked against the same `shared/` contract (unit 34,
+api 42, browser 37). They also run on every push to GitHub, in GitHub Actions
+(`.github/workflows/ci.yml`), where the browser tests run in Firefox and WebKit (Safari) as well.
 
-## عملیات
+## Operations
 
-`GET /api/health` برای پایش، `npm run db:backup` / `db:restore` برای بکاپ، و
-`npm run db:check` قبل از migrationها. جزئیات: بخش‌های ۷ تا ۹ مستندات. کلیدهای
-رمزنگاری، چرخش کلید و Vault: [`server/ENCRYPTION.md`](server/ENCRYPTION.md).
+`GET /api/health` for monitoring, `npm run db:backup` / `db:restore` for backups, and
+`npm run db:check` before migrations. Details: sections 7 to 9 of the docs. Encryption keys,
+key rotation and Vault: [`server/ENCRYPTION.md`](server/ENCRYPTION.md).
 
-## مستندات
+## Documentation
 
-همه‌چیز — ساختار پوشه‌ها، پروتکل همگام‌سازی، نشست‌ها و CSRF، rate limitها، حریم
-خصوصی، outbox و undo، نکات به‌روزرسانی از نسخه‌ی قبلی و تست‌ها — در
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) است.
+Everything else (the folder map, the sync protocol, sessions and CSRF, rate limits, privacy,
+the outbox and undo, upgrade notes from the previous version, and the tests) is in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).

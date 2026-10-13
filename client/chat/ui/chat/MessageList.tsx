@@ -207,16 +207,29 @@ export function MessageList({ convId, row, composer, onPinnedInView, pinnedIds, 
 		if (!box || !el) return undefined;
 		const apply = () => {
 			const atBottom = snap.current.atBottom;
-			// the box sits 0.5rem above the edge, with as much again above it
-			const gap = parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.5;
-			el.style.paddingBottom = `${box.offsetHeight + gap * 2}px`;
+			const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+			// the bar sits above the screen's edge (its CSS bottom: more on a
+			// phone with a home indicator), with 0.5rem above it
+			const lift = parseFloat(getComputedStyle(box).bottom) || rem * 0.5;
+			const bar = box.offsetHeight + lift;
+			el.style.paddingBottom = `${bar + rem * 0.5}px`;
+			// (the scroll-down button stays above it: chat.css)
+			el.closest<HTMLElement>(".chat-section")?.style.setProperty("--bottom-bar", `${bar}px`);
 			if (atBottom) el.scrollTop = el.scrollHeight;
 			measureLatest();
 		};
 		apply();
 		const ro = new ResizeObserver(apply);
 		ro.observe(box);
-		return () => ro.disconnect();
+		// the keyboard moves the bar (main.tsx sets keyboard-open on the same
+		// resize, in a frame of its own: this one comes after it)
+		const vv = window.visualViewport;
+		const later = () => requestAnimationFrame(apply);
+		vv?.addEventListener("resize", later);
+		return () => {
+			ro.disconnect();
+			vv?.removeEventListener("resize", later);
+		};
 	}, [composer, ready, measureLatest]);
 
 	const sayHello = () => {

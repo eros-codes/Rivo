@@ -84,6 +84,8 @@ function trackViewport(): void {
 		if (Math.abs(vv.scale - 1) > 0.01) return;
 		root.setProperty("--viewport-height", `${Math.round(vv.height)}px`);
 		root.setProperty("--viewport-top", `${Math.round(vv.offsetTop)}px`);
+		// the keyboard covers the home indicator: the message box needs no room for it (layout.css)
+		document.documentElement.classList.toggle("keyboard-open", window.innerHeight - vv.height > 150);
 	};
 	const schedule = () => {
 		if (!frame) frame = requestAnimationFrame(update);

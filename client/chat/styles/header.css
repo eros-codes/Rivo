@@ -6,9 +6,11 @@
 	background: var(--header-color);
 	position: sticky;
 	border-radius: 1rem;
-	top: 0.2rem;
-	left: 0.5rem;
-	width: calc(100% - 1rem);
+	/* as far from the top as from the sides (the margin keeps what is under it in place) */
+	margin-top: var(--edge-top);
+	top: var(--edge-top);
+	left: var(--edge);
+	width: calc(100% - 2 * var(--edge));
 	height: 4rem;
 	z-index: 200;
 	box-shadow: var(--shadow);
@@ -185,10 +187,6 @@
 }
 
 @media all and (min-width: 700px) {
-	.main-header {
-		left: 1rem;
-		width: calc(100% - 2rem);
-	}
 	.main-header:hover {
 		scale: 1.01;
 	}

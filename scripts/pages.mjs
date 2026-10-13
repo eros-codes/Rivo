@@ -46,7 +46,9 @@ ${body}
 `;
 }
 
-const APP_VIEWPORT = "width=device-width, initial-scale=1, maximum-scale=1, interactive-widget=resizes-content";
+// (viewport-fit=cover: the app reaches the screen's edges and rounded corners, and
+// keeps its bars clear of them itself: client/chat/styles/layout.css → --edge-*)
+const APP_VIEWPORT = "width=device-width, initial-scale=1, maximum-scale=1, interactive-widget=resizes-content, viewport-fit=cover";
 const PAGE_VIEWPORT = "width=device-width, initial-scale=1";
 const NOSCRIPT = `<noscript><p class="noscript">Rivo needs JavaScript. Please turn it on and reload the page.</p></noscript>`;
 

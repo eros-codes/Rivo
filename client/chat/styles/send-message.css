@@ -2,27 +2,29 @@
 	font-size: 16px;
 	background-color: transparent;
 	position: absolute;
-	bottom: 0.5rem;
+	/* clear of the rounded corners and the home indicator (layout.css) */
+	bottom: var(--edge-bottom);
 	left: 0;
 	width: 100%;
 	display: flex;
 	flex-direction: column;
 	justify-content: center;
 	align-items: center;
-	padding: 0 0.5rem;
+	/* as wide as the header above it */
+	padding: 0 calc(var(--edge) + env(safe-area-inset-right, 0px)) 0 calc(var(--edge) + env(safe-area-inset-left, 0px));
 	pointer-events: auto;
 }
 .message-input {
-	font-size: 16px;
+	/* (never under 16px: Safari zooms into a smaller one when it is tapped) */
+	font-size: 17px;
 	box-sizing: border-box;
 	width: 100%;
-	max-width: 900px;
 	height: 3rem;
 	resize: none;
 	overflow-y: hidden;
 	line-height: 1.4;
 
-	padding: 0.6rem 2.75rem 0.6rem 2.75rem;
+	padding: 0.7rem 2.75rem 0.7rem 2.75rem;
 	border-radius: 2rem;
 
 	background:
@@ -68,7 +70,7 @@
 	width: 1.75rem;
 	position: absolute;
 	right: 1.25rem;
-	bottom: 0.6rem;
+	bottom: 0.65rem;
 	background: transparent;
 	border: none;
 	color: var(--text-secondary-color);
@@ -97,7 +99,6 @@
 	font-size: 12px;
 	box-sizing: border-box;
 	width: 100%;
-	max-width: 900px;
 	background: var(--text-main-color);
 	border-radius: 2rem 2rem 0 0;
 	padding: 0.4rem 1.5rem;
@@ -211,7 +212,7 @@
 .unblock-action-btn {
 	z-index: 250;
 	position: absolute;
-	bottom: 0.5rem;
+	bottom: var(--edge-bottom);
 	left: 50%;
 	transform: translateX(-50%);
 	display: flex;
@@ -259,7 +260,7 @@
 .chat-unavailable-notice {
 	z-index: 250;
 	position: absolute;
-	bottom: 0.5rem;
+	bottom: var(--edge-bottom);
 	left: 50%;
 	transform: translateX(-50%);
 	display: flex;
@@ -301,7 +302,7 @@
 	height: 1.75rem;
 	width: 1.75rem;
 	left: 1.25rem;
-	bottom: 0.6rem;
+	bottom: 0.65rem;
 	background: transparent;
 	border: none;
 	color: var(--text-secondary-color);

@@ -55,22 +55,31 @@
 	height: 100%;
 	object-fit: cover;
 }
+/* back: a round glass button, like the edit-profile panel's close button */
 .contact-detail-pic button {
 	position: absolute;
-	top: 1rem;
+	top: calc(1rem + env(safe-area-inset-top, 0px));
 	left: 1rem;
-	height: 1.5rem;
-	width: 1.5rem;
+	height: 2.25rem;
+	width: 2.25rem;
 	padding: 0;
-	color: white;
-	background-color: transparent;
-	border: none;
+	border-radius: 50%;
+	border: 1px solid var(--glass-border);
+	background: var(--header-glass-bg-color);
+	backdrop-filter: blur(10px);
+	-webkit-backdrop-filter: blur(10px);
+	box-shadow: var(--light-shadow);
+	color: var(--text-secondary-color);
+	display: flex;
+	align-items: center;
+	justify-content: center;
 	cursor: pointer;
+	z-index: 3;
 }
 .contact-detail-pic button svg {
 	display: block;
-	width: 100%;
-	height: 100%;
+	width: 1.25rem;
+	height: 1.25rem;
 }
 .contact-profile-actions {
 	padding-top: 5.5rem;
@@ -189,7 +198,15 @@
 	padding: 0.75rem 1rem;
 	color: white;
 	cursor: pointer;
-	border-radius: inherit;
+}
+/* only the list's own corners are round: the lines between the rows are straight */
+.contact-actions > :first-child {
+	border-top-left-radius: inherit;
+	border-top-right-radius: inherit;
+}
+.contact-actions > :last-child {
+	border-bottom-left-radius: inherit;
+	border-bottom-right-radius: inherit;
 }
 .contact-actions > *:not(:last-child) {
 	border-bottom: 0.2rem solid var(--background-color);

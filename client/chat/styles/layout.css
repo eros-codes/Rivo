@@ -1,10 +1,49 @@
 /* The page: the lists and the open chat side by side (on a phone the chat,
    the profile and the panels slide over the lists) */
+
+/* How far the bars (headers, the message box) keep from the screen's edges.
+   The page reaches under a phone's status bar, home indicator and rounded
+   corners (viewport-fit=cover), so those are added where a phone has them. */
+:root {
+	--edge: 0.5rem;
+	/* a header: as far from the top as from the sides */
+	--edge-top: calc(var(--edge) + env(safe-area-inset-top, 0px));
+	/* the message box: a little more than from the sides, and clear of the home indicator */
+	--edge-bottom: max(calc(var(--edge) * 1.5), calc(env(safe-area-inset-bottom, 0px) + 0.25rem));
+}
+/* a computer: more room (the lists' header and the chat's line up) */
+@media (min-width: 701px) {
+	:root {
+		--edge: 1rem;
+	}
+}
+/* with the on-screen keyboard up there is no home indicator under the box (main.tsx) */
+html.keyboard-open {
+	--edge-bottom: 0.75rem;
+}
+
 body {
 	overflow: hidden;
 	background-color: var(--background-color);
 	/* no double-tap zoom, and taps are not delayed */
 	touch-action: manipulation;
+}
+/* text is selected only where it is typed (a long press elsewhere is a
+   gesture, not a selection, and shows no copy bubble). Dialogs too: they are
+   drawn above the page and do not take this from <body> in every browser. */
+body,
+dialog {
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-touch-callout: none;
+}
+input,
+textarea,
+[contenteditable="true"],
+[contenteditable=""] {
+	-webkit-user-select: text;
+	user-select: text;
+	-webkit-touch-callout: default;
 }
 #root {
 	width: 100%;
@@ -21,6 +60,9 @@ body {
 	overflow: auto;
 	height: 100dvh;
 	display: inline;
+	/* (a phone on its side: clear of the notch) */
+	padding-left: env(safe-area-inset-left, 0px);
+	padding-right: env(safe-area-inset-right, 0px);
 }
 .chat-part {
 	overflow: hidden;

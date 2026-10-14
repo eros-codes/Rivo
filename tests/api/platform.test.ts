@@ -5,8 +5,8 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { closeDb, ROOT, startServer, type TestServer } from "../support/backend.ts";
-import { Api, live, newUser, ok, uniq } from "../support/client.ts";
+import { closeDb, db, ROOT, startServer, type TestServer } from "../support/backend.ts";
+import { Api, live, newUser, ok, sleep, uniq } from "../support/client.ts";
 import { readMail, smtpSink } from "../support/smtp.ts";
 
 let srv: TestServer;
@@ -246,14 +246,21 @@ test("emails go out over SMTP: signed in, from SMTP_FROM, the code readable in t
 	}
 });
 
-test("a mail server that refuses the password: the request says so, and no retry with the same password", async () => {
+test("a mail server that refuses the password: logged, the code dropped, and no retry with the same password", async () => {
 	const smtp = await smtpSink({ user: "rivo-mailer", pass: "the-right-one" });
 	const s = await startServer({ MAIL_CAPTURE_FILE: "", SMTP_HOST: "127.0.0.1", SMTP_PORT: String(smtp.port), SMTP_USER: "rivo-mailer", SMTP_PASS: "a-wrong-one" });
 	try {
-		const r = await new Api(s.base).post("/api/auth/send-code", { email: `${uniq("smtp")}@test.io` });
-		assert.equal(r.status, 500);
-		assert.equal(r.data.error, "Failed to send email");
+		const email = `${uniq("smtp")}@test.io`;
+		// (the email goes out after the answer: the page moves on at once)
+		const r = await new Api(s.base).post("/api/auth/send-code", { email });
+		assert.equal(r.status, 200);
+		// the failure is in the server's log, for whoever runs it
+		for (let i = 0; i < 100 && !/verification email failed/.test(s.log()); i++) await sleep(50);
+		assert.match(s.log(), /verification email failed/);
 		assert.equal(smtp.messages.length, 0);
+		// and the code nobody received is gone
+		const rows = await db(s.base, "emailVerification", "findMany", { where: { email } });
+		assert.equal(rows.length, 0);
 		// (one try for the email; the mailer's own check when it starts may make one more)
 		assert.ok(smtp.logins.length <= 2 && smtp.logins.every((l) => !l.ok), JSON.stringify(smtp.logins));
 	} finally {

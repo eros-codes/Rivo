@@ -151,6 +151,9 @@
 	font-size: 1rem;
 	color: var(--chat-time);
 }
+.contact-detail-name p.online {
+	color: var(--online);
+}
 .contact-info {
 	max-width: calc(100vw - 2rem);
 	width: 20rem;

@@ -74,16 +74,27 @@ function Profile({ row }: { row: ContactRow }) {
 	let status = "";
 	if (!deleted) {
 		if (online) status = "Online";
-		else if (person?.lastSeen) status = `Last seen ${timeAgo(person.lastSeen, now)}`;
+		// (no time: they keep it to themselves, as in the chat's header)
+		else status = person?.lastSeen ? `Last seen ${timeAgo(person.lastSeen, now)}` : "Last seen recently";
 	}
 
 	return (
 		<>
 			<div className="contact-detail-pic">
 				<div className="detail-picture">
-					<Avatar name={name} picture={person?.profilePics[0]} className="contact-profile" online={online} deleted={deleted} />
+					<Avatar
+						name={name}
+						picture={person?.profilePics[0]}
+						className="contact-profile"
+						online={online}
+						deleted={deleted}
+					/>
 				</div>
-				<button type="button" aria-label="Close profile" onClick={closePanel}>
+				<button
+					type="button"
+					aria-label="Close profile"
+					onClick={closePanel}
+				>
 					<Icons.Back />
 				</button>
 			</div>
@@ -91,7 +102,12 @@ function Profile({ row }: { row: ContactRow }) {
 				<div className="contact-detail-name">
 					<div>
 						{editing && (
-							<button type="button" className="name-edit-btn" aria-label="Cancel" onClick={() => setEditing(false)}>
+							<button
+								type="button"
+								className="name-edit-btn"
+								aria-label="Cancel"
+								onClick={() => setEditing(false)}
+							>
 								<Icons.CloseThin />
 							</button>
 						)}
@@ -117,36 +133,69 @@ function Profile({ row }: { row: ContactRow }) {
 								onPaste={(e) => {
 									// plain text only
 									e.preventDefault();
-									document.execCommand("insertText", false, e.clipboardData.getData("text/plain").replace(/\s+/g, " "));
+									document.execCommand(
+										"insertText",
+										false,
+										e.clipboardData
+											.getData("text/plain")
+											.replace(/\s+/g, " "),
+									);
 								}}
 							/>
 						) : (
 							<h3 dir="auto">{name}</h3>
 						)}
 						{editing && (
-							<button type="button" className="name-edit-btn" aria-label="Save name" onClick={finishRename}>
+							<button
+								type="button"
+								className="name-edit-btn"
+								aria-label="Save name"
+								onClick={finishRename}
+							>
 								<Icons.Check />
 							</button>
 						)}
 					</div>
-					{!deleted && person?.bio ? <h6 dir="auto">{person.bio}</h6> : null}
-					<p>{status}</p>
+					{!deleted && person?.bio ? (
+						<h6 dir="auto">{person.bio}</h6>
+					) : null}
+					<p className={online ? "online" : undefined}>{status}</p>
 				</div>
 				{!deleted && (person?.username || person?.email) && (
 					<div className="contact-info">
-						{person?.username && <Copyable id="contact-username" label="Username" value={`@${person.username}`} />}
-						{person?.email && <Copyable id="contact-email" label="Email" value={person.email} />}
+						{person?.username && (
+							<Copyable
+								id="contact-username"
+								label="Username"
+								value={`@${person.username}`}
+							/>
+						)}
+						{person?.email && (
+							<Copyable
+								id="contact-email"
+								label="Email"
+								value={person.email}
+							/>
+						)}
 					</div>
 				)}
 				<div className="contact-actions">
 					{!deleted && (
-						<div {...pressable(() => setEditing(true))} id="edit-name-btn">
+						<div
+							{...pressable(() => setEditing(true))}
+							id="edit-name-btn"
+						>
 							Edit Name
 						</div>
 					)}
 					{!deleted && (
-						<div {...pressable(() => void toggleBlock(row))} id="block-contact-btn">
-							{row.isBlocked ? "Unblock Contact" : "Block Contact"}
+						<div
+							{...pressable(() => void toggleBlock(row))}
+							id="block-contact-btn"
+						>
+							{row.isBlocked
+								? "Unblock Contact"
+								: "Block Contact"}
 						</div>
 					)}
 					<div

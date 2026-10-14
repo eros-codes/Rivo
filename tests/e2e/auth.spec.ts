@@ -36,6 +36,28 @@ test("sign up with the emailed code, then sign in", async ({ page }) => {
 	await expect(page.locator(".active-chat", { hasText: "Saved Messages" })).toBeVisible();
 });
 
+test("sign-up whose answer is lost on the way (a phone that left the page): the code page comes anyway, and the emailed code works", async ({ page }) => {
+	const username = uniq("lost");
+	const email = `${username}@test.io`;
+	// the request reaches the server (the email goes out), the answer never comes back
+	await page.route("**/api/auth/send-code", async (route) => {
+		await route.fetch();
+		await route.abort("connectionreset");
+	});
+	await page.goto("/auth/");
+	await page.click(".signuplink");
+	await page.fill("#name", "Lost Answer");
+	await page.fill("#email", email);
+	await page.fill("#username", username);
+	await page.click("form.signup button.form-submit");
+	await page.locator("form.verify").waitFor();
+	await expect(page.locator("#code-help")).toContainText("connection dropped");
+	const code = /(\d{6})/.exec((await lastMailTo(email)).text)?.[1];
+	await page.locator(".code-digit").first().fill(code!);
+	await page.click("form.verify button.form-submit");
+	await page.locator("form.password").waitFor();
+});
+
 test("sign-up says what is wrong: each field, a wrong code, passwords that differ", async ({ browser }) => {
 	const ctx = await context(browser, PHONE);
 	const page = await ctx.newPage();

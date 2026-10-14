@@ -82,6 +82,25 @@
 	height: 65%;
 	width: 65%;
 }
+/* new messages below: their number, on the button's top */
+.scroll-to-bottom-count {
+	position: absolute;
+	top: -0.6rem;
+	left: 50%;
+	transform: translateX(-50%);
+	min-width: 1.3rem;
+	height: 1.3rem;
+	padding: 0 0.35rem;
+	border-radius: 0.65rem;
+	background: var(--accent);
+	color: #fff;
+	font-size: 0.7rem;
+	font-weight: 600;
+	line-height: 1.3rem;
+	text-align: center;
+	box-shadow: var(--light-shadow);
+	pointer-events: none;
+}
 .scroll-to-bottom-btn.visible {
 	opacity: 1;
 	pointer-events: auto;

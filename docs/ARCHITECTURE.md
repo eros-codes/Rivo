@@ -380,6 +380,16 @@ a name.
   and gives the usual response; so the sign-up form does not reveal who has an account.
 - A password reset request (made without logging in) responds first and then does the work; the response
   time does not reveal anything either.
+- `send-code` does the same: it answers as soon as the code is stored, and the email (code or "you already
+  have an account") goes out after. A mail server takes seconds to accept an email (Gmail: 2-3 s), and a
+  phone whose user switched to the mail app meanwhile dropped the page's request: the email arrived, the page
+  never moved on, and asking again sent another code. A failed email is logged (`verification email failed`)
+  and its code deleted; the person presses Resend. (With `MAIL_CAPTURE_FILE`, in the tests, the email is
+  written before the answer.)
+- The **three latest codes** for an address are accepted, each until it expires, so the code from any of the
+  emails works; the tries are counted together (on the newest code). A correct code removes the others.
+- If the answer to `send-code` is lost anyway (no connection), the sign-up page still moves on to the code,
+  saying the email may or may not come and offering Resend.
 - The email regex is written so that it does not backtrack (previously a 60,000-character email
   locked up the server for ~3 seconds), and anything over 254 characters is rejected.
 
@@ -689,8 +699,8 @@ Three suites, all in the repo, all **TypeScript**, and all run on every push to 
 | Suite | Where | What | Requires |
 |---|---|---|---|
 | **unit** | `tests/unit/*.test.ts` | Pure client logic: merging messages, chat placement and order, previews, a contact list that does not wipe out live changes, multi-tab outbox, links (and that `javascript:` never becomes a link), accent color; and the input schemas (`shared/schemas`: what is accepted, in what form, and with what message a bad input is answered) — 34 tests | Nothing (a few seconds) |
-| **api** | `tests/api/*.test.ts` | The real server on a test database: sessions, CSRF, devices, password, sign-up, contacts and privacy, idempotent sending, seen, sync, delete/forward, capsules, one-time messages, rate limits, push, health, security headers, profile picture upload (real multer and sharp: the server's own JPEG, deletion of the previous picture, rejection of anything else with its reason), **actually sending email over SMTP** (to a small SMTP server inside the test), database constraints, bad inputs through both paths (socket and REST) that are rejected with the schema's message and change nothing; and the `server/scripts` tools (key rotation from start to finish with separate `t1`→`t2` keys that only moves the test's own messages, reading all messages, `test:enc`, `check-kek`) — 42 tests | `TEST_DATABASE_URL` |
-| **e2e** | `tests/e2e/*.spec.ts` | The built app in Chromium — 37 tests in six files: `auth` (sign-up with a code and per-field errors, wrong code, wrong password, forgot password all the way to logging in with the new password, landing), `chat` (live two-person chat, older pages back to the first message, reactions and pins, forwarding, multi-select, the banner for a message in another chat, **internet disconnect and reconnect**, the send queue after a refresh, sending faster than the cap), `features` (one-time messages, capsules, the pinned list, All contacts, Undo of contact deletion, blocking), `panels` (settings, devices, password change, adding a contact, contact profile and archive, search, profile picture, account deletion), `phone` (pages and Back, long-press and swipe with a finger), `ui` (toast over a dialog, keyboard) | `TEST_DATABASE_URL` + `npm run build` |
+| **api** | `tests/api/*.test.ts` | The real server on a test database: sessions, CSRF, devices, password, sign-up, contacts and privacy, idempotent sending, seen, sync, delete/forward, capsules, one-time messages, rate limits, push, health, security headers, profile picture upload (real multer and sharp: the server's own JPEG, deletion of the previous picture, rejection of anything else with its reason), **actually sending email over SMTP** (to a small SMTP server inside the test), database constraints, bad inputs through both paths (socket and REST) that are rejected with the schema's message and change nothing; and the `server/scripts` tools (key rotation from start to finish with separate `t1`→`t2` keys that only moves the test's own messages, reading all messages, `test:enc`, `check-kek`) — 44 tests | `TEST_DATABASE_URL` |
+| **e2e** | `tests/e2e/*.spec.ts` | The built app in Chromium — 39 tests in six files: `auth` (sign-up with a code and per-field errors, a sign-up whose answer is lost on the way, wrong code, wrong password, forgot password all the way to logging in with the new password, landing), `chat` (live two-person chat, older pages back to the first message, reactions and pins, forwarding, multi-select, the banner for a message in another chat, **internet disconnect and reconnect**, the send queue after a refresh, sending faster than the cap, online / last seen in the header and the count of new messages on the down button), `features` (one-time messages, capsules, the pinned list, All contacts, Undo of contact deletion, blocking), `panels` (settings, devices, password change, adding a contact, contact profile and archive, search, profile picture, account deletion), `phone` (pages and Back, long-press and swipe with a finger), `ui` (toast over a dialog, keyboard) | `TEST_DATABASE_URL` + `npm run build` |
 
 ### Running locally
 

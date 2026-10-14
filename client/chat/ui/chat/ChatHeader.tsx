@@ -1,11 +1,13 @@
 // The chat's header: back (with the unread count of other chats), picture,
-// name and "typing...". Tapping it opens the contact's profile.
+// name and, under it, "typing..." or whether they are online / last seen.
+// Tapping it opens the contact's profile.
 import type { ContactRow } from "../../../shared/api/types";
+import { useNow } from "../../../shared/lib/hooks";
 import { useStore } from "../../../shared/lib/store";
 import { Avatar } from "../../../shared/ui/Avatar";
 import { Icons } from "../../../shared/ui/icons";
 import { closeChat, openPanel } from "../../services/navigation";
-import { displayName, isDeletedAccount, isOnline } from "../../state/contactModel";
+import { displayName, isDeletedAccount, isOnline, presenceText } from "../../state/contactModel";
 import { contacts, typing } from "../../state/stores";
 
 export function ChatHeader({ row, withPinnedBar }: { row: ContactRow; withPinnedBar: boolean }) {
@@ -16,6 +18,9 @@ export function ChatHeader({ row, withPinnedBar }: { row: ContactRow; withPinned
 	);
 	const online = isOnline(row);
 	const name = displayName(row);
+	// ("last seen 5 minutes ago" moves on by itself)
+	const now = useNow(30_000);
+	const status = isTyping ? "typing..." : presenceText(row, now);
 
 	return (
 		<header
@@ -42,7 +47,10 @@ export function ChatHeader({ row, withPinnedBar }: { row: ContactRow; withPinned
 				}}
 			>
 				<Icons.Back />
-				<span className="unread-message-count" style={{ opacity: elsewhere ? 1 : 0 }}>
+				<span
+					className="unread-message-count"
+					style={{ opacity: elsewhere ? 1 : 0 }}
+				>
 					{elsewhere > 999 ? "999+" : elsewhere}
 				</span>
 			</span>
@@ -52,11 +60,26 @@ export function ChatHeader({ row, withPinnedBar }: { row: ContactRow; withPinned
 				</span>
 			) : (
 				<span className={`chat-profile${online ? " online" : ""}`}>
-					<Avatar name={name} picture={row.contact?.profilePics[0]} className="chat-profile-picture" online={online} deleted={isDeletedAccount(row)} />
+					<Avatar
+						name={name}
+						picture={row.contact?.profilePics[0]}
+						className="chat-profile-picture"
+						online={online}
+						deleted={isDeletedAccount(row)}
+					/>
 				</span>
 			)}
-			<span className="chat-name" dir="auto">
-				{name}
+			<span className="chat-title">
+				<span className="chat-name" dir="auto">
+					{name}
+				</span>
+				{/* (only "typing..." is announced: the rest changes by the minute) */}
+				<span
+					className={`chat-typing-status${isTyping ? " typing" : online ? " online" : ""}`}
+					aria-live={isTyping ? "polite" : "off"}
+				>
+					{status}
+				</span>
 			</span>
 			{!row.isSaved && (
 				// the whole header opens the profile; this is its keyboard way in
@@ -71,9 +94,6 @@ export function ChatHeader({ row, withPinnedBar }: { row: ContactRow; withPinned
 					View profile
 				</button>
 			)}
-			<span className="chat-typing-status" aria-live="polite">
-				{isTyping ? "typing..." : ""}
-			</span>
 		</header>
 	);
 }

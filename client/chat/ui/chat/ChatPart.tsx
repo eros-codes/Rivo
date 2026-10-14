@@ -54,6 +54,13 @@ function ChatView({ convId }: { convId: number }) {
 		return messages.filter((m) => ids.has(m.id));
 	}, [selection, messages]);
 	const menuMessage = menu ? (messages?.find((m) => m.id === menu.messageId) ?? null) : null;
+	// unread messages from the other person below what is on screen: only the
+	// ones actually shown are marked read, so this counts down as they scroll
+	const unreadBelow = useMemo(() => {
+		let n = 0;
+		for (const m of messages ?? []) if (!m.isDeleted && m.senderId !== meId && !m.isSeen) n++;
+		return n;
+	}, [messages, meId]);
 
 	if (!row) return null;
 	const deleted = isDeletedAccount(row);
@@ -73,8 +80,14 @@ function ChatView({ convId }: { convId: number }) {
 				}}
 				onOpenList={() => openDialog("pinned")}
 			/>
-			<button type="button" className={`scroll-to-bottom-btn${showDown ? " visible" : ""}`} aria-label="Scroll to the newest message" onClick={() => scrollDown.current?.()}>
+			<button
+				type="button"
+				className={`scroll-to-bottom-btn${showDown ? " visible" : ""}`}
+				aria-label={unreadBelow ? `Scroll to the newest message, ${unreadBelow} unread` : "Scroll to the newest message"}
+				onClick={() => scrollDown.current?.()}
+			>
 				<Icons.ChevronDown />
+				{unreadBelow > 0 && <span className="scroll-to-bottom-count">{unreadBelow > 99 ? "99+" : unreadBelow}</span>}
 			</button>
 			{menu && menuMessage && <MessageMenu row={row} message={menuMessage} meId={meId} scroller={scrollerEl} />}
 			<MessageList

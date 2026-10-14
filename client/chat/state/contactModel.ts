@@ -1,6 +1,7 @@
 // Contact rows: how they are named, previewed, sorted and placed, and the
 // functions that change the contact list.
 import type { ContactRow, LiveMessage, MessagePreview, Person } from "../../shared/api/types";
+import { timeAgo } from "../../shared/lib/time";
 import { contacts } from "./stores";
 import type { Pending, Section } from "./types";
 
@@ -29,6 +30,17 @@ export function realName(row: ContactRow | null | undefined): string {
 /** Online and not hidden by privacy (Saved Messages and deleted accounts never are). */
 export function isOnline(row: ContactRow): boolean {
 	return !row.isSaved && !isDeletedAccount(row) && !!row.contact?.isOnline;
+}
+
+/**
+ * The line under a person's name: "online", "last seen 5 minutes ago", or
+ * "last seen recently" when they keep it to themselves (the server sends no
+ * time then), as Telegram does. Nothing for Saved Messages or a deleted account.
+ */
+export function presenceText(row: ContactRow, now = Date.now()): string {
+	if (row.isSaved || isDeletedAccount(row)) return "";
+	if (row.contact?.isOnline) return "online";
+	return row.contact?.lastSeen ? `last seen ${timeAgo(row.contact.lastSeen, now)}` : "last seen recently";
 }
 
 export const LOCKED_CAPSULE_PREVIEW = "Time capsule 🔒";

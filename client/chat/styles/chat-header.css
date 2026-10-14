@@ -162,12 +162,28 @@
 	box-shadow: none;
 }
 
+/* the name, and under it "typing..." / online / last seen */
+.chat-title {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	min-width: 0;
+	gap: 0.05rem;
+}
 .chat-typing-status {
-	flex-shrink: 0;
 	font-size: 0.75rem;
+	line-height: 1.2;
 	color: var(--chat-time);
-	min-height: 1rem;
-	display: block;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.chat-typing-status:empty {
+	display: none;
+}
+.chat-typing-status.online,
+.chat-typing-status.typing {
+	color: var(--online);
 }
 
 .saved-icon {

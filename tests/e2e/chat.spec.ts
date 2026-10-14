@@ -267,3 +267,35 @@ test("sending faster than the server allows: every message arrives, in order, no
 		await srv.stop();
 	}
 });
+
+test("the header says online / last seen under the name; scrolled up, new messages are counted on the down button", async ({ browser }) => {
+	const [ann, ben] = await people("Ann", "Ben");
+	const convId = await connect(ann!, ben!);
+	await chatter(ann!, ben!, convId, 40);
+	const A = await open(browser, ann!);
+	await openChat(A.page, "Ben");
+	const status = A.page.locator(".chat-typing-status");
+	const B = await open(browser, ben!);
+	await expect(status).toHaveText("online");
+
+	// Ann reads to the end (what was not on screen is unread, and counted)
+	await A.page.locator(".chat").evaluate((el) => (el.scrollTop = el.scrollHeight));
+	await expect.poll(() => A.page.evaluate(() => document.querySelectorAll(".chat-message.incoming").length)).toBeGreaterThan(0);
+	await A.page.waitForTimeout(1000);
+	// then scrolls up: nothing new below yet; Ben writes twice
+	await A.page.locator(".chat").evaluate((el) => (el.scrollTop = 0));
+	await expect(A.page.locator(".scroll-to-bottom-btn.visible")).toBeVisible();
+	await expect(A.page.locator(".scroll-to-bottom-count")).toHaveCount(0);
+	await openChat(B.page, "Ann");
+	await send(B.page, "new one");
+	await send(B.page, "and another");
+	await expect(A.page.locator(".scroll-to-bottom-count")).toHaveText("2");
+	// down: they are read, the count goes
+	await A.page.click(".scroll-to-bottom-btn");
+	await expect(A.page.locator(".scroll-to-bottom-btn.visible")).toHaveCount(0);
+	await expect(A.page.locator(".scroll-to-bottom-count")).toHaveCount(0);
+
+	// Ben leaves: "last seen" again
+	await B.context.close();
+	await expect(status).toHaveText(/^last seen /, { timeout: 20_000 });
+});

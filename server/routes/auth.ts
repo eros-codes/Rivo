@@ -35,6 +35,12 @@ const RESET_TOKEN_TTL_MS = envNumber("RESET_TOKEN_TTL_MINUTES", 30) * 60_000;
 const SEND_WINDOW_MS = envNumber("VERIFICATION_SEND_WINDOW_MINUTES", 60) * 60_000;
 const SEND_LIMIT = envNumber("VERIFICATION_SEND_LIMIT", 5);
 const MAX_ATTEMPTS = envNumber("VERIFICATION_MAX_ATTEMPTS", 5);
+/**
+ * How many of the latest codes for an address are accepted (each until it
+ * expires). Someone who asked twice, because the first email was slow or the
+ * page did not move on, may type the code from either email.
+ */
+const CODES_KEPT = 3;
 const MAX_SEND_COUNTS = envNumber("MAX_SEND_COUNTS", 20_000);
 
 const hashCode = (code: unknown): string => crypto.createHash("sha256").update(String(code)).digest("hex");
@@ -117,30 +123,37 @@ router.post("/send-code", async (req, res) => {
 			return void res.status(429).json({ error: "Too many verification attempts. Try later." });
 		}
 
+		// The email goes out after the answer. A mail server takes seconds to
+		// accept one (Gmail: 2-3 s), and a phone whose user switches to the mail
+		// app meanwhile drops the page's request: the email arrived, but the
+		// page never moved on to the code. A failure is logged; the person
+		// presses Resend. (Tests read emails from a file: written before the
+		// answer, so a test can read it at once.)
+		let sending: Promise<void>;
 		if (await isEmailTaken(key)) {
-			try {
-				const t = accountExistsEmail({ appName: config.appName, signInUrl: `${config.appUrl}/auth/`, resetUrl: `${config.appUrl}/auth/?forgot=1` });
-				await sendEmail({ to, subject: t.subject, text: t.text, html: t.html });
-				log.info(`sign-up attempt for an existing account: ${maskEmail(to)}`);
-			} catch (e) {
-				log.error("account-exists email failed", messageOf(e) || e);
-				return void res.status(500).json({ error: "Failed to send email" });
-			}
-			return void reply(res, "POST /api/auth/send-code", { success: true });
-		}
-
-		const code = crypto.randomInt(100000, 1000000);
-		await prisma.emailVerification.deleteMany({ where: { email: key, verifiedAt: null } });
-		await prisma.emailVerification.create({ data: { email: key, codeHash: hashCode(code), expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS) } });
-		try {
+			const t = accountExistsEmail({ appName: config.appName, signInUrl: `${config.appUrl}/auth/`, resetUrl: `${config.appUrl}/auth/?forgot=1` });
+			sending = sendEmail({ to, subject: t.subject, text: t.text, html: t.html }).then(
+				() => log.info(`sign-up attempt for an existing account: ${maskEmail(to)}`),
+				(e: unknown) => log.error("account-exists email failed", messageOf(e) || e),
+			);
+		} else {
+			const code = crypto.randomInt(100000, 1000000);
+			// the newest codes stay valid (CODES_KEPT); older ones go
+			const earlier = await prisma.emailVerification.findMany({ where: { email: key, verifiedAt: null }, orderBy: { id: "desc" }, select: { id: true } });
+			const dropped = earlier.slice(CODES_KEPT - 1).map((e) => e.id);
+			if (dropped.length) await prisma.emailVerification.deleteMany({ where: { id: { in: dropped } } });
+			const entry = await prisma.emailVerification.create({ data: { email: key, codeHash: hashCode(code), expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS) } });
 			const t = verificationEmail({ code, email: to, appName: config.appName, expiresMinutes: Math.max(1, Math.floor(VERIFICATION_TTL_MS / 60000)) });
-			await sendEmail({ to, subject: t.subject, text: t.text, html: t.html });
-			log.info(`verification email sent: ${maskEmail(to)}`);
-		} catch (e) {
-			log.error("verification email failed", messageOf(e) || e);
-			await prisma.emailVerification.deleteMany({ where: { email: key, verifiedAt: null } });
-			return void res.status(500).json({ error: "Failed to send email" });
+			sending = sendEmail({ to, subject: t.subject, text: t.text, html: t.html }).then(
+				() => log.info(`verification email sent: ${maskEmail(to)}`),
+				async (e: unknown) => {
+					log.error("verification email failed", messageOf(e) || e);
+					// (a code nobody received is not left waiting to be guessed)
+					await prisma.emailVerification.deleteMany({ where: { id: entry.id } }).catch(() => undefined);
+				},
+			);
 		}
+		if (CAPTURE_FILE) await sending;
 		return void reply(res, "POST /api/auth/send-code", { success: true });
 	} catch (e) {
 		log.error("send-code failed", messageOf(e) || e);
@@ -154,27 +167,34 @@ router.post("/verify-code", async (req, res) => {
 	const { code } = body;
 	try {
 		const key = normEmail(body.email);
-		const entry = await prisma.emailVerification.findFirst({
+		// the latest codes sent to this address (any of them may be typed)
+		const entries = await prisma.emailVerification.findMany({
 			where: { email: key, verifiedAt: null, expiresAt: { gt: new Date() } },
 			orderBy: { id: "desc" },
+			take: CODES_KEPT,
 		});
-		if (!entry) return void res.status(400).json({ error: "Invalid or expired code" });
+		const newest = entries[0];
+		if (!newest) return void res.status(400).json({ error: "Invalid or expired code" });
 		// every guess uses up one try first, in a single step, so many guesses
-		// sent at the same moment cannot all slip under the limit
+		// sent at the same moment cannot all slip under the limit. The tries
+		// are counted on the newest code: the codes share one allowance.
 		const claimed = await prisma.emailVerification.updateMany({
-			where: { id: entry.id, attempts: { lt: MAX_ATTEMPTS } },
+			where: { id: newest.id, attempts: { lt: MAX_ATTEMPTS } },
 			data: { attempts: { increment: 1 } },
 		});
 		if (claimed.count === 0) {
 			await prisma.emailVerification.deleteMany({ where: { email: key, verifiedAt: null } });
 			return void res.status(429).json({ error: "Too many attempts. Request a new verification code." });
 		}
-		const ok = crypto.timingSafeEqual(Buffer.from(entry.codeHash), Buffer.from(hashCode(code)));
-		if (!ok) return void res.status(400).json({ error: "Invalid code" });
+		const guess = Buffer.from(hashCode(code));
+		const entry = entries.find((e) => crypto.timingSafeEqual(Buffer.from(e.codeHash), guess));
+		if (!entry) return void res.status(400).json({ error: "Invalid code" });
 		await prisma.emailVerification.update({
 			where: { id: entry.id },
 			data: { verifiedAt: new Date(), expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS) },
 		});
+		// (the others are not needed any more)
+		await prisma.emailVerification.deleteMany({ where: { email: key, verifiedAt: null } }).catch(() => undefined);
 		return void reply(res, "POST /api/auth/verify-code", { success: true });
 	} catch (e) {
 		log.error("verify-code failed", messageOf(e) || e);

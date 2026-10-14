@@ -29,7 +29,7 @@ npm run loadtest                   # many people chatting at once, measured (not
 ```
 
 The tests are TypeScript too and are checked against the same `shared/` contract (unit 34,
-api 42, browser 37). They also run on every push to GitHub, in GitHub Actions
+api 44, browser 39). They also run on every push to GitHub, in GitHub Actions
 (`.github/workflows/ci.yml`), where the browser tests run in Firefox and WebKit (Safari) as well.
 
 ## Operations

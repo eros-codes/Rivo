@@ -248,7 +248,18 @@ function Login({
 
 // ─── Sign up: name, email, username ───────────────────────────────────────
 
-function SignUpForm({ data, setData, onCodeSent, onLogin }: { data: SignUp; setData: (d: SignUp) => void; onCodeSent: () => void; onLogin: () => void }) {
+function SignUpForm({
+	data,
+	setData,
+	onCodeSent,
+	onLogin,
+}: {
+	data: SignUp;
+	setData: (d: SignUp) => void;
+	/** `unsure`: the answer was lost on the way (the email may well have gone out) */
+	onCodeSent: (unsure?: boolean) => void;
+	onLogin: () => void;
+}) {
 	const [errors, setErrors] = useState<Errors>({});
 	const [busy, setBusy] = useState(false);
 	const refs = { name: useRef<HTMLInputElement>(null), email: useRef<HTMLInputElement>(null), username: useRef<HTMLInputElement>(null) };
@@ -279,7 +290,18 @@ function SignUpForm({ data, setData, onCodeSent, onLogin }: { data: SignUp; setD
 				if (e instanceof ApiError && e.status === 429) throw e;
 				// otherwise the server checks again when the account is created
 			}
-			await authApi.sendCode(email);
+			try {
+				await authApi.sendCode(email);
+			} catch (e) {
+				// No answer at all: the connection dropped on the way (a phone
+				// that switched to the mail app meanwhile). The server may well
+				// have sent the email, so the code page comes anyway, saying so;
+				// asking again from here would only send another code.
+				if (!(e instanceof ApiError && e.status === 0)) throw e;
+				setData({ name, email, username });
+				onCodeSent(true);
+				return;
+			}
 			write(RESEND_KEY, String(Date.now() + RESEND_MS));
 			setData({ name, email, username });
 			onCodeSent();
@@ -357,7 +379,7 @@ function useResendWait(): [number, () => void] {
 	return [Math.max(0, Math.ceil((until - now) / 1000)), restart];
 }
 
-function Verify({ email, onVerified, onBack }: { email: string; onVerified: () => void; onBack: () => void }) {
+function Verify({ email, unsure = false, onVerified, onBack }: { email: string; unsure?: boolean; onVerified: () => void; onBack: () => void }) {
 	const [digits, setDigits] = useState<string[]>(() => Array(CODE_LENGTH).fill(""));
 	const [error, setError] = useState("");
 	const [busy, setBusy] = useState(false);
@@ -425,7 +447,9 @@ function Verify({ email, onVerified, onBack }: { email: string; onVerified: () =
 				Back
 			</button>
 			<p className="form-subtitle" id="code-help">
-				Please enter the code sent to your email address. If it already has a Rivo account, we sent sign-in help there instead.
+				{unsure
+					? "The connection dropped before we heard back. If the email arrives, enter its code here; if it doesn't, press Resend."
+					: "Please enter the code sent to your email address. If it already has a Rivo account, we sent sign-in help there instead."}
 			</p>
 			{error && (
 				<span className="input-error code-error" id="code-error" role="alert">
@@ -625,6 +649,8 @@ export function AuthApp() {
 	const [notice, setNotice] = useState(START.notice);
 	const [identifier, setIdentifier] = useState(() => read(REMEMBERED) ?? "");
 	const [signUp, setSignUp] = useState<SignUp>({ name: "", email: "", username: "" });
+	// the code page after a lost answer says the email may or may not come
+	const [codeUnsure, setCodeUnsure] = useState(false);
 
 	// a device that is still signed in goes straight to the chats
 	useEffect(() => {
@@ -657,8 +683,18 @@ export function AuthApp() {
 					}}
 				/>
 			)}
-			{step === "signup" && <SignUpForm data={signUp} setData={setSignUp} onCodeSent={() => go("verify")} onLogin={() => go("login")} />}
-			{step === "verify" && <Verify email={signUp.email} onVerified={() => go("password")} onBack={() => go("signup")} />}
+			{step === "signup" && (
+				<SignUpForm
+					data={signUp}
+					setData={setSignUp}
+					onCodeSent={(unsure = false) => {
+						setCodeUnsure(unsure);
+						go("verify");
+					}}
+					onLogin={() => go("login")}
+				/>
+			)}
+			{step === "verify" && <Verify email={signUp.email} unsure={codeUnsure} onVerified={() => go("password")} onBack={() => go("signup")} />}
 			{step === "password" && (
 				<SetPassword
 					data={signUp}

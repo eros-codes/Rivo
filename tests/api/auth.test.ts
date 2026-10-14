@@ -171,6 +171,37 @@ test("a long crafted email address is refused at once (no catastrophic backtrack
 	assert.ok(Date.now() - t < 1500, `took ${Date.now() - t} ms`);
 });
 
+test("verification codes: a code from an earlier email still works after asking again", async () => {
+	const anon = new Api(srv.base);
+	const email = `${uniq("twice")}@test.io`;
+	const codeOf = async () => /(\d{6})/.exec((await anon.mails()).filter((m) => m.to === email).pop()?.text ?? "")![1]!;
+	// asked twice (the first email was slow, or the page did not move on)
+	assert.equal((await anon.post<"POST /api/auth/send-code">("/api/auth/send-code", { email })).status, 200);
+	const first = await codeOf();
+	assert.equal((await anon.post<"POST /api/auth/send-code">("/api/auth/send-code", { email })).status, 200);
+	const second = await codeOf();
+	// the first one is typed: it works
+	assert.equal((await anon.post<"POST /api/auth/verify-code">("/api/auth/verify-code", { email, code: first })).status, 200);
+	// and the account can be made with it
+	const made = await anon.post<"POST /api/auth/register">("/api/auth/register", { name: "Twice", email, username: uniq("twice"), password: "password123" });
+	assert.equal(made.status, 201);
+	// the other code is gone with it
+	assert.notEqual((await anon.post("/api/auth/verify-code", { email, code: second })).status, 200);
+});
+
+test("verification codes: only the latest three are accepted", async () => {
+	const anon = new Api(srv.base);
+	const email = `${uniq("many")}@test.io`;
+	const codes: string[] = [];
+	for (let i = 0; i < 4; i++) {
+		await anon.post<"POST /api/auth/send-code">("/api/auth/send-code", { email });
+		codes.push(/(\d{6})/.exec((await anon.mails()).filter((m) => m.to === email).pop()?.text ?? "")![1]!);
+	}
+	// the oldest of four no longer works (unless it happens to equal a newer one)
+	if (!codes.slice(1).includes(codes[0]!)) assert.equal((await anon.post("/api/auth/verify-code", { email, code: codes[0] })).status, 400);
+	assert.equal((await anon.post<"POST /api/auth/verify-code">("/api/auth/verify-code", { email, code: codes[1]! })).status, 200);
+});
+
 test("verification codes: guesses sent all at once still use up the tries", async () => {
 	const anon = new Api(srv.base);
 	const email = `${uniq("guess")}@test.io`;

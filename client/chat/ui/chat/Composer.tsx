@@ -141,7 +141,10 @@ export function Composer({ row, refCallback, dark }: { row: ContactRow; refCallb
 		setDraft(next);
 		const caret = start + emoji.length;
 		selection.current = { start: caret, end: caret };
-		setEmojiOpen(false);
+		// the panel stays open for the next one (a tap outside or the button closes it).
+		// With a mouse the caret goes back to the text; on a phone that would raise
+		// the keyboard over the panel.
+		if (!matchMedia("(pointer: fine)").matches) return;
 		requestAnimationFrame(() => {
 			const ta = input.current;
 			if (!ta) return;

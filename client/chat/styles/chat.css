@@ -38,6 +38,7 @@
 	/* the app keeps the reading position itself when older messages load */
 	overflow-anchor: none;
 	overscroll-behavior: contain;
+	scrollbar-width: none;
 }
 
 .chat-overlay {

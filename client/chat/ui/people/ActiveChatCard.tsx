@@ -16,6 +16,9 @@ export type SwipeSide = "closed" | "left" | "right";
 const SNAP_PX = 70;
 const REVEAL_PX = 140;
 const SAVED_REVEAL_PX = 70;
+// set on the card itself, so it replaces the stylesheet's: the hover's grow
+// and colour must stay in it, or they jump
+const SETTLE = "transform 0.25s ease, scale 0.2s ease, background 0.2s ease";
 
 function offsetOf(side: SwipeSide, saved: boolean): number {
 	if (side === "left") return -REVEAL_PX;
@@ -57,7 +60,7 @@ export const ActiveChatCard = memo(function ActiveChatCard({ row, pending, meId,
 	useLayoutEffect(() => {
 		const el = cardRef.current;
 		if (!el || drag.current?.horizontal) return;
-		el.style.transition = "transform 0.25s ease";
+		el.style.transition = SETTLE;
 		el.style.transform = `translateX(${offsetOf(swipe, saved)}px)`;
 	}, [swipe, saved]);
 
@@ -98,7 +101,7 @@ export const ActiveChatCard = memo(function ActiveChatCard({ row, pending, meId,
 		let side: SwipeSide = "closed";
 		if (total < -SNAP_PX && !saved) side = "left";
 		else if (total > SNAP_PX) side = "right";
-		el.style.transition = "transform 0.25s ease";
+		el.style.transition = SETTLE;
 		el.style.transform = `translateX(${offsetOf(side, saved)}px)`;
 		onSwipe(row.conversationId, side);
 	};

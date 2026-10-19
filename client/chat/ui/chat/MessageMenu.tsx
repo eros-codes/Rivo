@@ -13,6 +13,9 @@ const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🔥"];
 const BAR_GAP = 10;
 const MENU_GAP = 5;
 const EDGE = 8;
+/** How long the menu takes to open and to close (everything moves together: the dimming, the bar, the menu, the message). */
+export const MENU_MS = 180;
+const EASE = "cubic-bezier(0.2, 0.8, 0.2, 1)";
 
 interface Layout {
 	bar: CSSProperties;
@@ -20,11 +23,27 @@ interface Layout {
 	lift: number;
 }
 
-export function MessageMenu({ row, message, meId, scroller }: { row: ContactRow; message: LiveMessage; meId: number | null; scroller: HTMLElement | null }) {
+export function MessageMenu({
+	row,
+	message,
+	meId,
+	scroller,
+	closing = false,
+}: {
+	row: ContactRow;
+	message: LiveMessage;
+	meId: number | null;
+	scroller: HTMLElement | null;
+	/** closed already, on screen only while it goes away (ChatPart) */
+	closing?: boolean;
+}) {
 	const bar = useRef<HTMLDivElement>(null);
 	const menu = useRef<HTMLDivElement>(null);
+	const lifted = useRef<HTMLElement | null>(null);
+	const liftPx = useRef(0);
 	const [layout, setLayout] = useState<Layout | null>(null);
 	const [shown, setShown] = useState(false);
+	const open = shown && !closing;
 	const openedAt = useRef(Date.now());
 	const convId = row.conversationId;
 
@@ -63,15 +82,33 @@ export function MessageMenu({ row, message, meId, scroller }: { row: ContactRow;
 			bar: { top: Math.max(EDGE, r.top - lift - barH - BAR_GAP), ...side },
 			menu: { top: menuTop, ...side },
 		});
+		// the message rises with the rest (its own quick press transition would make it jump)
+		lifted.current = bubble;
+		liftPx.current = lift;
+		bubble.style.transition = `transform ${MENU_MS}ms ${EASE}`;
 		bubble.style.zIndex = "500";
 		bubble.style.transform = lift ? `translateY(-${lift}px)` : "";
-		const t = window.setTimeout(() => setShown(true), 100);
+		// placed and painted see-through first, then everything fades in together
+		let frame = requestAnimationFrame(() => {
+			frame = requestAnimationFrame(() => setShown(true));
+		});
 		return () => {
-			window.clearTimeout(t);
+			cancelAnimationFrame(frame);
+			lifted.current = null;
 			bubble.style.zIndex = "";
 			bubble.style.transform = "";
+			bubble.style.transition = "";
 		};
 	}, [message.id, mine, scroller]);
+
+	// closing: the message goes back down while the rest fades (it stays above
+	// the dimming until the menu is gone)
+	// (and up again if it is opened again on the way)
+	useEffect(() => {
+		const bubble = lifted.current;
+		if (!bubble) return;
+		bubble.style.transform = !closing && liftPx.current ? `translateY(-${liftPx.current}px)` : "";
+	}, [closing]);
 
 	// the chat does not scroll under the menu
 	useEffect(() => {
@@ -148,18 +185,27 @@ export function MessageMenu({ row, message, meId, scroller }: { row: ContactRow;
 	if (mine) items.push({ key: "delete", label: "Delete Message", icon: <Icons.Delete />, onClick: run(() => deleteMessages(convId, [message.id])), danger: true });
 
 	const hidden: CSSProperties = layout ? {} : { visibility: "hidden" };
+	// (going away: nothing in it can be tapped any more, and taps reach the chat)
+	const inert: CSSProperties = closing ? { pointerEvents: "none" } : {};
 
 	return (
 		<>
 			<div
-				className="chat-overlay visible"
+				className={`chat-overlay${open ? " visible" : ""}`}
+				style={{ display: "block", ...inert }}
 				onClick={() => {
 					// the tap that opened it (lifting the finger) does not close it
 					if (Date.now() - openedAt.current > 350) closeMenu();
 				}}
 			/>
 			{!cannotSend && (
-				<div ref={bar} className="reaction-bar" style={{ display: "flex", ...hidden, ...layout?.bar }} role="toolbar" aria-label="Reactions">
+				<div
+					ref={bar}
+					className={`reaction-bar${open ? " visible" : ""}`}
+					style={{ display: "flex", ...hidden, ...inert, ...layout?.bar }}
+					role="toolbar"
+					aria-label="Reactions"
+				>
 					{REACTIONS.map((emoji) => (
 						<button key={emoji} type="button" className="reaction-bar-btn" aria-label={`React ${emoji}`} onClick={run(() => void react(convId, message, emoji))}>
 							{emoji}
@@ -167,7 +213,7 @@ export function MessageMenu({ row, message, meId, scroller }: { row: ContactRow;
 					))}
 				</div>
 			)}
-			<div ref={menu} className={`message-menu${shown ? " visible" : ""}`} style={{ display: "block", ...hidden, ...layout?.menu }} role="menu">
+			<div ref={menu} className={`message-menu${open ? " visible" : ""}`} style={{ display: "block", ...hidden, ...inert, ...layout?.menu }} role="menu">
 				<ul>
 					{items.map((it) => (
 						<li

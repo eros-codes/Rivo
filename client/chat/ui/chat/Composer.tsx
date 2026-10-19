@@ -50,6 +50,12 @@ export function Composer({ row, refCallback, dark }: { row: ContactRow; refCallb
 	const suppressClick = useClickSuppressor();
 	const longPressed = useRef(false);
 	const emojiArea = useRef<HTMLDivElement>(null);
+	/** A press on Send is over: its timer stops and nothing of it is kept. */
+	const endPress = () => {
+		if (pressTimer.current !== null) window.clearTimeout(pressTimer.current);
+		pressTimer.current = null;
+		longPressed.current = false;
+	};
 
 	// the main slot always matches the chosen mode
 	useEffect(() => {
@@ -169,6 +175,12 @@ export function Composer({ row, refCallback, dark }: { row: ContactRow; refCallb
 
 	const canChooseMode = !action || action.kind === "reply";
 	const showSend = !!draft.trim() || action?.kind === "forward";
+	// Send gone (sent with Enter, the text deleted) or the chat closed in the
+	// middle of a press: its timer must not open the options afterwards
+	useEffect(() => {
+		if (!showSend) endPress();
+	}, [showSend]);
+	useEffect(() => () => endPress(), []);
 
 	let preview: { name: string; text: string } | null = null;
 	if (action?.kind === "edit") preview = { name: "Edit", text: oneLine(action.message.text ?? "") };
@@ -241,6 +253,8 @@ export function Composer({ row, refCallback, dark }: { row: ContactRow; refCallb
 					onMouseDown={(e) => e.preventDefault()}
 					onPointerDown={(e) => {
 						if (e.pointerType === "mouse" && e.button !== 0) return;
+						// a new press starts clean (a second finger must not leave the first one's timer running)
+						endPress();
 						if (!canChooseMode || popup) return;
 						pressTimer.current = window.setTimeout(() => {
 							pressTimer.current = null;
@@ -249,16 +263,15 @@ export function Composer({ row, refCallback, dark }: { row: ContactRow; refCallb
 						}, LONG_PRESS_MS);
 					}}
 					onPointerUp={() => {
-						if (pressTimer.current !== null) window.clearTimeout(pressTimer.current);
-						pressTimer.current = null;
 						// releasing a long press is not a tap on Send
 						if (longPressed.current) suppressClick.arm();
-						longPressed.current = false;
+						endPress();
 					}}
-					onPointerLeave={() => {
-						if (pressTimer.current !== null) window.clearTimeout(pressTimer.current);
-						pressTimer.current = null;
-					}}
+					// the press ends without a release here: the browser took the touch
+					// over (a pan, iOS's own long press) or the pointer went off the
+					// button. No click follows it, so nothing is left armed for the next tap.
+					onPointerCancel={endPress}
+					onPointerLeave={endPress}
 					onContextMenu={(e) => {
 						e.preventDefault();
 						if (canChooseMode) setPopup(true);

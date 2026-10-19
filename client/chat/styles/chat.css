@@ -38,7 +38,6 @@
 	/* the app keeps the reading position itself when older messages load */
 	overflow-anchor: none;
 	overscroll-behavior: contain;
-	scrollbar-width: none;
 }
 
 .chat-overlay {
@@ -52,7 +51,8 @@
 	z-index: 500;
 	display: none;
 	opacity: 0;
-	transition: opacity 0.1s ease-in;
+	/* with the message menu (MessageMenu.tsx: MENU_MS) */
+	transition: opacity 0.18s ease;
 }
 
 .scroll-to-bottom-btn {

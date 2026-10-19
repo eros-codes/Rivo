@@ -13,7 +13,7 @@ import { useMeId, useRow, useUi } from "../selectors";
 import { ChatHeader } from "./ChatHeader";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
-import { MessageMenu } from "./MessageMenu";
+import { MENU_MS, MessageMenu } from "./MessageMenu";
 import { PinnedBar } from "./PinnedBar";
 import { PinnedViewDialog } from "./PinnedViewDialog";
 import { SelectionToolbar } from "./SelectionToolbar";
@@ -54,6 +54,12 @@ function ChatView({ convId }: { convId: number }) {
 		return messages.filter((m) => ids.has(m.id));
 	}, [selection, messages]);
 	const menuMessage = menu ? (messages?.find((m) => m.id === menu.messageId) ?? null) : null;
+	// the menu stays on screen while it closes (MessageMenu animates it away)
+	const menuOpen = menuMessage !== null;
+	const lastMenuMessage = useRef(menuMessage);
+	if (menuMessage) lastMenuMessage.current = menuMessage;
+	const menuPresence = usePresence(menuOpen, MENU_MS);
+	const shownMenuMessage = menuPresence.mounted ? lastMenuMessage.current : null;
 	// unread messages from the other person below what is on screen: only the
 	// ones actually shown are marked read, so this counts down as they scroll
 	const unreadBelow = useMemo(() => {
@@ -89,7 +95,9 @@ function ChatView({ convId }: { convId: number }) {
 				<Icons.ChevronDown />
 				{unreadBelow > 0 && <span className="scroll-to-bottom-count">{unreadBelow > 99 ? "99+" : unreadBelow}</span>}
 			</button>
-			{menu && menuMessage && <MessageMenu row={row} message={menuMessage} meId={meId} scroller={scrollerEl} />}
+			{shownMenuMessage && (
+				<MessageMenu key={shownMenuMessage.id} row={row} message={shownMenuMessage} meId={meId} scroller={scrollerEl} closing={!menuOpen} />
+			)}
 			<MessageList
 				convId={convId}
 				row={row}

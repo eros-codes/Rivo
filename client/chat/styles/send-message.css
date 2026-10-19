@@ -68,6 +68,13 @@
 .send-btn {
 	height: 1.75rem;
 	width: 1.75rem;
+	/* a long press opens the send options (Composer.tsx): the phone must not
+	   take the touch for itself (iOS's callout and selection, a page pan),
+	   which would end the press without a release */
+	touch-action: none;
+	-webkit-touch-callout: none;
+	-webkit-user-select: none;
+	user-select: none;
 	position: absolute;
 	right: calc(var(--edge) + env(safe-area-inset-right, 0px) + 0.65rem);
 	bottom: 0.65rem;

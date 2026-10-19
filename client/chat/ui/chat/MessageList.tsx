@@ -281,6 +281,29 @@ export function MessageList({ convId, row, composer, onPinnedInView, pinnedIds, 
 		};
 	}, [composer, ready, measureLatest]);
 
+	// The space above the list changes: the pinned bar comes with the first
+	// pinned message and goes with the last. The list then starts lower (or
+	// higher) and would carry everything on screen down (or up) with it; it is
+	// moved back by as much, so nothing jumps (at the bottom it stays there).
+	// (measured inside the chat, not on the screen: an iPhone's keyboard moves
+	// the whole page, which is not a change above the list)
+	useLayoutEffect(() => {
+		const el = scroller.current;
+		if (!el) return undefined;
+		let top = el.offsetTop;
+		const ro = new ResizeObserver(() => {
+			const now = el.offsetTop;
+			const delta = now - top;
+			top = now;
+			if (!delta || !positioned.current) return;
+			if (snap.current.atBottom) el.scrollTop = el.scrollHeight;
+			else el.scrollTop += delta;
+			measureLatest();
+		});
+		ro.observe(el);
+		return () => ro.disconnect();
+	}, [measureLatest]);
+
 	const sayHello = () => {
 		// a draft in the box is not replaced
 		if (blocked || selecting || getComposer(convId).draft.trim()) return;
@@ -328,13 +351,16 @@ export function MessageList({ convId, row, composer, onPinnedInView, pinnedIds, 
 	// the user's next scroll, not straight away by itself (that would repeat
 	// the failing request as fast as it fails).
 	const olderTimer = useRef<number | undefined>(undefined);
+	// a jump to a message (the pinned bar, a reply's quote) is on its way: a
+	// page loading above it now would move the list under it and stop it short
+	const jumpingUntil = useRef(0);
 	const olderFailed = useRef(false);
 	const olderIfNearTop = useEvent((byScroll: boolean) => {
 		const el = scroller.current;
 		if (!el || !positioned.current || el.scrollTop >= Math.min(200, el.scrollHeight * 0.15)) return;
 		if (byScroll) olderFailed.current = false;
 		else if (olderFailed.current) return;
-		const wait = 400 - (Date.now() - positionedAt.current);
+		const wait = Math.max(400 - (Date.now() - positionedAt.current), jumpingUntil.current - Date.now());
 		if (wait > 0) {
 			window.clearTimeout(olderTimer.current);
 			olderTimer.current = window.setTimeout(() => olderIfNearTop(byScroll), wait + 20);
@@ -428,9 +454,22 @@ export function MessageList({ convId, row, composer, onPinnedInView, pinnedIds, 
 			}
 			// rendered on the next frame (it may have just been loaded)
 			requestAnimationFrame(() => {
-				const node = scroller.current?.querySelector(`[data-message-id="${focus.messageId}"]`);
-				if (!node) return;
-				node.scrollIntoView({ block: "center", behavior: "smooth" });
+				const el = scroller.current;
+				const node = el?.querySelector<HTMLElement>(`[data-message-id="${focus.messageId}"]`);
+				if (!el || !node) return;
+				// Only the list scrolls (scrollIntoView also moves every scrollable
+				// thing around it: on an iPhone the whole page shifts), and the
+				// message is centred in the part not under the header or the
+				// message box. Nothing pulls the list down meanwhile.
+				stopChase();
+				const cs = getComputedStyle(el);
+				const padTop = parseFloat(cs.paddingTop) || 0;
+				const padBottom = parseFloat(cs.paddingBottom) || 0;
+				const at = contentTop(el, focus.messageId) ?? 0;
+				const room = el.clientHeight - padTop - padBottom;
+				const target = at + node.offsetHeight / 2 - padTop - room / 2;
+				jumpingUntil.current = Date.now() + 900;
+				el.scrollTo({ top: Math.max(0, Math.min(target, el.scrollHeight - el.clientHeight)), behavior: "smooth" });
 				setHighlighted(focus.messageId);
 				window.setTimeout(() => setHighlighted((h) => (h === focus.messageId ? null : h)), 500);
 			});

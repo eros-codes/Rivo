@@ -23,8 +23,14 @@ import { MessageBubble, type BubbleHandlers } from "./MessageBubble";
 
 type Item = { kind: "day"; key: string; label: string } | { kind: "unread"; key: string } | { kind: "msg"; key: string; data: BubbleData };
 
-const NEAR_BOTTOM_PX = 80;
-const SHOW_DOWN_BUTTON_PX = 300;
+// Closer to the bottom than this (about two short messages), a new message
+// brings the list down with it; farther, the scroll-down button shows (with
+// how many are unread). One line between the two: no distance gets neither.
+const NEAR_BOTTOM_PX = 150;
+// how long a bottom that did not take is tried again (an iPhone ignores a
+// scroll set while the list still moves from a flick)
+const CHASE_TRIES = 10;
+const CHASE_EVERY_MS = 150;
 
 export interface MessageListProps {
 	convId: number;
@@ -123,6 +129,12 @@ export function MessageList({ convId, row, composer, onPinnedInView, pinnedIds, 
 	const positionedAt = useRef(0);
 	const snap = useRef({ firstId: null as number | null, firstTop: null as number | null, lastKey: null as string | null, top: 0, atBottom: true });
 	const [showDown, setShowDown] = useState(false);
+	// on its way to the bottom (the scroll-down button's smooth scroll, or a
+	// bottom set during a flick): counts as at the bottom until it is there,
+	// so a message arriving meanwhile is followed too. The user's own touch,
+	// wheel or click stops it.
+	const chasing = useRef(false);
+	const chaseTimer = useRef<number | undefined>(undefined);
 
 	/** Where a message starts in the list's content (null when it is not there). */
 	const contentTop = (el: HTMLElement, id: number | null): number | null => {
@@ -135,6 +147,7 @@ export function MessageList({ convId, row, composer, onPinnedInView, pinnedIds, 
 		const el = scroller.current;
 		if (!el) return;
 		const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+		if (chasing.current && fromBottom <= 2) stopChase();
 		// the first message on the list (the oldest loaded one that is shown)
 		const first = el.querySelector<HTMLElement>(".chat-message[data-message-id]");
 		const firstId = first ? Number(first.dataset.messageId) : null;
@@ -143,16 +156,50 @@ export function MessageList({ convId, row, composer, onPinnedInView, pinnedIds, 
 			firstTop: contentTop(el, firstId),
 			lastKey,
 			top: el.scrollTop,
-			atBottom: fromBottom < NEAR_BOTTOM_PX,
+			atBottom: fromBottom < NEAR_BOTTOM_PX || chasing.current,
 		};
-		const down = fromBottom > SHOW_DOWN_BUTTON_PX;
+		const down = fromBottom >= NEAR_BOTTOM_PX && !chasing.current;
 		setShowDown((v) => (v === down ? v : down));
 	};
+
+	const stopChase = () => {
+		chasing.current = false;
+		window.clearTimeout(chaseTimer.current);
+	};
+	/** To the bottom now, and again a little later if that did not take. */
+	const chaseBottom = () => {
+		const el = scroller.current;
+		if (!el) return;
+		stopChase();
+		chasing.current = true;
+		el.scrollTop = el.scrollHeight;
+		let tries = 0;
+		const again = () => {
+			const list = scroller.current;
+			if (!chasing.current || !list) return;
+			if (list.scrollHeight - list.scrollTop - list.clientHeight <= 2 || ++tries > CHASE_TRIES) {
+				stopChase();
+				return;
+			}
+			list.scrollTop = list.scrollHeight;
+			chaseTimer.current = window.setTimeout(again, CHASE_EVERY_MS);
+		};
+		chaseTimer.current = window.setTimeout(again, CHASE_EVERY_MS);
+	};
+	useEffect(() => () => window.clearTimeout(chaseTimer.current), []);
 
 	const toBottom = (smooth = false) => {
 		const el = scroller.current;
 		if (!el) return;
-		el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "instant" });
+		if (!smooth) {
+			chaseBottom();
+			return;
+		}
+		stopChase();
+		chasing.current = true;
+		el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+		// (a smooth scroll that ends short of it, or never starts: the rest at once)
+		chaseTimer.current = window.setTimeout(() => chasing.current && chaseBottom(), 700);
 	};
 
 	useLayoutEffect(() => {
@@ -178,9 +225,11 @@ export function MessageList({ convId, row, composer, onPinnedInView, pinnedIds, 
 			const prev = snap.current;
 			if (prev.lastKey !== lastKey && lastMine) {
 				// the user's own new message
-				el.scrollTop = el.scrollHeight;
+				chaseBottom();
 			} else if (prev.atBottom) {
-				el.scrollTop = el.scrollHeight;
+				// (a smooth scroll on its way down is overtaken: straight to the new bottom)
+				if (prev.lastKey !== lastKey || chasing.current) chaseBottom();
+				else el.scrollTop = el.scrollHeight;
 			} else {
 				// something was added or removed above (older messages, the
 				// "loading" placeholder): what is on screen stays where it is
@@ -432,6 +481,10 @@ export function MessageList({ convId, row, composer, onPinnedInView, pinnedIds, 
 			ref={scroller}
 			className={`chat${selecting ? " selection-mode" : ""}`}
 			onScroll={onScroll}
+			// the user takes over: a scroll on its way to the bottom stops
+			onWheel={stopChase}
+			onTouchStart={stopChase}
+			onPointerDown={stopChase}
 			role="log"
 			aria-label="Messages"
 			// the keyboard: Tab reaches the list, arrows move between messages,
